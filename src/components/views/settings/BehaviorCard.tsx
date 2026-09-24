@@ -21,7 +21,7 @@ export default function BehaviorCard() {
     try {
       const shown = await invoke<boolean>('show_notification', {
         options: {
-          title: 'ISpooferMotion',
+          title: 'TrapSpoofer',
           body: t('misc.desktopNotificationsEnabled'),
         },
       });

@@ -720,11 +720,8 @@ pub async fn attempt_deep_place_id_discovery(
         "https://web.archive.org/cdx/search/cdx?url=assetdelivery.roblox.com/v1/asset/*id%3D{asset_id}*&output=json&limit={limit}&filter=statuscode:200&fl=original&collapse=urlkey",
         limit = (friend_limit * 5).max(20)
     );
-    if let Ok(wb_resp) = client
-        .get(&cdx_asset_url)
-        .header(reqwest::header::USER_AGENT, "ISpooferMotion")
-        .send()
-        .await
+    if let Ok(wb_resp) =
+        client.get(&cdx_asset_url).header(reqwest::header::USER_AGENT, "TrapSpoofer").send().await
     {
         if let Ok(wb_data) = wb_resp.json::<Vec<Vec<String>>>().await {
             static CDN_PLACE_RE: OnceLock<regex::Regex> = OnceLock::new();
@@ -758,7 +755,7 @@ pub async fn attempt_deep_place_id_discovery(
         );
         if let Ok(wb_resp) = client
             .get(&wb_games_url)
-            .header(reqwest::header::USER_AGENT, "ISpooferMotion")
+            .header(reqwest::header::USER_AGENT, "TrapSpoofer")
             .send()
             .await
         {

@@ -10,7 +10,7 @@ export interface ScanStatus {
   total: number;
 }
 
-const STUDIO_PLACE_ID_CACHE_KEY = 'ISpooferMotion_LastStudioPlaceId';
+const STUDIO_PLACE_ID_CACHE_KEY = 'TrapSpoofer_LastStudioPlaceId';
 const readCachedStudioPlaceId = () => {
   try {
     const value = window.localStorage.getItem(STUDIO_PLACE_ID_CACHE_KEY) || '';

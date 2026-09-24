@@ -58,7 +58,7 @@ local function runManualReplacements(
 	end
 
 	if count == 0 then
-		warn("[ISpooferMotion] No valid mappings found. Format should be: 1234 -> 5678")
+		warn("[TrapSpoofer] No valid mappings found. Format should be: 1234 -> 5678")
 		if progressCallback then
 			progressCallback(0, 0, 0, true)
 		end
@@ -78,7 +78,7 @@ local function runManualReplacements(
 
 	logToPlugin(
 		string.format(
-			"[ISpooferMotion] Starting batched manual replacement with %d mappings (batch size: %d)...",
+			"[TrapSpoofer] Starting batched manual replacement with %d mappings (batch size: %d)...",
 			count,
 			resolvedBatchSize
 		)
@@ -87,7 +87,7 @@ local function runManualReplacements(
 
 	local recording = nil
 	pcall(function()
-		recording = ChangeHistoryService:TryBeginRecording("ISpooferMotion Manual Replace")
+		recording = ChangeHistoryService:TryBeginRecording("TrapSpoofer Manual Replace")
 	end)
 	local replacedCount = 0
 
@@ -147,7 +147,7 @@ local function runManualReplacements(
 					replacedCount += 1
 					logToPlugin(
 						string.format(
-							"[ISpooferMotion] Manual Swap: %s.TextureID (%s -> %s)",
+							"[TrapSpoofer] Manual Swap: %s.TextureID (%s -> %s)",
 							obj.Name,
 							oldId,
 							newId
@@ -206,7 +206,7 @@ local function runManualReplacements(
 				if isRateLimit and attempt < maxAttempts then
 					logToPlugin(
 						string.format(
-							"[Warning] [ISpooferMotion] Manual swap rate limit hit on '%s'. Waiting 5s before retry (%d/%d)...",
+							"[Warning] [TrapSpoofer] Manual swap rate limit hit on '%s'. Waiting 5s before retry (%d/%d)...",
 							obj.Name,
 							attempt,
 							maxAttempts
@@ -236,7 +236,7 @@ local function runManualReplacements(
 				newPart = createdPart
 			else
 				warn(
-					"[ISpooferMotion] Manual Swap: Failed to create MeshPart asynchronously. Falling back to Part+SpecialMesh."
+					"[TrapSpoofer] Manual Swap: Failed to create MeshPart asynchronously. Falling back to Part+SpecialMesh."
 				)
 				local fallbackPart = Instance.new("Part")
 				local specialMesh = Instance.new("SpecialMesh")
@@ -264,7 +264,7 @@ local function runManualReplacements(
 					newPart:Destroy()
 				end)
 				warn(
-					"[ISpooferMotion] Manual Swap: property copy failed for "
+					"[TrapSpoofer] Manual Swap: property copy failed for "
 						.. obj.Name
 						.. ": "
 						.. tostring(copyErr)
@@ -279,7 +279,7 @@ local function runManualReplacements(
 				pcall(function()
 					newPart:Destroy()
 				end)
-				warn("[ISpooferMotion] Manual Swap: could not parent replacement for " .. obj.Name)
+				warn("[TrapSpoofer] Manual Swap: could not parent replacement for " .. obj.Name)
 				return
 			end
 
@@ -291,7 +291,7 @@ local function runManualReplacements(
 					obj.Parent = oldParent
 				end)
 				warn(
-					"[ISpooferMotion] Manual Swap: content move failed for "
+					"[TrapSpoofer] Manual Swap: content move failed for "
 						.. obj.Name
 						.. ": "
 						.. tostring(moveErr)
@@ -304,7 +304,7 @@ local function runManualReplacements(
 			end)
 			replacedCount += 1
 			logToPlugin(
-				string.format("[ISpooferMotion] Manual Swap: Recreated MeshPart %s", newPart.Name)
+				string.format("[TrapSpoofer] Manual Swap: Recreated MeshPart %s", newPart.Name)
 			)
 			return
 		else
@@ -315,7 +315,7 @@ local function runManualReplacements(
 				replacedCount += 1
 				logToPlugin(
 					string.format(
-						"[ISpooferMotion] Manual Swap: %s.%s (%s -> %s)",
+						"[TrapSpoofer] Manual Swap: %s.%s (%s -> %s)",
 						obj.Name,
 						prop,
 						oldId,
@@ -368,7 +368,7 @@ local function runManualReplacements(
 					end)
 					if assignOk then
 						replacedCount += 1
-						logToPlugin("[ISpooferMotion] Manual Swap: Updated Source in " .. obj.Name)
+						logToPlugin("[TrapSpoofer] Manual Swap: Updated Source in " .. obj.Name)
 					end
 				end
 			end
@@ -407,7 +407,7 @@ local function runManualReplacements(
 
 	logToPlugin(
 		string.format(
-			"[ISpooferMotion] Scanning %d instances across the game in batches of %d (speed configured)...",
+			"[TrapSpoofer] Scanning %d instances across the game in batches of %d (speed configured)...",
 			totalInstances,
 			BATCH_SIZE
 		)
@@ -460,11 +460,11 @@ local function runManualReplacements(
 	end
 
 	if not runOk then
-		warn("[ISpooferMotion] Manual replacement error: " .. tostring(runErr))
+		warn("[TrapSpoofer] Manual replacement error: " .. tostring(runErr))
 	end
 
 	local completionMsg = string.format(
-		"[ISpooferMotion] Manual replacement complete! Modified %d properties across %d instances (batch: %d).",
+		"[TrapSpoofer] Manual replacement complete! Modified %d properties across %d instances (batch: %d).",
 		replacedCount,
 		totalInstances,
 		BATCH_SIZE
@@ -485,17 +485,17 @@ local function runManualReplacementsAsync(
 	task.spawn(runManualReplacements, text, progressCallback, customBatchSize)
 end
 
-_G.ISpooferMotionPlugin = {
+_G.TrapSpooferPlugin = {
 	runManualReplacements = runManualReplacementsAsync,
 	runManualReplacementsSync = runManualReplacements,
 }
 
-print("[ISpooferMotion] Plugin loaded. Starting background connection to Desktop App...")
+print("[TrapSpoofer] Plugin loaded. Starting background connection to Desktop App...")
 startPolling()
 
-local toolbar = plugin:CreateToolbar("ISpooferMotion")
+local toolbar = plugin:CreateToolbar("TrapSpoofer")
 local toggleButton =
-	toolbar:CreateButton("Toggle UI", "Show/Hide ISpooferMotion UI", "rbxassetid://137844667859456")
+	toolbar:CreateButton("Toggle UI", "Show/Hide TrapSpoofer UI", "rbxassetid://137844667859456")
 
 toggleButton.Click:Connect(function()
 	togglePluginGui()

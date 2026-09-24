@@ -34,7 +34,7 @@ pub const ROBLOX_STUDIO_COOKIE_TARGET: &str =
 #[cfg(not(target_os = "windows"))]
 pub const BROWSER_COOKIE_SCAN_BYTES: u64 = 25 * 1024 * 1024;
 
-pub const PROFILE_COOKIE_SERVICE: &str = "ISpooferMotion.RobloxProfileCookie";
+pub const PROFILE_COOKIE_SERVICE: &str = "TrapSpoofer.RobloxProfileCookie";
 
 fn roblosecurity_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
@@ -335,8 +335,8 @@ fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
 
 fn private_temp_dir() -> Option<PathBuf> {
     for _ in 0..8 {
-        let dir = std::env::temp_dir()
-            .join(format!("ispoofermotion-cookie-{:016x}", rand::random::<u64>()));
+        let dir =
+            std::env::temp_dir().join(format!("trapspoofer-cookie-{:016x}", rand::random::<u64>()));
         match std::fs::create_dir(&dir) {
             Ok(()) => {
                 #[cfg(unix)]

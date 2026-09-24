@@ -26,7 +26,7 @@ export default function DebugCard() {
       store.setAssetForcePlaceIds({});
 
       Object.keys(localStorage).forEach((key) => {
-        if (key.startsWith('ISpooferMotion_') || key.startsWith('preview-')) {
+        if (key.startsWith('TrapSpoofer_') || key.startsWith('preview-')) {
           localStorage.removeItem(key);
         }
       });

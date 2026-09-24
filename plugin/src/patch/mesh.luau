@@ -57,7 +57,7 @@ local function applyMeshPartInPlace(
 		if isRateLimit and attempt < maxAttempts then
 			logToPlugin(
 				string.format(
-					"[Warning] [ISpooferMotion] MeshPart rate limit hit on '%s'. Waiting 5s before retry (%d/%d)...",
+					"[Warning] [TrapSpoofer] MeshPart rate limit hit on '%s'. Waiting 5s before retry (%d/%d)...",
 					meshObj.Name,
 					attempt,
 					maxAttempts

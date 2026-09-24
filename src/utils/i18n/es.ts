@@ -4,7 +4,7 @@ export const es: TranslationTree = {
   misc: {
     toggleRigType: 'Toggle Rig Type',
     maintenanceBreak: 'Pausa de Mantenimiento',
-    maintenanceDesc: 'ISpooferMotion se encuentra actualmente en mantenimiento. ¡Vuelve más tarde!',
+    maintenanceDesc: 'TrapSpoofer se encuentra actualmente en mantenimiento. ¡Vuelve más tarde!',
     fetchingAnimation: 'Obteniendo animación…',
     assetIdMappings: 'Mapeos de ID de Activos',
     originalId: 'ID Original',
@@ -37,7 +37,7 @@ export const es: TranslationTree = {
     dragToOrbit: 'Arrastra para orbitar · Desplázate para hacer zoom',
     speed: 'Velocidad',
     errorBoundaryTitle: 'Oops, algo se rompió.',
-    errorBoundaryDesc: 'ISpooferMotion encontró un error fatal y no pudo continuar.',
+    errorBoundaryDesc: 'TrapSpoofer encontró un error fatal y no pudo continuar.',
     crashReportSent: 'Se ha enviado silenciosamente un informe de fallo a los desarrolladores.',
     crashReportDisabled: 'El informe de fallos está deshabilitado.',
     reloadApplication: 'Recargar Aplicación',
@@ -62,8 +62,8 @@ export const es: TranslationTree = {
     supportMe: 'Apóyame',
   },
   home: {
-    title: 'Bienvenido a ISpooferMotion',
-    subtitle: 'Centro de control de ISpooferMotion.',
+    title: 'Bienvenido a TrapSpoofer',
+    subtitle: 'Centro de control de TrapSpoofer.',
     quickstartTitle: 'Guía de inicio rápido',
     quickstartBody:
       '1. Ve a la pestaña <strong>Suplantación</strong> para configurar y ejecutar el suplantador<br>2. Selecciona qué quieres suplantar (Animación, Audio, Imágenes, etc.)<br>3. Introduce tu ID de animación y credenciales<br>4. Haz clic en "Ejecutar Suplantador" para iniciar el proceso',
@@ -155,7 +155,7 @@ export const es: TranslationTree = {
     hideToTrayDesc:
       'Al cerrar la aplicación, se minimizará en la bandeja del sistema en lugar de salir.',
     telemetryDesc:
-      'Permitir que ISpooferMotion envíe automáticamente informes de fallos anónimos y telemetría a los desarrolladores.',
+      'Permitir que TrapSpoofer envíe automáticamente informes de fallos anónimos y telemetría a los desarrolladores.',
     confirmResetDesc:
       '¿Estás seguro de que deseas restablecer todas las configuraciones a sus valores predeterminados? Esta acción no se puede deshacer.',
     resetSuccess: 'Todas las configuraciones se han restablecido a sus valores predeterminados.',

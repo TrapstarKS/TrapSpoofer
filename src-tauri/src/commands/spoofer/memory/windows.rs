@@ -231,9 +231,11 @@ fn open_process_for_memory(pid: u32) -> Result<ProcessHandle, String> {
 
     let error = unsafe { GetLastError() };
     Err(match error {
-        WIN_ERROR_ACCESS_DENIED => "Could not access Roblox Studio memory. If Studio is running as \
-            Administrator, run ISpooferMotion as Administrator too (or run Studio without elevation)."
-            .into(),
+        WIN_ERROR_ACCESS_DENIED => {
+            "Could not access Roblox Studio memory. If Studio is running as \
+            Administrator, run TrapSpoofer as Administrator too (or run Studio without elevation)."
+                .into()
+        }
         _ => format!(
             "Could not open Roblox Studio process (Win32 error {error}). Ensure Studio is running."
         ),

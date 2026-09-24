@@ -11,7 +11,7 @@ pub async fn close_splashscreen(app: AppHandle) {
             "main",
             tauri::WebviewUrl::App("index.html".into()),
         )
-        .title("ISpooferMotion")
+        .title("TrapSpoofer")
         .inner_size(1100.0, 620.0)
         .resizable(true)
         .fullscreen(false)
@@ -64,13 +64,13 @@ fn roblox_plugins_dirs() -> Vec<PathBuf> {
 fn is_owned_plugin_file_name(file_name: &str) -> bool {
     if matches!(
         file_name,
-        "ISpooferMotion.rbxmx" | ".ISpooferMotion.rbxmx.tmp" | ".ISpooferMotion.rbxmx.backup"
+        "TrapSpoofer.rbxmx" | ".TrapSpoofer.rbxmx.tmp" | ".TrapSpoofer.rbxmx.backup"
     ) {
         return true;
     }
 
     file_name
-        .strip_prefix("ISpooferMotion (")
+        .strip_prefix("TrapSpoofer (")
         .and_then(|rest| rest.strip_suffix(").rbxmx"))
         .is_some_and(|copy_number| {
             !copy_number.is_empty() && copy_number.chars().all(|ch| ch.is_ascii_digit())
@@ -91,22 +91,22 @@ pub async fn sync_roblox_plugin(app: AppHandle) -> crate::error::Result<bool> {
 
         if let Ok(p) = app
             .path()
-            .resolve("_up_/dist-plugin/ISpooferMotion.rbxmx", tauri::path::BaseDirectory::Resource)
+            .resolve("_up_/dist-plugin/TrapSpoofer.rbxmx", tauri::path::BaseDirectory::Resource)
         {
             candidates.push(p);
         }
         if let Ok(p) = app
             .path()
-            .resolve("dist-plugin/ISpooferMotion.rbxmx", tauri::path::BaseDirectory::Resource)
+            .resolve("dist-plugin/TrapSpoofer.rbxmx", tauri::path::BaseDirectory::Resource)
         {
             candidates.push(p);
         }
 
         let local_candidates = [
-            PathBuf::from("dist-plugin").join("ISpooferMotion.rbxmx"),
-            PathBuf::from("tmp_clone").join("dist-plugin").join("ISpooferMotion.rbxmx"),
-            PathBuf::from("../dist-plugin").join("ISpooferMotion.rbxmx"),
-            PathBuf::from("../../dist-plugin").join("ISpooferMotion.rbxmx"),
+            PathBuf::from("dist-plugin").join("TrapSpoofer.rbxmx"),
+            PathBuf::from("tmp_clone").join("dist-plugin").join("TrapSpoofer.rbxmx"),
+            PathBuf::from("../dist-plugin").join("TrapSpoofer.rbxmx"),
+            PathBuf::from("../../dist-plugin").join("TrapSpoofer.rbxmx"),
         ];
         for c in local_candidates {
             candidates.push(c);
@@ -122,12 +122,12 @@ pub async fn sync_roblox_plugin(app: AppHandle) -> crate::error::Result<bool> {
                     let mut p_tmp = base.clone();
                     p_tmp.push("tmp_clone");
                     p_tmp.push("dist-plugin");
-                    p_tmp.push("ISpooferMotion.rbxmx");
+                    p_tmp.push("TrapSpoofer.rbxmx");
                     candidates.push(p_tmp);
 
                     let mut p_root = base.clone();
                     p_root.push("dist-plugin");
-                    p_root.push("ISpooferMotion.rbxmx");
+                    p_root.push("TrapSpoofer.rbxmx");
                     candidates.push(p_root);
                 }
             }
@@ -155,8 +155,8 @@ pub async fn sync_roblox_plugin(app: AppHandle) -> crate::error::Result<bool> {
             let _ = tokio::fs::create_dir_all(&dest_dir).await;
         }
 
-        let dest_path = dest_dir.join("ISpooferMotion.rbxmx");
-        let temp_path = dest_dir.join(".ISpooferMotion.rbxmx.tmp");
+        let dest_path = dest_dir.join("TrapSpoofer.rbxmx");
+        let temp_path = dest_dir.join(".TrapSpoofer.rbxmx.tmp");
         let copied = match tokio::fs::copy(&resource_path, &temp_path).await {
             Ok(bytes) => bytes,
             Err(error) => {
@@ -167,7 +167,7 @@ pub async fn sync_roblox_plugin(app: AppHandle) -> crate::error::Result<bool> {
 
         #[cfg(target_os = "windows")]
         let install_result = {
-            let backup_path = dest_dir.join(".ISpooferMotion.rbxmx.backup");
+            let backup_path = dest_dir.join(".TrapSpoofer.rbxmx.backup");
             let _ = tokio::fs::remove_file(&backup_path).await;
             let had_previous = tokio::fs::try_exists(&dest_path).await.unwrap_or(false);
 
@@ -252,11 +252,11 @@ mod tests {
 
     #[test]
     fn plugin_cleanup_only_matches_files_owned_by_the_app() {
-        assert!(is_owned_plugin_file_name("ISpooferMotion.rbxmx"));
-        assert!(is_owned_plugin_file_name("ISpooferMotion (2).rbxmx"));
-        assert!(is_owned_plugin_file_name(".ISpooferMotion.rbxmx.tmp"));
-        assert!(!is_owned_plugin_file_name("MyISpooferMotionNotes.rbxmx"));
-        assert!(!is_owned_plugin_file_name("ISpooferMotion (backup).rbxmx"));
-        assert!(!is_owned_plugin_file_name("ISpooferMotion-helper.lua"));
+        assert!(is_owned_plugin_file_name("TrapSpoofer.rbxmx"));
+        assert!(is_owned_plugin_file_name("TrapSpoofer (2).rbxmx"));
+        assert!(is_owned_plugin_file_name(".TrapSpoofer.rbxmx.tmp"));
+        assert!(!is_owned_plugin_file_name("MyTrapSpooferNotes.rbxmx"));
+        assert!(!is_owned_plugin_file_name("TrapSpoofer (backup).rbxmx"));
+        assert!(!is_owned_plugin_file_name("TrapSpoofer-helper.lua"));
     }
 }

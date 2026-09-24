@@ -44,7 +44,7 @@ export interface PendingSpoofRetry {
   assetTypes?: Record<string, string>;
 }
 
-const PENDING_SPOOF_RETRY_KEY = 'ISpooferMotion_PendingSpoofRetry';
+const PENDING_SPOOF_RETRY_KEY = 'TrapSpoofer_PendingSpoofRetry';
 
 export function queueSpoofRetry(retry: PendingSpoofRetry) {
   sessionStorage.setItem(PENDING_SPOOF_RETRY_KEY, JSON.stringify(retry));

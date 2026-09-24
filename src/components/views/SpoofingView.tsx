@@ -230,7 +230,7 @@ export default function SpoofingView() {
               import('@tauri-apps/plugin-notification')
                 .then(({ sendNotification }) => {
                   sendNotification({
-                    title: 'ISpooferMotion',
+                    title: 'TrapSpoofer',
                     body: `Auto-queued copied asset ID: ${assetId}`,
                   });
                 })

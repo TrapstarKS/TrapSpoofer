@@ -100,7 +100,7 @@ pub async fn fetch_assets(
 
         let mut headers = HeaderMap::new();
         headers.insert(COOKIE, HeaderValue::from_str(&cookie_header)?);
-        headers.insert(USER_AGENT, HeaderValue::from_static("ISpooferMotion/AssetExplorer"));
+        headers.insert(USER_AGENT, HeaderValue::from_static("TrapSpoofer/AssetExplorer"));
 
         let resp = match client.get(&url).headers(headers).send().await {
             Ok(r) => r,
@@ -169,7 +169,7 @@ pub async fn fetch_assets(
                 );
                 let client = crate::utils::get_http_client();
                 if let Ok(resp) =
-                    client.get(&url).header(USER_AGENT, "ISpooferMotion/AssetExplorer").send().await
+                    client.get(&url).header(USER_AGENT, "TrapSpoofer/AssetExplorer").send().await
                 {
                     if let Ok(data) = resp.json::<Value>().await {
                         if let Some(thumb_data) = data.get("data").and_then(|d| d.as_array()) {
@@ -265,7 +265,7 @@ pub async fn fetch_roblox_thumbnail(asset_id: String) -> crate::error::Result<Op
         "https://thumbnails.roblox.com/v1/assets?assetIds={asset_id}&size=420x420&format=Png&isCircular=false"
     );
 
-    let resp = client.get(&url).header(USER_AGENT, "ISpooferMotion/AssetExplorer").send().await?;
+    let resp = client.get(&url).header(USER_AGENT, "TrapSpoofer/AssetExplorer").send().await?;
 
     if !resp.status().is_success() {
         return Ok(None);
@@ -311,7 +311,7 @@ pub async fn fetch_animation_xml(
     let url = format!("https://assetdelivery.roblox.com/v1/asset/?id={asset_id}");
 
     let client = crate::utils::get_http_client();
-    let mut req = client.get(&url).header(USER_AGENT, "ISpooferMotion/AnimPreview");
+    let mut req = client.get(&url).header(USER_AGENT, "TrapSpoofer/AnimPreview");
     if let Some(pid) = &place_id {
         req = crate::commands::spoofer::apply_roblox_game_context(req, Some(pid), None);
     }

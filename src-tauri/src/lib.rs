@@ -2,6 +2,7 @@ pub mod api_dump;
 pub mod commands;
 pub mod domain;
 pub mod error;
+pub mod mcp;
 pub mod studio_bridge;
 pub mod utils;
 
@@ -88,7 +89,11 @@ macro_rules! specta_commands {
             crate::studio_bridge::get_plugin_bridge_port,
             crate::studio_bridge::get_studio_health_status,
             crate::studio_bridge::get_port_diagnostic,
-            crate::studio_bridge::get_studio_asset_snapshots
+            crate::studio_bridge::get_studio_asset_snapshots,
+            crate::mcp::mcp_respond,
+            crate::mcp::mcp_set_frontend_ready,
+            crate::mcp::mcp_set_enabled,
+            crate::mcp::mcp_get_info
         ]
     };
 }
@@ -97,7 +102,7 @@ macro_rules! specta_commands {
 pub fn run() {
     #[cfg(debug_assertions)]
     {
-        log::info!("ISpooferMotion: Exporting Specta bindings in a high-stack thread...");
+        log::info!("TrapSpoofer: Exporting Specta bindings in a high-stack thread...");
         std::thread::Builder::new()
             .stack_size(128 * 1024 * 1024)
             .name("specta-export".to_string())
@@ -111,12 +116,12 @@ pub fn run() {
             .expect("Failed to spawn specta thread")
             .join()
             .expect("Failed to join specta thread");
-        log::info!("ISpooferMotion: Finished Exporting Specta bindings!");
+        log::info!("TrapSpoofer: Finished Exporting Specta bindings!");
     }
 
     std::panic::set_hook(Box::new(|info| {
         let msg =
-            format!("ISpooferMotion encountered a fatal error. Please check the logs.\n\n{}", info);
+            format!("TrapSpoofer encountered a fatal error. Please check the logs.\n\n{}", info);
         log::error!("FATAL PANIC: {}", msg);
         let _ = rfd::MessageDialog::new()
             .set_title("Fatal Error")
@@ -125,7 +130,7 @@ pub fn run() {
             .show();
     }));
 
-    log::info!("ISpooferMotion: Initializing Tauri Builder...");
+    log::info!("TrapSpoofer: Initializing Tauri Builder...");
     let builder = tauri_specta::Builder::<tauri::Wry>::new().commands(specta_commands!());
 
     #[allow(unused_mut)]
@@ -168,6 +173,7 @@ pub fn run() {
             )?;
 
             tauri::async_runtime::spawn(crate::studio_bridge::start_server(app.handle().clone()));
+            tauri::async_runtime::spawn(crate::mcp::start_server(app.handle().clone()));
 
             use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
             let _tray = TrayIconBuilder::new()
@@ -176,7 +182,7 @@ pub fn run() {
                         .cloned()
                         .expect("default window icon should be bundled for tray setup"),
                 )
-                .tooltip("ISpooferMotion")
+                .tooltip("TrapSpoofer")
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -196,5 +202,5 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-    log::info!("ISpooferMotion: Exiting run()");
+    log::info!("TrapSpoofer: Exiting run()");
 }

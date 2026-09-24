@@ -205,7 +205,7 @@ function PreviewApp() {
         {!asset ? (
           <div className="text-xs text-text-muted flex flex-col items-center gap-2 p-6 text-center">
             <Eye size={28} className="opacity-30 text-primary" />
-            <span>Select an asset in ISpooferMotion to preview</span>
+            <span>Select an asset in TrapSpoofer to preview</span>
           </div>
         ) : isAnimation ? (
           <Suspense

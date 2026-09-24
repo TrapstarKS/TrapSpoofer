@@ -6,7 +6,7 @@ const { test: tauriTest, expect: tauriExpect } = createTauriTest({
   devUrl: 'http://localhost:5173',
 });
 
-test.describe('ISpooferMotion E2E', () => {
+test.describe('TrapSpoofer E2E', () => {
   tauriTest('App launches and renders splash screen', async ({ context }) => {
     let mainPage;
     for (let i = 0; i < 30; i++) {
@@ -18,6 +18,6 @@ test.describe('ISpooferMotion E2E', () => {
 
     expect(mainPage).toBeDefined();
 
-    await expect(mainPage!.locator('text=ISpooferMotion')).toBeVisible({ timeout: 15000 });
+    await expect(mainPage!.locator('text=TrapSpoofer')).toBeVisible({ timeout: 15000 });
   });
 });

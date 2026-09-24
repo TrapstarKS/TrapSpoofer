@@ -146,7 +146,7 @@ local function scanScriptSourceRecord(records: { Record }, obj: Instance)
 		pcall(function()
 			fullName = obj:GetFullName()
 		end)
-		logToPlugin("[Warning] [ISpooferMotion] Could not read source of " .. fullName)
+		logToPlugin("[Warning] [TrapSpoofer] Could not read source of " .. fullName)
 		return
 	end
 	if not source or source == "" then
@@ -157,7 +157,7 @@ local function scanScriptSourceRecord(records: { Record }, obj: Instance)
 		pcall(function()
 			fullName = obj:GetFullName()
 		end)
-		logToPlugin("[Warning] [ISpooferMotion] Skipping oversized script source: " .. fullName)
+		logToPlugin("[Warning] [TrapSpoofer] Skipping oversized script source: " .. fullName)
 		return
 	end
 	addRecord(records, obj, "Source", source)
@@ -175,7 +175,7 @@ local function flushScanRecordsOrError(records: { Record })
 			logToPlugin(
 				"[Warning] "
 					.. string.format(
-						"[ISpooferMotion] Scan chunk send failed (attempt %d/%d), pausing %.1fs before retry...",
+						"[TrapSpoofer] Scan chunk send failed (attempt %d/%d), pausing %.1fs before retry...",
 						attempt,
 						FLUSH_MAX_RETRIES,
 						FLUSH_RETRY_WAIT
@@ -245,12 +245,12 @@ local function scanAssets(): ()
 
 	if bundledAssetClasses == 0 then
 		logToPlugin(
-			"[Warning] [ISpooferMotion] No API dump loaded (ASSET_PROPERTIES is empty). Fallback data was not shipped or fetch failed."
+			"[Warning] [TrapSpoofer] No API dump loaded (ASSET_PROPERTIES is empty). Fallback data was not shipped or fetch failed."
 		)
 	else
 		logToPlugin(
 			string.format(
-				"[ISpooferMotion] Using bundled API dump (%d asset classes, %d string-scan classes)",
+				"[TrapSpoofer] Using bundled API dump (%d asset classes, %d string-scan classes)",
 				bundledAssetClasses,
 				bundledStringClasses
 			)
@@ -294,11 +294,11 @@ local function scanAssets(): ()
 			pcall(function()
 				fullPath = targetObj:GetFullName()
 			end)
-			logToPlugin("[ISpooferMotion] Scanning targeted path: " .. fullPath)
+			logToPlugin("[TrapSpoofer] Scanning targeted path: " .. fullPath)
 			table.insert(stack, { obj = targetObj, currentService = fullPath })
 		else
 			logToPlugin(
-				"[Warning] [ISpooferMotion] Target path not found: "
+				"[Warning] [TrapSpoofer] Target path not found: "
 					.. tostring(activeScanPath)
 					.. ", scanning all services."
 			)
@@ -382,7 +382,7 @@ local function scanAssets(): ()
 			logToPlugin(
 				"[Warning] "
 					.. string.format(
-						"[ISpooferMotion] Scan hit the server record limit: %d records kept, %d dropped. Very large places may miss some assets - try splitting into separate places or filtering to specific services.",
+						"[TrapSpoofer] Scan hit the server record limit: %d records kept, %d dropped. Very large places may miss some assets - try splitting into separate places or filtering to specific services.",
 						keepCount,
 						truncatedCount
 					)
@@ -390,14 +390,14 @@ local function scanAssets(): ()
 		else
 			logToPlugin(
 				"[Warning] "
-					.. "[ISpooferMotion] Scan hit the server record limit - some assets may be missing. Try splitting very large places or contact support."
+					.. "[TrapSpoofer] Scan hit the server record limit - some assets may be missing. Try splitting very large places or contact support."
 			)
 		end
 	end
 
 	logToPlugin(
 		string.format(
-			"[ISpooferMotion] Scan complete: %d records captured, %d animations, %d sounds, %d images, %d meshes, %d script refs",
+			"[TrapSpoofer] Scan complete: %d records captured, %d animations, %d sounds, %d images, %d meshes, %d script refs",
 			captured,
 			tonumber(totals.animations) or 0,
 			tonumber(totals.sounds) or 0,
@@ -437,7 +437,7 @@ local function scan(): ()
 		pcall(function()
 			postJson("/scan-abort", {})
 		end)
-		logToPlugin("[Warning] " .. "[ISpooferMotion] Scan failed: " .. tostring(err))
+		logToPlugin("[Warning] " .. "[TrapSpoofer] Scan failed: " .. tostring(err))
 		setPluginGuiStatus("Scan Failed. Waiting for scan or replacements...")
 	end
 end

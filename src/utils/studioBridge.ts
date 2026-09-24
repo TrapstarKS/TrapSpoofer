@@ -30,7 +30,7 @@ export async function queueStudioReplacements(
 
   if (result === 'plugin_not_connected' || result === 'bridge_unavailable') {
     throw new Error(
-      'Could not reach the ISpooferMotion Studio plugin. Make sure Studio is open and the plugin is connected, then try again.',
+      'Could not reach the TrapSpoofer Studio plugin. Make sure Studio is open and the plugin is connected, then try again.',
     );
   }
   if (result === 'empty_mappings') {

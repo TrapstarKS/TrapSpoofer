@@ -106,7 +106,7 @@ export default function Sidebar({
             {!isCollapsed && (
               <div className="flex flex-col leading-tight min-w-0">
                 <span className="text-[12px] font-semibold tracking-tight text-foreground truncate">
-                  ISpooferMotion
+                  TrapSpoofer
                 </span>
                 <div className="flex items-center gap-1">
                   <span

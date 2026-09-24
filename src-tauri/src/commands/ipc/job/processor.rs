@@ -170,7 +170,7 @@ async fn fetch_asset_details(
     let description = json
         .get("Description")
         .and_then(|v| v.as_str())
-        .unwrap_or("Uploaded by ISpooferMotion.")
+        .unwrap_or("Uploaded by TrapSpoofer.")
         .to_string();
 
     Some(AssetDetails { name, description })
@@ -230,7 +230,7 @@ async fn batch_fetch_asset_details(
                             let description = item
                                 .get("description")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("Uploaded by ISpooferMotion.")
+                                .unwrap_or("Uploaded by TrapSpoofer.")
                                 .to_string();
                             details.insert(id.to_string(), AssetDetails { name, description });
 
@@ -276,7 +276,7 @@ async fn batch_fetch_asset_details(
                             let description = item
                                 .get("description")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("Uploaded by ISpooferMotion.")
+                                .unwrap_or("Uploaded by TrapSpoofer.")
                                 .to_string();
                             details.insert(id.to_string(), AssetDetails { name, description });
 
@@ -888,8 +888,8 @@ pub async fn process_spoofer_action(
                         if details.is_none() {
                             details = fetch_asset_details(&asset_id, &ctx.cookie, &ctx.client).await;
                         }
-                        let details = details.unwrap_or_else(|| AssetDetails { name: exact_name.clone(), description: "Uploaded by ISpooferMotion.".to_string() });
-                        let final_description = if preserve_metadata { details.description } else { "Uploaded by ISpooferMotion.".to_string() };
+                        let details = details.unwrap_or_else(|| AssetDetails { name: exact_name.clone(), description: "Uploaded by TrapSpoofer.".to_string() });
+                        let final_description = if preserve_metadata { details.description } else { "Uploaded by TrapSpoofer.".to_string() };
 
                         let up_res = crate::commands::spoofer::publish_asset_with_progress(
                             ctx.app.clone(), file_path.clone(), details.name, final_description, ctx.cookie.clone(), ctx.csrf_token.clone(), ctx.group_id.clone(), format!("up_{asset_id}"), Some(mapped_type_name.to_string()), Some(ctx.api_key.clone()), upload_user_id, false, Some(asset_id.clone()), ctx.universe_id.clone(), Some(ctx.downloads_root.clone()), ctx.proxy_url.clone(), ctx.operation_poll_interval_ms
@@ -1081,7 +1081,7 @@ pub async fn process_spoofer_action(
     if !final_replacements.is_empty() {
         ctx.log(
             &format!(
-                "{} replacement(s) queued to the Studio plugin bridge. They only apply once Studio is running with the ISpooferMotion plugin loaded -- watch the plugin status pill in the app. Don't forget to save your place after the replacements land.",
+                "{} replacement(s) queued to the Studio plugin bridge. They only apply once Studio is running with the TrapSpoofer plugin loaded -- watch the plugin status pill in the app. Don't forget to save your place after the replacements land.",
                 final_replacements.len()
             ),
             "info",

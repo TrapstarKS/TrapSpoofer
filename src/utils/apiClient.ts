@@ -4,7 +4,7 @@ import { isTauriRuntime } from './tauriRuntime';
 
 export async function getStudioPlaceIdFallback(): Promise<string> {
   try {
-    const cached = window.localStorage.getItem('ISpooferMotion_LastStudioPlaceId') || '';
+    const cached = window.localStorage.getItem('TrapSpoofer_LastStudioPlaceId') || '';
     if (/^\d+$/.test(cached) && cached !== '0') return cached;
   } catch (e) {
     addDebugLog('warn', ['Failed to read cached Studio place ID', e]);

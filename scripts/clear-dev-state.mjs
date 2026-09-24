@@ -19,8 +19,8 @@ if (process.platform === 'win32') {
   $targets = @(
     "$env:APPDATA\$appId",
     "$env:LOCALAPPDATA\$appId",
-    "$env:LOCALAPPDATA\ispoofermotion-updater",
-    "$env:LOCALAPPDATA\Temp\ISpooferMotion-Audio"
+    "$env:LOCALAPPDATA\trapspoofer-updater",
+    "$env:LOCALAPPDATA\Temp\TrapSpoofer-Audio"
   )
 
   Get-CimInstance Win32_Process |
@@ -46,14 +46,14 @@ if (process.platform === 'win32') {
     Remove-Item -LiteralPath $fullPath -Recurse -Force
   }
 
-  Write-Host 'Cleared ISpooferMotion generated dev state.'
+  Write-Host 'Cleared TrapSpoofer generated dev state.'
   `;
 
   execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], {
     stdio: 'inherit',
   });
 } else if (process.platform === 'darwin') {
-  console.log('Clearing ISpooferMotion generated dev state (macOS)...');
+  console.log('Clearing TrapSpoofer generated dev state (macOS)...');
   const homeDir = os.homedir();
   const appSupport = path.join(homeDir, 'Library', 'Application Support', appId);
   const caches = path.join(homeDir, 'Library', 'Caches', appId);
@@ -67,7 +67,7 @@ if (process.platform === 'win32') {
   }
   console.log('Done.');
 } else {
-  console.log('Clearing ISpooferMotion generated dev state (Linux)...');
+  console.log('Clearing TrapSpoofer generated dev state (Linux)...');
   const homeDir = os.homedir();
   const configDir = path.join(homeDir, '.config', appId);
   const dataDir = path.join(homeDir, '.local', 'share', appId);

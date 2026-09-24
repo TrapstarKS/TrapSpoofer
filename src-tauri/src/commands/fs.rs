@@ -68,7 +68,7 @@ async fn download_roblox_audio(
     let client = crate::utils::get_http_client();
     let mut request = client
         .get(format!("https://assetdelivery.roblox.com/v1/asset/?id={asset_id}"))
-        .header(reqwest::header::USER_AGENT, "ISpooferMotion/2.0");
+        .header(reqwest::header::USER_AGENT, "TrapSpoofer/2.0");
 
     if let Some(cookie_value) = cookie {
         let cookie_header = build_roblox_cookie_header(cookie_value);
@@ -108,7 +108,7 @@ pub async fn show_notification(
 ) -> crate::error::Result<bool> {
     app.notification()
         .builder()
-        .title(options.title.as_deref().unwrap_or("ISpooferMotion"))
+        .title(options.title.as_deref().unwrap_or("TrapSpoofer"))
         .body(options.body.as_deref().unwrap_or("Notification"))
         .icon("app-icon")
         .show()

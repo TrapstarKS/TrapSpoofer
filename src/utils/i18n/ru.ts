@@ -5,7 +5,7 @@ export const ru: TranslationTree = {
     toggleRigType: 'Toggle Rig Type',
     maintenanceBreak: 'Перерыв на Техническое Обслуживание',
     maintenanceDesc:
-      'ISpooferMotion в настоящее время недоступен из-за технического обслуживания. Пожалуйста, загляните позже!',
+      'TrapSpoofer в настоящее время недоступен из-за технического обслуживания. Пожалуйста, загляните позже!',
     fetchingAnimation: 'Загрузка анимации…',
     assetIdMappings: 'Маппинг ID Активов',
     originalId: 'Оригинальный ID',
@@ -37,8 +37,7 @@ export const ru: TranslationTree = {
     dragToOrbit: 'Перетащите для вращения · Прокрутите для масштабирования',
     speed: 'Скорость',
     errorBoundaryTitle: 'Упс, что-то сломалось.',
-    errorBoundaryDesc:
-      'ISpooferMotion столкнулся с фатальной ошибкой и не может продолжить работу.',
+    errorBoundaryDesc: 'TrapSpoofer столкнулся с фатальной ошибкой и не может продолжить работу.',
     crashReportSent: 'Отчет о сбое был незаметно отправлен разработчикам.',
     crashReportDisabled: 'Отчеты о сбоях отключены.',
     reloadApplication: 'Перезагрузить приложение',
@@ -65,8 +64,8 @@ export const ru: TranslationTree = {
     supportMe: 'Поддержать меня',
   },
   home: {
-    title: 'Добро пожаловать в ISpooferMotion',
-    subtitle: 'Центральный hub ISpooferMotion.',
+    title: 'Добро пожаловать в TrapSpoofer',
+    subtitle: 'Центральный hub TrapSpoofer.',
     quickstartTitle: 'Краткое руководство',
     quickstartBody:
       '1. Перейдите на вкладку <strong>Подмена</strong> для настройки и запуска<br>2. Выберите, что хотите подменить (Анимации, Аудио, Изображения и т.д.)<br>3. Введите ID анимации и учётные данные<br>4. Нажмите «Запустить подмену» для начала процесса',
@@ -161,7 +160,7 @@ export const ru: TranslationTree = {
     disconnect: 'Отключиться',
     hideToTrayDesc: 'При закрытии приложения оно будет свернуто в системный трей вместо выхода.',
     telemetryDesc:
-      'Разрешить ISpooferMotion автоматически отправлять анонимные отчеты об ошибках и телеметрию разработчикам.',
+      'Разрешить TrapSpoofer автоматически отправлять анонимные отчеты об ошибках и телеметрию разработчикам.',
     confirmResetDesc:
       'Вы уверены, что хотите сбросить все настройки к значениям по умолчанию? Это действие нельзя отменить.',
     resetSuccess: 'Все настройки были сброшены к значениям по умолчанию.',

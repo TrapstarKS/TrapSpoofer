@@ -18,19 +18,19 @@ fn get_profile_secrets_path(app: &AppHandle) -> crate::error::Result<PathBuf> {
 }
 
 pub(super) fn get_secrets_keyring_entry() -> crate::error::Result<Entry> {
-    Entry::new("ISpooferMotion.ProfileSecrets", "default").map_err(|e| {
+    Entry::new("TrapSpoofer.ProfileSecrets", "default").map_err(|e| {
         crate::error::AppError::Custom(format!("Failed to open credential store: {e}"))
     })
 }
 
 pub(super) fn get_opencloud_api_key_entry() -> crate::error::Result<Entry> {
-    Entry::new("ISpooferMotion.OpenCloudApiKey", "default").map_err(|e| {
+    Entry::new("TrapSpoofer.OpenCloudApiKey", "default").map_err(|e| {
         crate::error::AppError::Custom(format!("Failed to open API key credential store: {e}"))
     })
 }
 
 fn chunk_entry(index: usize) -> crate::error::Result<Entry> {
-    Entry::new(&format!("ISpooferMotion.ProfileSecrets.{index}"), "default").map_err(|e| {
+    Entry::new(&format!("TrapSpoofer.ProfileSecrets.{index}"), "default").map_err(|e| {
         crate::error::AppError::Custom(format!("Failed to open credential store: {e}"))
     })
 }

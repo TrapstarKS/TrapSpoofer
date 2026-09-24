@@ -134,10 +134,10 @@ export function addDebugLog(
         if (config?.general?.desktopNotifications) {
           const title =
             level === 'success'
-              ? 'ISpooferMotion - Success'
+              ? 'TrapSpoofer - Success'
               : level === 'error'
-                ? 'ISpooferMotion - Error'
-                : 'ISpooferMotion - Warning';
+                ? 'TrapSpoofer - Error'
+                : 'TrapSpoofer - Warning';
           invoke('show_notification', {
             options: { title, body: entry.message },
           }).catch((err) => {

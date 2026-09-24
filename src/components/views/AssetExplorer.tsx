@@ -792,7 +792,7 @@ export default function AssetExplorer({
           <div className="flex-1 flex flex-col items-center justify-center gap-6 p-8 overflow-y-auto">
             <img
               src="/ism_logo_theme_swap.svg"
-              alt="ISpooferMotion"
+              alt="TrapSpoofer"
               className="w-28 h-28 object-contain select-none drop-shadow-md"
               draggable={false}
             />
@@ -1403,8 +1403,8 @@ export default function AssetExplorer({
                             useSpooferStore.getState().setLastReplacements({});
                             useSpooferStore.getState().setAssetForcePlaceIds({});
                             useSpooferStore.getState().clearGhostAssets();
-                            localStorage.removeItem('ISpooferMotion_SavedReplacements');
-                            localStorage.removeItem('ISpooferMotion_SavedPlaceIds');
+                            localStorage.removeItem('TrapSpoofer_SavedReplacements');
+                            localStorage.removeItem('TrapSpoofer_SavedPlaceIds');
                             void invoke('clear_plugin_cache').catch(console.warn);
                             setClearConfirmOpen(false);
                           }}

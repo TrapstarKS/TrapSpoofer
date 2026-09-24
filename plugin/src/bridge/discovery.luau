@@ -8,7 +8,7 @@ local DISCOVERY_REQUEST_TIMEOUT_SECS = 2
 local MAX_CONCURRENT_PROBES = 8
 
 local function responseLooksLikeAppHealth(decoded: any): boolean
-	return type(decoded) == "table" and decoded.app == "ISpooferMotion"
+	return type(decoded) == "table" and decoded.app == "TrapSpoofer"
 end
 
 local function probeUrl(
@@ -145,7 +145,7 @@ local function discoverServer(): (boolean, boolean, string?)
 	local reason
 	if statsRef.wrongApp > 0 then
 		reason = string.format(
-			"Found a server on ports %d-%d but it isn't ISpooferMotion. Close other apps using these ports.",
+			"Found a server on ports %d-%d but it isn't TrapSpoofer. Close other apps using these ports.",
 			portStart,
 			portEnd
 		)

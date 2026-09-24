@@ -74,11 +74,11 @@ describe('useStudioConnection', () => {
     expect(result.current.studioConnected).toBe(true);
     expect(result.current.studioPlaceId).toBe('123456789');
 
-    expect(window.localStorage.getItem('ISpooferMotion_LastStudioPlaceId')).toBe('123456789');
+    expect(window.localStorage.getItem('TrapSpoofer_LastStudioPlaceId')).toBe('123456789');
   });
 
   it('caches and loads place ID from local storage', async () => {
-    window.localStorage.setItem('ISpooferMotion_LastStudioPlaceId', '987654321');
+    window.localStorage.setItem('TrapSpoofer_LastStudioPlaceId', '987654321');
     (pluginBridge.findPluginBridgePort as any).mockResolvedValue(null);
 
     const { result } = renderHook(() => useStudioConnection());

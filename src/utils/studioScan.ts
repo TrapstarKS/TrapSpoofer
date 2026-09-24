@@ -28,7 +28,7 @@ async function waitForStudioScanComplete(): Promise<void> {
         lastSyncedTime = Date.now();
       } else if (Date.now() - lastSyncedTime > 5000) {
         throw new Error(
-          'Roblox Studio is not connected or the ISpooferMotion plugin is disabled. Please open Studio and try again.',
+          'Roblox Studio is not connected or the TrapSpoofer plugin is disabled. Please open Studio and try again.',
         );
       }
     } catch (e) {
@@ -37,7 +37,7 @@ async function waitForStudioScanComplete(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, SCAN_POLL_MS));
   }
   throw new Error(
-    'Studio scan stalled — no progress for 5 minutes. Open Roblox Studio and check that the ISpooferMotion plugin is connected, then try again. Very large places may need to be scanned manually from the plugin panel.',
+    'Studio scan stalled — no progress for 5 minutes. Open Roblox Studio and check that the TrapSpoofer plugin is connected, then try again. Very large places may need to be scanned manually from the plugin panel.',
   );
 }
 
@@ -56,7 +56,7 @@ export async function triggerStudioScan(options?: ScanOptions): Promise<void> {
       throw new Error('Please open Roblox Studio to connect the plugin.');
     } else {
       throw new Error(
-        'Roblox Studio is open, but the ISpooferMotion plugin is not connected. Please enable the plugin in Studio.',
+        'Roblox Studio is open, but the TrapSpoofer plugin is not connected. Please enable the plugin in Studio.',
       );
     }
   }

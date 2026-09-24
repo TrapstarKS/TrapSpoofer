@@ -66,7 +66,7 @@ local function addRecord(records: { Record }, obj: Instance, property: string, v
 
 	local maxBytes = getMaxRecordValueBytes(property)
 	if #normalized > maxBytes then
-		warn("[ISpooferMotion] Skipping oversized value for " .. property)
+		warn("[TrapSpoofer] Skipping oversized value for " .. property)
 		return 0
 	end
 

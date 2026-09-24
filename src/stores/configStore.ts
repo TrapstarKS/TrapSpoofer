@@ -199,7 +199,7 @@ export const useConfigStore = create<ConfigState>((set, get) => {
   try {
     saved =
       typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function'
-        ? localStorage.getItem('ISpooferMotion_Config')
+        ? localStorage.getItem('TrapSpoofer_Config')
         : null;
   } catch (error) {
     console.warn('Configuration storage is unavailable; using in-memory defaults.', error);
@@ -256,7 +256,7 @@ export const useConfigStore = create<ConfigState>((set, get) => {
     if (typeof localStorage !== 'undefined' && typeof localStorage.setItem === 'function') {
       try {
         localStorage.setItem(
-          'ISpooferMotion_Config',
+          'TrapSpoofer_Config',
           JSON.stringify({
             ...c,
             spoofing: { ...c.spoofing, cookie: '', apiKey: '', groupApiKey: '' },

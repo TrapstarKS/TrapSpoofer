@@ -35,7 +35,7 @@ local function createPluginGui()
 	end
 
 	gui = Instance.new("ScreenGui")
-	gui.Name = "ISpooferMotionPluginGui"
+	gui.Name = "TrapSpooferPluginGui"
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 	local success = pcall(function()
@@ -148,7 +148,7 @@ local function createPluginGui()
 	title.TextSize = 14
 	title.TextColor3 = Color3.fromHex("#fafafa")
 	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.Text = "ISpooferMotion"
+	title.Text = "TrapSpoofer"
 	title.Parent = header
 
 	local versionLabel = Instance.new("TextLabel")
@@ -220,14 +220,14 @@ local function createPluginGui()
 
 			local serverStorage = game:GetService("ServerStorage")
 
-			local previousExport = serverStorage:FindFirstChild("ISpooferMotion_Logs")
+			local previousExport = serverStorage:FindFirstChild("TrapSpoofer_Logs")
 			if previousExport then
 				previousExport:Destroy()
 			end
 
 			local logScript = Instance.new("Script")
-			logScript.Name = "ISpooferMotion_Logs"
-			logScript.Source = "-- ISpooferMotion Logs\n-- Copy the contents below:\n\n--[[\n"
+			logScript.Name = "TrapSpoofer_Logs"
+			logScript.Source = "-- TrapSpoofer Logs\n-- Copy the contents below:\n\n--[[\n"
 				.. finalString
 				.. "\n]]"
 			logScript.Parent = serverStorage
@@ -240,7 +240,7 @@ local function createPluginGui()
 			if exportSuccess then
 				openLogsButton.Text = "Opened!"
 			else
-				warn("ISpooferMotion Open Logs Failed: " .. tostring(err))
+				warn("TrapSpoofer Open Logs Failed: " .. tostring(err))
 				openLogsButton.Text = "Error"
 			end
 
@@ -675,7 +675,7 @@ local function createPluginGui()
 			return
 		end
 		-- selene: allow(global_usage)
-		local _G_plugin = _G.ISpooferMotionPlugin
+		local _G_plugin = _G.TrapSpooferPlugin
 		if _G_plugin and _G_plugin.runManualReplacements then
 			manualRunning = true
 			runManualBtn.Text = "Starting..."
@@ -732,7 +732,7 @@ local function createPluginGui()
 			end, currentBatchSize)
 		else
 			warn(
-				"[ISpooferMotion] Plugin handler not ready yet - wait for the plugin to finish loading."
+				"[TrapSpoofer] Plugin handler not ready yet - wait for the plugin to finish loading."
 			)
 		end
 	end)
@@ -787,7 +787,7 @@ logConnection = LogService.MessageOut:Connect(function(message, messageType)
 		return
 	end
 
-	local isIsm = string.find(message, "[ISpooferMotion]", 1, true)
+	local isIsm = string.find(message, "[TrapSpoofer]", 1, true)
 
 	if isIsm then
 		logCounter += 1
@@ -809,7 +809,7 @@ logConnection = LogService.MessageOut:Connect(function(message, messageType)
 		logLabel.TextXAlignment = Enum.TextXAlignment.Left
 		logLabel.TextWrapped = true
 
-		local cleanMsg = string.gsub(message, "%[ISpooferMotion%] ", "")
+		local cleanMsg = string.gsub(message, "%[TrapSpoofer%] ", "")
 		cleanMsg = string.gsub(cleanMsg, "%[Warning%] ", "")
 
 		logLabel.Text = cleanMsg
@@ -832,7 +832,7 @@ function logToPlugin(text)
 	if string.find(msg, "[Warning]", 1, true) then
 		warn(msg)
 	else
-		print("[ISpooferMotion] " .. msg)
+		print("[TrapSpoofer] " .. msg)
 	end
 end
 

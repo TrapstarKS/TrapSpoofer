@@ -119,7 +119,7 @@ pub async fn start_server(app_handle: AppHandle) {
     let Some((listener, addr, occupied_defaults)) = bind_available_listener().await else {
         log::error!(
             "Could not start plugin HTTP server: all ports {}-{} are occupied. \
-             Close other ISpooferMotion instances or programs using these ports.",
+             Close other TrapSpoofer instances or programs using these ports.",
             PLUGIN_PORT_START,
             PLUGIN_PORT_FALLBACK_END
         );
@@ -190,7 +190,7 @@ pub async fn start_server(app_handle: AppHandle) {
             get(|State(state): State<AppState>| async move {
                 let port = *active_bridge_port().read().await;
                 Json(json!({
-                    "app": "ISpooferMotion",
+                    "app": "TrapSpoofer",
                     "port": port.unwrap_or(14285),
                     "startedAt": state.started_at,
                     "allowStudioPairing": true

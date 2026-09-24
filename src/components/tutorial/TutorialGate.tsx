@@ -46,7 +46,7 @@ export const TutorialGate = () => {
     () => [
       {
         id: 'welcome',
-        title: 'Welcome to ISpooferMotion',
+        title: 'Welcome to TrapSpoofer',
         body: "Lets set you up in 5 quick steps. You'll add a Roblox account, paste an Open Cloud API key, scan Studio, then select assets and run the spoofer.",
       },
       {
@@ -66,7 +66,7 @@ export const TutorialGate = () => {
       {
         id: 'scan-studio',
         title: 'Scan Studio',
-        body: 'Open a Roblox Studio place with the ISpooferMotion plugin loaded, then click Scan Studio. Scanning is the primary way to populate the asset list — it pulls every animation, sound, image, mesh, and script reference from the running game.',
+        body: 'Open a Roblox Studio place with the TrapSpoofer plugin loaded, then click Scan Studio. Scanning is the primary way to populate the asset list — it pulls every animation, sound, image, mesh, and script reference from the running game.',
         isComplete: () => {
           if (rootInstances.length === 0) return false;
           const hasAssets = (list: typeof rootInstances): boolean => {

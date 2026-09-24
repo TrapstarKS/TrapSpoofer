@@ -5,7 +5,7 @@ export const en: TranslationTree = {
     toggleRigType: 'Toggle Rig Type',
     maintenanceBreak: 'Maintenance Break',
     maintenanceDesc:
-      'ISpooferMotion is undergoing scheduled maintenance. Please check back in a little while.',
+      'TrapSpoofer is undergoing scheduled maintenance. Please check back in a little while.',
     fetchingAnimation: 'Loading animation preview…',
     assetIdMappings: 'Asset ID Mappings',
     originalId: 'Original ID',
@@ -35,7 +35,7 @@ export const en: TranslationTree = {
     robloxApiDown:
       'Roblox servers are currently having connection issues. Some uploads or downloads may be temporarily unavailable.',
     portDiagnosticFailed:
-      'Could not start the Studio plugin connection: ports 14285–14320 are currently in use by other programs. Close any duplicate app instances or conflicting apps, then restart ISpooferMotion.',
+      'Could not start the Studio plugin connection: ports 14285–14320 are currently in use by other programs. Close any duplicate app instances or conflicting apps, then restart TrapSpoofer.',
     portDiagnosticExtended:
       "The plugin bridge is running on port {port} because the standard ports (14285–14289) were occupied. In Roblox Studio, adjust the plugin's port scan range up to {port} to connect.",
     portDiagnosticOccupied: 'Conflicting processes using these ports: {processes}',
@@ -51,7 +51,7 @@ export const en: TranslationTree = {
     speed: 'Speed',
     errorBoundaryTitle: 'Something stopped working.',
     errorBoundaryDesc:
-      'ISpooferMotion encountered an unexpected problem and paused. Click below to reload the app.',
+      'TrapSpoofer encountered an unexpected problem and paused. Click below to reload the app.',
     crashReportSent: 'An anonymous crash report was sent so we can fix this issue.',
     crashReportDisabled: 'Crash reporting is currently turned off.',
     reloadApplication: 'Reload Application',
@@ -148,9 +148,9 @@ export const en: TranslationTree = {
     maxDownloadConcurrency: 'Max Download Concurrency',
     disconnect: 'Disconnect',
     hideToTrayDesc:
-      'Minimizes ISpooferMotion to your system tray when you close the window instead of quitting.',
+      'Minimizes TrapSpoofer to your system tray when you close the window instead of quitting.',
     telemetryDesc:
-      'Help improve ISpooferMotion by sending anonymous crash diagnostics to the developers.',
+      'Help improve TrapSpoofer by sending anonymous crash diagnostics to the developers.',
     confirmResetDesc:
       'Reset all settings back to their defaults? Your custom configuration and preferences will be cleared.',
     resetSuccess: 'All settings have been reset to defaults.',

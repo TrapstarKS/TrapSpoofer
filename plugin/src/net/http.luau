@@ -42,12 +42,12 @@ local function postJson(endpoint: string, payload: any): (boolean, any)
 	end)
 
 	if not encodeOk or type(body) ~= "string" then
-		warn("[ISpooferMotion] Failed to encode POST payload for " .. endpoint)
+		warn("[TrapSpoofer] Failed to encode POST payload for " .. endpoint)
 		return false, nil
 	end
 
 	if #body > MAX_HTTP_BODY_BYTES then
-		warn("[ISpooferMotion] Refusing oversized POST payload for " .. endpoint)
+		warn("[TrapSpoofer] Refusing oversized POST payload for " .. endpoint)
 		return false, nil
 	end
 
@@ -71,7 +71,7 @@ local function postJson(endpoint: string, payload: any): (boolean, any)
 			local decodeOk, decoded = decodeJsonResponseBody(response)
 			if not decodeOk then
 				if endpoint ~= "/patch-progress" then
-					warn("[ISpooferMotion] Invalid JSON response from " .. endpoint)
+					warn("[TrapSpoofer] Invalid JSON response from " .. endpoint)
 				end
 				return false, nil
 			end
@@ -90,7 +90,7 @@ local function postJson(endpoint: string, payload: any): (boolean, any)
 		else
 			if endpoint ~= "/patch-progress" then
 				warn(
-					"[ISpooferMotion] Failed to POST to "
+					"[TrapSpoofer] Failed to POST to "
 						.. endpoint
 						.. ": "
 						.. tostring(response and response.StatusCode or response)

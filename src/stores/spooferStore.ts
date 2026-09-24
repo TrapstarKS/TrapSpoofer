@@ -175,7 +175,7 @@ interface SpooferState {
 
 const loadSavedReplacements = (): Record<string, string> => {
   try {
-    const raw = localStorage.getItem('ISpooferMotion_SavedReplacements');
+    const raw = localStorage.getItem('TrapSpoofer_SavedReplacements');
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -184,7 +184,7 @@ const loadSavedReplacements = (): Record<string, string> => {
 
 const loadSavedPlaceIds = (): Record<string, string> => {
   try {
-    const raw = localStorage.getItem('ISpooferMotion_SavedPlaceIds');
+    const raw = localStorage.getItem('TrapSpoofer_SavedPlaceIds');
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -258,7 +258,7 @@ export const useSpooferStore = create<SpooferState>((set) => ({
     set((state) => {
       const next = typeof val === 'function' ? val(state.lastReplacements) : val;
       try {
-        localStorage.setItem('ISpooferMotion_SavedReplacements', JSON.stringify(next));
+        localStorage.setItem('TrapSpoofer_SavedReplacements', JSON.stringify(next));
       } catch {}
       return { lastReplacements: next };
     }),
@@ -352,7 +352,7 @@ export const useSpooferStore = create<SpooferState>((set) => ({
     set((state) => {
       const next = typeof val === 'function' ? val(state.assetForcePlaceIds) : val;
       try {
-        localStorage.setItem('ISpooferMotion_SavedPlaceIds', JSON.stringify(next));
+        localStorage.setItem('TrapSpoofer_SavedPlaceIds', JSON.stringify(next));
       } catch {}
       return { assetForcePlaceIds: next };
     }),
@@ -362,7 +362,7 @@ export const useSpooferStore = create<SpooferState>((set) => ({
       const next = { ...state.assetForcePlaceIds };
       for (const id of ids) delete next[id];
       try {
-        localStorage.setItem('ISpooferMotion_SavedPlaceIds', JSON.stringify(next));
+        localStorage.setItem('TrapSpoofer_SavedPlaceIds', JSON.stringify(next));
       } catch {}
       return { assetForcePlaceIds: next };
     }),
@@ -526,7 +526,7 @@ export const applyReplacements = async (
         setSpoofingLogs((prev) =>
           appendSpoofingLog(
             prev,
-            `[INFO] ${Object.keys(replacements).length} replacement(s) generated but the Studio plugin isn't connected. Open Studio with the ISpooferMotion plugin loaded and use Retry Replacement, or copy the IDs from the Results panel.`,
+            `[INFO] ${Object.keys(replacements).length} replacement(s) generated but the Studio plugin isn't connected. Open Studio with the TrapSpoofer plugin loaded and use Retry Replacement, or copy the IDs from the Results panel.`,
           ),
         );
       } else {

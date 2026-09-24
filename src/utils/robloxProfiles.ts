@@ -19,8 +19,8 @@ export interface CookieValidationResult {
   cookie: string;
 }
 
-const USER_CACHE_KEY = 'ISpooferMotion_DetectedUsers';
-const GROUP_CACHE_KEY_PREFIX = 'ISpooferMotion_DetectedGroups_';
+const USER_CACHE_KEY = 'TrapSpoofer_DetectedUsers';
+const GROUP_CACHE_KEY_PREFIX = 'TrapSpoofer_DetectedGroups_';
 
 export const normalizeId = (value: string | number | null | undefined) =>
   String(value ?? '').trim();

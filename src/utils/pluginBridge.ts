@@ -64,7 +64,7 @@ export async function findPluginBridgePort() {
       if (!response.ok) return null;
 
       const health = (await response.json()) as PluginBridgeHealth;
-      return health.app === 'ISpooferMotion' && health.port === port ? String(port) : null;
+      return health.app === 'TrapSpoofer' && health.port === port ? String(port) : null;
     } catch {
       return null;
     }

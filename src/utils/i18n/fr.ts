@@ -4,7 +4,7 @@ export const fr: TranslationTree = {
   misc: {
     toggleRigType: 'Toggle Rig Type',
     maintenanceBreak: 'Pause de Maintenance',
-    maintenanceDesc: 'ISpooferMotion est actuellement en maintenance. Veuillez revenir plus tard !',
+    maintenanceDesc: 'TrapSpoofer est actuellement en maintenance. Veuillez revenir plus tard !',
     fetchingAnimation: "Récupération de l'animation…",
     assetIdMappings: "Mappages d'ID de Ressources",
     originalId: 'ID Original',
@@ -36,7 +36,7 @@ export const fr: TranslationTree = {
     dragToOrbit: 'Faites glisser pour tourner · Faites défiler pour zoomer',
     speed: 'Vitesse',
     errorBoundaryTitle: "Oups, quelque chose s'est cassé.",
-    errorBoundaryDesc: "ISpooferMotion a rencontré une erreur fatale et n'a pas pu continuer.",
+    errorBoundaryDesc: "TrapSpoofer a rencontré une erreur fatale et n'a pas pu continuer.",
     crashReportSent: 'Un rapport de plantage a été envoyé silencieusement aux développeurs.',
     crashReportDisabled: 'Le rapport de plantage est désactivé.',
     reloadApplication: "Recharger l'Application",
@@ -61,8 +61,8 @@ export const fr: TranslationTree = {
     supportMe: 'Soutenez-moi',
   },
   home: {
-    title: 'Bienvenue sur ISpooferMotion',
-    subtitle: 'Hub central de ISpooferMotion.',
+    title: 'Bienvenue sur TrapSpoofer',
+    subtitle: 'Hub central de TrapSpoofer.',
     quickstartTitle: 'Guide de Démarrage Rapide',
     quickstartBody:
       "1. Allez dans l'onglet <strong>Usurpation</strong> pour configurer<br>2. Sélectionnez ce que vous voulez usurper<br>3. Entrez votre ID d'animation et vos identifiants<br>4. Cliquez sur \"Lancer l'Usurpation\"",
@@ -153,7 +153,7 @@ export const fr: TranslationTree = {
     hideToTrayDesc:
       "Lors de la fermeture de l'application, elle sera minimisée dans la zone de notification au lieu de se fermer.",
     telemetryDesc:
-      'Autoriser ISpooferMotion à envoyer automatiquement des rapports de plantage anonymes et des données de télémétrie aux développeurs.',
+      'Autoriser TrapSpoofer à envoyer automatiquement des rapports de plantage anonymes et des données de télémétrie aux développeurs.',
     confirmResetDesc:
       'Êtes-vous sûr de vouloir réinitialiser tous les paramètres à leurs valeurs par défaut ? Cette action est irréversible.',
     resetSuccess: 'Tous les paramètres ont été réinitialisés à leurs valeurs par défaut.',

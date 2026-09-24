@@ -279,7 +279,7 @@ local function applyPatch(patch: Patch): (boolean, string?)
 			if ok then
 				logToPlugin(
 					string.format(
-						"[ISpooferMotion] Replaced attribute '%s' on %s -> '%s'",
+						"[TrapSpoofer] Replaced attribute '%s' on %s -> '%s'",
 						attr,
 						pcall(function()
 							return obj:GetFullName()
@@ -308,7 +308,7 @@ local function applyPatch(patch: Patch): (boolean, string?)
 			end)
 			logToPlugin(
 				string.format(
-					"[ISpooferMotion] Replaced property '%s' on %s -> '%s'",
+					"[TrapSpoofer] Replaced property '%s' on %s -> '%s'",
 					patch.property,
 					objFullName,
 					tostring(patch.value)
@@ -332,7 +332,7 @@ local function applyPatch(patch: Patch): (boolean, string?)
 			pcall(function()
 				objFullName = obj:GetFullName()
 			end)
-			logToPlugin("[ISpooferMotion] Replaced emotes on " .. objFullName)
+			logToPlugin("[TrapSpoofer] Replaced emotes on " .. objFullName)
 		end
 		return ok, err
 	elseif patch.action == "replaceAccessories" then
@@ -351,7 +351,7 @@ local function applyPatch(patch: Patch): (boolean, string?)
 			pcall(function()
 				objFullName = obj:GetFullName()
 			end)
-			logToPlugin("[ISpooferMotion] Replaced accessories on " .. objFullName)
+			logToPlugin("[TrapSpoofer] Replaced accessories on " .. objFullName)
 		end
 		return ok, err
 	elseif patch.action == "replaceTags" then
@@ -386,7 +386,7 @@ local function applyPatch(patch: Patch): (boolean, string?)
 				objFullName = obj:GetFullName()
 			end)
 			logToPlugin(
-				string.format("[ISpooferMotion] Replaced %d tag(s) on %s", #decoded, objFullName)
+				string.format("[TrapSpoofer] Replaced %d tag(s) on %s", #decoded, objFullName)
 			)
 		end
 		return ok, err
@@ -405,7 +405,7 @@ local function applyPatch(patch: Patch): (boolean, string?)
 			end)
 			logToPlugin(
 				string.format(
-					"[ISpooferMotion] Replaced attribute '%s' on %s -> '%s'",
+					"[TrapSpoofer] Replaced attribute '%s' on %s -> '%s'",
 					patch.property,
 					objFullName,
 					tostring(patch.value)
@@ -458,7 +458,7 @@ local function applyPatch(patch: Patch): (boolean, string?)
 			pcall(function()
 				objFullName = obj:GetFullName()
 			end)
-			logToPlugin("[ISpooferMotion] Replaced script source in " .. objFullName)
+			logToPlugin("[TrapSpoofer] Replaced script source in " .. objFullName)
 		end
 		return ok, err
 	elseif patch.action == "replaceMeshPart" then
@@ -498,7 +498,7 @@ local function applyPatch(patch: Patch): (boolean, string?)
 		end)
 		logToPlugin(
 			string.format(
-				"[ISpooferMotion] Replaced MeshPart '%s' in place: mesh=%s texture=%s",
+				"[TrapSpoofer] Replaced MeshPart '%s' in place: mesh=%s texture=%s",
 				objFullName,
 				targetMeshUri,
 				targetTextureUri or "(preserved)"
@@ -543,7 +543,7 @@ local function applyPatches(patches: any)
 	local failedPatchesList = {}
 
 	pcall(function()
-		recording = ChangeHistoryService:TryBeginRecording("ISpooferMotion Pre-Patch")
+		recording = ChangeHistoryService:TryBeginRecording("TrapSpoofer Pre-Patch")
 	end)
 
 	local function finishPatch()
@@ -575,7 +575,7 @@ local function applyPatches(patches: any)
 					then rawPatch.token or rawPatch.id or rawPatch.fullName or "unknown"
 					else "unknown"
 				table.insert(failedPatchesList, failedId)
-				logToPlugin("[Warning] [ISpooferMotion] Invalid patch: " .. tostring(validationErr))
+				logToPlugin("[Warning] [TrapSpoofer] Invalid patch: " .. tostring(validationErr))
 			else
 				local maxAttempts = 5
 				local attempt = 0
@@ -606,7 +606,7 @@ local function applyPatches(patches: any)
 						local patchName = patch.fullName or patch.token or "unknown"
 						logToPlugin(
 							string.format(
-								"[Warning] [ISpooferMotion] Rate limit hit applying patch to '%s'. Waiting 5s before retry (%d/%d)...",
+								"[Warning] [TrapSpoofer] Rate limit hit applying patch to '%s'. Waiting 5s before retry (%d/%d)...",
 								tostring(patchName),
 								attempt,
 								maxAttempts
@@ -629,7 +629,7 @@ local function applyPatches(patches: any)
 
 					logToPlugin(
 						"[Warning] "
-							.. "[ISpooferMotion] Patch failed for "
+							.. "[TrapSpoofer] Patch failed for "
 							.. tostring(patchName)
 							.. ": "
 							.. tostring(err)
@@ -661,14 +661,14 @@ local function applyPatches(patches: any)
 
 	if not batchOk then
 		failed += 1
-		logToPlugin("[Warning] " .. "[ISpooferMotion] Patch batch failed: " .. tostring(batchErr))
+		logToPlugin("[Warning] " .. "[TrapSpoofer] Patch batch failed: " .. tostring(batchErr))
 	end
 
 	finishPatch()
 
 	logToPlugin(
 		string.format(
-			"[ISpooferMotion] Targeted replacement complete: %d patches applied, %d failed",
+			"[TrapSpoofer] Targeted replacement complete: %d patches applied, %d failed",
 			succeeded,
 			failed
 		)

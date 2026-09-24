@@ -22,7 +22,7 @@ pub fn open_frontend_devtools(app: AppHandle) {
         #[cfg(not(debug_assertions))]
         {
             let _ = win.eval(
-                "console.warn('[ISpooferMotion] DevTools are not available in this release build.')"
+                "console.warn('[TrapSpoofer] DevTools are not available in this release build.')",
             );
         }
     }
@@ -62,7 +62,7 @@ pub fn set_proxy_url(url: Option<String>) -> bool {
 #[specta::specta]
 #[must_use]
 pub fn get_release_source() -> String {
-    "ISpooferMotion/ISpooferMotion-V2".to_string()
+    "TrapstarKS/TrapSpoofer".to_string()
 }
 
 #[tauri::command]

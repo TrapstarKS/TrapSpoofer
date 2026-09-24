@@ -57,7 +57,7 @@ async function buildPlugin() {
 	<External>nil</External>
 	<Item class="Script" referent="${referent}">
 		<Properties>
-			<string name="Name">ISpooferMotion</string>
+			<string name="Name">TrapSpoofer</string>
 			<ProtectedString name="Source"><![CDATA[${safeSource}]]></ProtectedString>
 			<bool name="Disabled">false</bool>
 		</Properties>
@@ -71,18 +71,18 @@ async function buildPlugin() {
     const pluginBuildDir = join(pluginRoot, '.generated');
     mkdirSync(pluginBuildDir, { recursive: true });
 
-    const generatedSourcePath = join(pluginBuildDir, 'ISpooferMotion.generated.luau');
+    const generatedSourcePath = join(pluginBuildDir, 'TrapSpoofer.generated.luau');
     writeFileSync(generatedSourcePath, rawLuaSource, 'utf8');
 
-    const outPath = join(outDir, 'ISpooferMotion.rbxmx');
+    const outPath = join(outDir, 'TrapSpoofer.rbxmx');
     writeFileSync(outPath, rbxmx, 'utf8');
 
     const kb = (rawLuaSource.length / 1024).toFixed(1);
 
     console.log(`    Plugin built successfully`);
     console.log(`    Source      : plugin/plugin.luau + includes  (${kb} KB)`);
-    console.log(`    Lint source : plugin/.generated/ISpooferMotion.generated.luau`);
-    console.log(`    Output      : dist-plugin/ISpooferMotion.rbxmx`);
+    console.log(`    Lint source : plugin/.generated/TrapSpoofer.generated.luau`);
+    console.log(`    Output      : dist-plugin/TrapSpoofer.rbxmx`);
     console.log(``);
   } catch (err) {
     console.error('Failed to build plugin:', err);

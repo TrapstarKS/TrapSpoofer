@@ -562,7 +562,7 @@ pub async fn publish_asset_with_progress(
             if status_code == 400 && !tried_name_fallback {
                 tried_name_fallback = true;
                 request_metadata.display_name = "Spoofed Asset".to_string();
-                request_metadata.description = "Uploaded by ISpooferMotion.".to_string();
+                request_metadata.description = "Uploaded by TrapSpoofer.".to_string();
                 meta_json = serde_json::to_string(&request_metadata).unwrap_or(meta_json);
                 continue;
             }

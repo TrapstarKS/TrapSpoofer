@@ -61,7 +61,7 @@ describe('pluginBridge', () => {
       vi.mocked(tauriRuntime.isTauriRuntime).mockReturnValue(false);
       mockFetch.mockResolvedValue({
         ok: true,
-        json: vi.fn().mockResolvedValue({ app: 'ISpooferMotion', port: 14285 }),
+        json: vi.fn().mockResolvedValue({ app: 'TrapSpoofer', port: 14285 }),
       });
 
       const result = await findPluginBridgePort();
