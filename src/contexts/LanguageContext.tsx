@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 
-import { getTranslation } from '../utils/i18n';
+import { formatTranslation, getTranslation } from '../utils/i18n';
 
 interface LanguageState {
   lang: string;
   setLang: (lang: string) => void;
   t: (keyPath: string) => string;
+  /** Translate with `{var}` interpolation. */
+  tf: (keyPath: string, vars: Record<string, string | number>) => string;
 }
 
 const getInitialLang = () => {
@@ -15,7 +17,7 @@ const getInitialLang = () => {
   if (savedLang) return savedLang;
 
   const systemLang = navigator.language ? navigator.language.split('-')[0] : 'en';
-  const supported = ['en', 'es', 'ru', 'fr'];
+  const supported = ['pt', 'en', 'es', 'ru', 'fr'];
   if (supported.includes(systemLang)) {
     if (hasStorage && typeof localStorage.setItem === 'function') {
       localStorage.setItem('language', systemLang);
@@ -34,6 +36,7 @@ export const useLanguage = create<LanguageState>((set, get) => ({
     set({ lang: newLang });
   },
   t: (keyPath: string) => getTranslation(get().lang, keyPath),
+  tf: (keyPath, vars) => formatTranslation(get().lang, keyPath, vars),
 }));
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

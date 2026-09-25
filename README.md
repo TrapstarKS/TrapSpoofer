@@ -1,21 +1,22 @@
 <p align="center">
-  <img src="./src/assets/app_icon.png" width="128" height="128" alt="ISpooferMotion">
+  <img src="./src/assets/app_icon.png" width="128" height="128" alt="TrapSpoofer">
 </p>
 
-<h1 align="center">ISpooferMotion V2</h1>
+<h1 align="center">TrapSpoofer</h1>
 
 <p align="center">
-  A desktop asset replacement tool for Roblox Studio.
+  Ferramenta de desktop para substituir (spoofar) assets do Roblox.
   <br>
-  Preview, replace, and push assets across an entire place without manually editing instances.
+  Escaneie, previa, re-suba e troque animações, sons, imagens e meshes em um lugar inteiro — sem editar instância por instância.
 </p>
 
 <p align="center">
-  <kbd>Animations</kbd>&nbsp;&nbsp;
-  <kbd>Sounds</kbd>&nbsp;&nbsp;
-  <kbd>Decals</kbd>&nbsp;&nbsp;
+  <kbd>Animações</kbd>&nbsp;&nbsp;
+  <kbd>Sons</kbd>&nbsp;&nbsp;
+  <kbd>Imagens</kbd>&nbsp;&nbsp;
   <kbd>Meshes</kbd>&nbsp;&nbsp;
-  <kbd>Videos</kbd>
+  <kbd>Arquivos .rbxl / .rbxm</kbd>&nbsp;&nbsp;
+  <kbd>MCP (IA)</kbd>
 </p>
 
 <p align="center">
@@ -23,184 +24,148 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ISpooferMotion/ISpooferMotion-V2/releases/latest">
-    <img src="https://img.shields.io/github/v/release/ISpooferMotion/ISpooferMotion-V2?style=flat-square&label=release" alt="Latest Release">
-  </a>
-  &nbsp;
-  <a href="https://github.com/ISpooferMotion/ISpooferMotion-V2/releases">
-    <img src="https://img.shields.io/github/downloads/ISpooferMotion/ISpooferMotion-V2/total?style=flat-square&label=downloads" alt="Downloads">
-  </a>
-  &nbsp;
-  <a href="https://github.com/ISpooferMotion/ISpooferMotion-V2/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/ISpooferMotion/ISpooferMotion-V2?style=flat-square&label=license" alt="License">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/ISpooferMotion/ISpooferMotion-V2/releases/latest">Download</a>
+  <a href="https://github.com/TrapstarKS/TrapSpoofer/releases/latest">Download</a>
   ·
-  <a href="https://github.com/ISpooferMotion/ISpooferMotion-V2/issues/new?template=bug_report.md">Report a Bug</a>
-  ·
-  <a href="https://github.com/ISpooferMotion/ISpooferMotion-V2/issues/new?template=feature_request.md">Request a Feature</a>
+  <a href="https://github.com/TrapstarKS/TrapSpoofer/issues/new">Reportar um bug</a>
 </p>
 
 <br>
 
 ---
 
-## Overview
+> **Aviso.** O TrapSpoofer é uma ferramenta para trabalhar com assets do Roblox. Use apenas com conteúdo que você tem direito de usar. Você é responsável por respeitar os Termos de Uso do Roblox e os direitos de terceiros.
 
-ISpooferMotion connects directly to a running Roblox Studio session through a companion Luau plugin. Once connected, assets can be discovered, previewed, and replaced across the entire place without manually searching through instances or modifying place files.
+TrapSpoofer é um fork bastante reformulado do [ISpooferMotion V2](https://github.com/ISpooferMotion/ISpooferMotion-V2), com foco em três coisas: **interface simples e didática**, **modo arquivo** (funciona sem o Studio aberto) e **integração com IA via MCP**.
+
+---
+
+## O que ele faz
+
+O app conversa direto com uma sessão do Roblox Studio através de um plugin Luau companheiro. Uma vez conectado, os assets são descobertos, re-enviados para a sua conta (ou grupo) e os novos IDs são aplicados de volta no place inteiro — sem procurar instância por instância.
 
 <table>
   <tr>
     <td width="25%" valign="top">
-      <strong>Asset replacement</strong><br><br>
-      <sub>Replace animations, sounds, decals, meshes, and videos across a complete place scan in real time.</sub>
+      <strong>Fluxo guiado</strong><br><br>
+      <sub>Um passo a passo claro: Fonte → Revisar → Enviar → Aplicar. Nada de menus escondidos.</sub>
     </td>
     <td width="25%" valign="top">
-      <strong>Asset preview</strong><br><br>
-      <sub>Preview R6 and R15 animations and listen to audio assets before applying replacements.</sub>
+      <strong>Modo arquivo</strong><br><br>
+      <sub>Abra um <code>.rbxl</code>/<code>.rbxlx</code>/<code>.rbxm</code>/<code>.rbxmx</code>, spoofe e salve uma cópia nova — sem precisar do Studio aberto.</sub>
     </td>
     <td width="25%" valign="top">
-      <strong>Profiles</strong><br><br>
-      <sub>Manage Roblox users and groups with isolated profile data and credentials stored through the operating system.</sub>
+      <strong>Servidor MCP</strong><br><br>
+      <sub>Deixe assistentes de IA (Claude Code, Claude Desktop, Cursor) escanear, spoofar e aplicar por você.</sub>
     </td>
     <td width="25%" valign="top">
-      <strong>Place browser</strong><br><br>
-      <sub>Explore the asset tree, inspect instance properties, locate references, and copy asset IDs directly.</sub>
+      <strong>Contas &amp; grupos</strong><br><br>
+      <sub>Gerencie várias contas Roblox e chaves Open Cloud, com credenciais guardadas pelo sistema operacional.</sub>
     </td>
   </tr>
 </table>
 
-ISpooferMotion keeps the desktop application and Studio plugin synchronized so replacements can be applied while the place is running. The application handles discovery, previews, profiles, and replacement configuration while the plugin performs the Studio side operations.
-
 ---
 
-## Installation
+## Instalação
 
-Download the latest release for your platform from the [releases page](https://github.com/ISpooferMotion/ISpooferMotion-V2/releases/latest).
+Baixe a última versão na [página de releases](https://github.com/TrapstarKS/TrapSpoofer/releases/latest).
 
-| Platform | Package                               |
-| -------- | ------------------------------------- |
-| Windows  | `ISpooferMotion_x.x.x_x64-setup.exe`  |
-| macOS    | `ISpooferMotion_x.x.x_x64.dmg`        |
-| Linux    | `ISpooferMotion_x.x.x_amd64.AppImage` |
+| Plataforma | Pacote                              |
+| ---------- | ----------------------------------- |
+| Windows    | `TrapSpoofer_x.x.x_x64-setup.exe`   |
+| macOS      | `TrapSpoofer_x.x.x_x64.dmg`         |
+| Linux      | `TrapSpoofer_x.x.x_amd64.AppImage`  |
 
-The Roblox Studio plugin, `ISpooferMotion.rbxmx`, is included with every release. The desktop app automatically synchronizes its bundled plugin into supported local Roblox Studio plugin directories when the app starts.
+O plugin do Roblox Studio (`TrapSpoofer.rbxmx`) acompanha cada release. O app instala e sincroniza esse plugin automaticamente nas pastas de plugins locais do Studio quando é aberto.
 
 > [!NOTE]
-> Windows Defender and other antivirus software may flag unsigned builds. ISpooferMotion is not currently code signed. Builds can be independently verified by compiling the project from source.
+> O Windows Defender e outros antivírus podem sinalizar builds não assinados. O TrapSpoofer não tem assinatura de código comercial. Você pode verificar compilando o projeto a partir do código-fonte.
 
 ---
 
-## Development
+## Como usar (resumo)
 
-### Requirements
+1. **Contas** — adicione uma conta Roblox: o cookie `.ROBLOSECURITY` (conta que **baixa**) e uma **Open Cloud API Key** com escopo *Assets: read + write* (credencial que **envia**). O app pode detectar o cookie do Studio/navegador automaticamente.
+2. **Fonte** — escaneie o Studio, abra um arquivo `.rbxl`/`.rbxm` ou cole IDs.
+3. **Revisar** — selecione os assets que precisam ser spoofados (o app marca quais já são seus).
+4. **Enviar** — clique em *Iniciar spoof*. Ele baixa e re-sobe cada asset.
+5. **Aplicar** — os novos IDs vão para o Studio (ou para um arquivo `.rbxm` novo, no modo arquivo). Salve o place.
 
-| Requirement   | Version       |
+---
+
+## Integração com IA (MCP)
+
+O TrapSpoofer expõe um servidor [MCP](https://modelcontextprotocol.io) local, então um assistente de IA pode dirigir o app: `get_status`, `scan_studio`, `scan_file`, `list_assets`, `spoof_assets`, `get_job`, `push_to_studio`, `replace_ids`, `write_spoofed_file`, entre outros. A aba **IA / MCP** dentro do app mostra a URL, o status e os trechos de configuração prontos para copiar.
+
+- **Claude Code:** `claude mcp add --transport http trapspoofer http://127.0.0.1:14380/mcp`
+- **Claude Desktop / Cursor (stdio):**
+  ```json
+  {
+    "mcpServers": {
+      "trapspoofer": { "command": "C:/caminho/para/TrapSpoofer.exe", "args": ["--mcp"] }
+    }
+  }
+  ```
+
+O servidor só aceita conexões locais e pode ser desligado nas configurações.
+
+---
+
+## Desenvolvimento
+
+### Requisitos
+
+| Requisito     | Versão        |
 | ------------- | ------------- |
-| Rust          | Latest stable |
-| Bun           | 1.x or newer  |
-| Node.js       | 20 or newer   |
+| Rust          | Stable atual  |
+| Bun           | 1.x ou maior  |
+| Node.js       | 20 ou maior   |
 | Tauri         | 2.x           |
-| Roblox Studio | Latest        |
+| Roblox Studio | Atual         |
 
-Linux development also requires the native Tauri dependencies:
+No Linux, o Tauri também exige: `libwebkit2gtk-4.1-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`.
 
-```bash
-libwebkit2gtk-4.1-dev
-libssl-dev
-libayatana-appindicator3-dev
-librsvg2-dev
-```
-
-### Run
+### Rodar
 
 ```bash
-git clone https://github.com/ISpooferMotion/ISpooferMotion-V2.git
-cd ISpooferMotion-V2
+git clone https://github.com/TrapstarKS/TrapSpoofer.git
+cd TrapSpoofer
 
 bun install
 bun run tauri:dev
 ```
 
 <details>
-
-<summary><strong>Useful commands</strong></summary>
+<summary><strong>Comandos úteis</strong></summary>
 
 <br>
 
-| Command                | Description                                        |
+| Comando                | Descrição                                          |
 | ---------------------- | -------------------------------------------------- |
-| `bun run tauri:dev`    | Start the desktop application in development mode  |
-| `bun run check`        | Run the complete project validation suite          |
-| `bun run build:plugin` | Build the Roblox Studio plugin into `dist-plugin/` |
-| `bun run format`       | Format TypeScript, Rust, and Luau sources          |
-| `bun run test`         | Run frontend tests with Vitest                     |
-| `bun run rust:test`    | Run Rust unit tests                                |
-
-</details>
-
-<details>
-
-<summary><strong>Full validation</strong></summary>
-
-<br>
-
-Before opening a pull request, run:
-
-```bash
-bun run check
-```
-
-The check suite validates formatting, frontend types, linting, Rust code, tests, and production builds.
-
-Individual checks can also be run through their respective package scripts when working on a specific part of the project.
+| `bun run tauri:dev`    | Inicia o app desktop em modo de desenvolvimento    |
+| `bun run check`        | Roda toda a suíte de validação                     |
+| `bun run build:plugin` | Compila o plugin do Studio em `dist-plugin/`       |
+| `bun run format`       | Formata TypeScript, Rust e Luau                    |
+| `bun run test`         | Roda os testes de frontend (Vitest)                |
+| `bun run rust:test`    | Roda os testes de Rust                             |
 
 </details>
 
 ---
 
-## Project structure
-
-The project is split between the desktop application and the Roblox Studio integration.
+## Estrutura do projeto
 
 ```text
-ISpooferMotion-V2/
-├── src/                 React/TypeScript desktop UI
-├── src-tauri/           Tauri/Rust native backend and Studio bridge
-├── plugin/              Roblox Studio Luau plugin source, config, and tests
-├── scripts/             Build and development helpers
-├── e2e/                 Playwright/Tauri end-to-end tests
-├── public/              Vite-served runtime assets
-├── docs/                Architecture and audit documentation
-└── .github/             CI, issue templates, and contribution files
+TrapSpoofer/
+├── src/            UI React/TypeScript (services/, stores/, mcp/, components/)
+├── src-tauri/      Backend Rust/Tauri, bridge do Studio e servidor MCP
+├── plugin/         Plugin Luau do Roblox Studio
+├── scripts/        Scripts de build
+└── .github/        CI e templates
 ```
-
-<sub>Exact directories may vary as the project evolves.</sub>
 
 ---
 
-## Contributing
+## Créditos e licença
 
-Contributions are welcome.
-
-Read [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md) before opening a pull request.
-
-Branch from `main`, keep changes focused, follow [Conventional Commits](https://www.conventionalcommits.org/), and verify the project before pushing:
-
-```bash
-bun run check
-```
-
-> [!IMPORTANT]
-> Pull requests must pass the repository's automated checks before they can be merged.
-
----
-
-## License
-
-ISpooferMotion is licensed under the **GNU General Public License v3.0 or later**.
-
-See [`LICENSE`](LICENSE) for the full license text.
+Baseado no **ISpooferMotion V2** de IncredibroXP. O TrapSpoofer é licenciado sob a **GNU General Public License v3.0 ou posterior** — veja [`LICENSE`](LICENSE).

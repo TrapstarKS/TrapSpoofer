@@ -207,7 +207,7 @@ pub async fn get_api_dump_properties() -> ApiDumpProperties {
     }
 
     let mut properties = ApiDumpProperties::default();
-    let cache_file = std::env::temp_dir().join("ispoofer_api_dump_v2.json");
+    let cache_file = std::env::temp_dir().join("trapspoofer_api_dump_v2.json");
 
     let mut should_fetch = true;
     if let Ok(metadata) = tokio::fs::metadata(&cache_file).await {
@@ -238,7 +238,7 @@ pub async fn get_api_dump_properties() -> ApiDumpProperties {
         let client = crate::utils::get_http_client();
         if let Ok(res) = client
             .get(API_DUMP_URL)
-            .header(reqwest::header::USER_AGENT, "ISpooferMotion-V2")
+            .header(reqwest::header::USER_AGENT, "TrapSpoofer")
             .send()
             .await
         {

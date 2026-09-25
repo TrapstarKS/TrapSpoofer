@@ -4,6 +4,7 @@ pub mod auth;
 pub mod fs;
 pub mod ipc;
 pub mod jobs;
+pub mod place_file;
 pub mod place_parser;
 pub mod resolver;
 pub mod roblox_status;

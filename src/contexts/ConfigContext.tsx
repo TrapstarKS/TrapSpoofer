@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo } from 'react';
 
 import { type AppConfig, useConfigStore } from '../stores/configStore';
+import { useSessionStore } from '../stores/sessionStore';
 import { applyReplacements, useSpooferStore } from '../stores/spooferStore';
 import type {
   SpooferLogPayload,
@@ -191,7 +192,22 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               Object.keys(newBatchReplacements).length > 0
                 ? newBatchReplacements
                 : mergedReplacements;
-            applyReplacements(toApply, true);
+            const session = useSessionStore.getState();
+            const autoApply =
+              session.autoApplyOverride ?? useConfigStore.getState().config.general.autoApplyResults;
+            if (session.autoApplyOverride !== null) {
+              useSessionStore.setState({ autoApplyOverride: null });
+            }
+            if (session.source?.kind === 'file') {
+              setSpoofingLogs((prev) =>
+                appendSpoofingLog(
+                  prev,
+                  '[INFO] Modo arquivo: use "Salvar arquivo spoofado" para gravar os novos IDs.',
+                ),
+              );
+            } else if (autoApply) {
+              applyReplacements(toApply, true);
+            }
           }
 
           const storeState = useConfigStore.getState();

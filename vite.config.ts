@@ -56,13 +56,6 @@ export default defineConfig(() => {
     server: {
       port: 5173,
       strictPort: true,
-      proxy: {
-        '/api': {
-          target: 'https://ispoofermotion.com',
-          changeOrigin: true,
-          secure: false,
-        },
-      },
     },
   };
 });

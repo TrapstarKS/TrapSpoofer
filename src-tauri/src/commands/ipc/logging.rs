@@ -89,7 +89,7 @@ pub async fn append_debug_log(
 #[tauri::command]
 #[specta::specta]
 pub async fn open_logs_folder(app: AppHandle) -> crate::error::Result<bool> {
-    let logs_dir = app.path().app_data_dir()?.join("ispoofer_logs");
+    let logs_dir = app.path().app_data_dir()?.join("trapspoofer_logs");
     let _ = std::fs::create_dir_all(&logs_dir);
     cleanup_logs_dir(&logs_dir);
 

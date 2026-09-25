@@ -661,7 +661,7 @@ mod tests {
 
     #[tokio::test]
     async fn validation_rejects_error_page_downloads() -> Result<(), Box<dyn std::error::Error>> {
-        let path = std::env::temp_dir().join("ispoofer-invalid-download.html");
+        let path = std::env::temp_dir().join("trapspoofer-invalid-download.html");
         tokio::fs::write(&path, b"<!doctype html><title>Forbidden</title>").await?;
         let path_string = path.to_string_lossy().to_string();
         let result = validate_downloaded_payload(&path_string, Some("audio")).await;

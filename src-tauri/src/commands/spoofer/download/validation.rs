@@ -106,7 +106,7 @@ mod tests {
 
     #[tokio::test]
     async fn validation_accepts_valid_video() -> Result<(), Box<dyn std::error::Error>> {
-        let path = std::env::temp_dir().join("ispoofer-valid-video.mp4");
+        let path = std::env::temp_dir().join("trapspoofer-valid-video.mp4");
         tokio::fs::write(&path, b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom").await?;
         let path_string = path.to_string_lossy().to_string();
         let result = validate_downloaded_payload(&path_string, Some("video")).await;

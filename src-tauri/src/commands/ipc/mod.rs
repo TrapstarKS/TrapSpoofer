@@ -93,7 +93,7 @@ pub fn append_log_entry(
     source: &str,
     message: &str,
 ) -> crate::error::Result<()> {
-    let logs_dir = app.path().app_data_dir()?.join("ispoofer_logs");
+    let logs_dir = app.path().app_data_dir()?.join("trapspoofer_logs");
     std::fs::create_dir_all(&logs_dir)?;
     logging::cleanup_logs_dir(&logs_dir);
     let file_path = logs_dir.join(format!("debug-{}.txt", chrono::Local::now().format("%Y-%m-%d")));

@@ -311,7 +311,7 @@ pub async fn process_spoofer_action(
     let start_time = chrono::Utc::now();
     let job_id = format!("{}", start_time.timestamp_millis());
     let app_data_dir = app.path().app_data_dir()?;
-    let logs_dir = app_data_dir.join("ispoofer_logs");
+    let logs_dir = app_data_dir.join("trapspoofer_logs");
     std::fs::create_dir_all(&logs_dir)?;
     logging::cleanup_logs_dir(&logs_dir);
 

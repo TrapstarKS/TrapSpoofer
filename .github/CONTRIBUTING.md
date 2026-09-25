@@ -14,8 +14,8 @@ Thanks for taking the time to contribute. Here's everything you need to know to 
 **Clone and run:**
 
 ```bash
-git clone https://github.com/ISpooferMotion/ISpooferMotion-V2.git
-cd ISpooferMotion-V2
+git clone https://github.com/TrapstarKS/TrapSpoofer.git
+cd TrapSpoofer
 bun install
 bun run tauri:dev
 ```
@@ -73,4 +73,4 @@ plugin/      Luau Studio plugin source
 scripts/               Build and dev tooling
 ```
 
-The Luau plugin is built from source using `bun run build:plugin` - it concatenates the individual source files in `plugin/src/` into a single `ISpooferMotion.rbxmx`. If you're modifying the plugin, run that after your changes to verify the bundle builds cleanly.
+The Luau plugin is built from source using `bun run build:plugin` - it concatenates the individual source files in `plugin/src/` into a single `TrapSpoofer.rbxmx`. If you're modifying the plugin, run that after your changes to verify the bundle builds cleanly.

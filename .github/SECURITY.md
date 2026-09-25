@@ -6,7 +6,7 @@
 
 If you've found something that could be exploited - unauthorized access to credentials, remote code execution, privilege escalation, or anything similar - please report it privately.
 
-You can do this through [GitHub's private vulnerability reporting](https://github.com/ISpooferMotion/ISpooferMotion-V2/security/advisories/new), or by emailing [incredibroxpdev@gmail.com](mailto:incredibroxpdev@gmail.com).
+You can do this through [GitHub's private vulnerability reporting](https://github.com/TrapstarKS/TrapSpoofer/security/advisories/new).
 
 Include as much detail as you can: what the issue is, how to reproduce it, and what the potential impact might be. You'll get a response within a few days.
 

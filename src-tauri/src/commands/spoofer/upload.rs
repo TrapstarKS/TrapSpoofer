@@ -587,7 +587,7 @@ pub async fn publish_asset_with_progress(
                             let mut random_bytes = [0u8; 4];
                             random_bytes.copy_from_slice(&rand::random::<[u8; 4]>());
                             let chunk_data =
-                                format!("ispoofer{}", hex::encode(random_bytes)).into_bytes();
+                                format!("trapspoofer{}", hex::encode(random_bytes)).into_bytes();
                             let chunk_type = b"tEXt";
                             let mut chunk = Vec::new();
                             let chunk_len = u32::try_from(chunk_data.len()).unwrap_or(0);
@@ -640,7 +640,7 @@ pub async fn publish_asset_with_progress(
                         {
                             let mut random_bytes = [0u8; 4];
                             random_bytes.copy_from_slice(&rand::random::<[u8; 4]>());
-                            let hex_str = format!("<!-- ispoofer{} -->", hex::encode(random_bytes));
+                            let hex_str = format!("<!-- trapspoofer{} -->", hex::encode(random_bytes));
                             if let Some(idx) =
                                 mutable_buffer.windows(9).rposition(|w| w == b"</roblox>")
                             {

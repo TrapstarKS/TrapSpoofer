@@ -7,7 +7,9 @@ export const AppConfigSchema = z.object({
   general: z.object({
     desktopNotifications: z.boolean().default(true),
     hideToTrayOnClose: z.boolean().default(false),
-    telemetryEnabled: z.boolean().default(true),
+    telemetryEnabled: z.boolean().default(false),
+    autoApplyResults: z.boolean().default(true),
+    mcpEnabled: z.boolean().default(true),
   }),
   advanced: z.object({
     autoCookieStudio: z.boolean().default(true),
@@ -63,7 +65,7 @@ export const AppConfigSchema = z.object({
     action: z.literal('Use').default('Use'),
   }),
   ui: z.object({
-    activeTab: z.string().default('spoofing'),
+    activeTab: z.string().default('home'),
     assetExplorerOpen: z.boolean().default(false),
     homeUpdateSections: z.array(z.string()).default(['changelog']),
     settingsSections: z.array(z.string()).default(['account', 'general', 'quickSettings', 'debug']),
@@ -94,7 +96,9 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   general: {
     desktopNotifications: true,
     hideToTrayOnClose: false,
-    telemetryEnabled: true,
+    telemetryEnabled: false,
+    autoApplyResults: true,
+    mcpEnabled: true,
   },
   advanced: {
     autoCookieStudio: true,
@@ -146,7 +150,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     action: 'Use' as const,
   },
   ui: {
-    activeTab: 'spoofing',
+    activeTab: 'home',
     assetExplorerOpen: false,
     homeUpdateSections: ['changelog'],
     settingsSections: ['account', 'general', 'quickSettings', 'debug'],
@@ -178,7 +182,7 @@ const mergeSections = (savedSections: unknown, defaultSections: string[]) => {
 
 interface ConfigState {
   config: AppConfig;
-  accountSecrets: Record<string, { cookie?: string; apiKey?: string }>;
+  accountSecrets: Record<string, { cookie?: string; apiKey?: string; groupApiKey?: string }>;
 
   secretsLoaded: boolean;
   updateConfig: <C extends keyof AppConfig, K extends keyof AppConfig[C]>(
@@ -190,7 +194,12 @@ interface ConfigState {
   resetConfig: () => void;
   loadSecrets: () => Promise<void>;
   saveSecrets: () => Promise<void>;
-  updateAccountSecret: (accountId: string, cookie?: string, apiKey?: string) => Promise<void>;
+  updateAccountSecret: (
+    accountId: string,
+    cookie?: string,
+    apiKey?: string,
+    groupApiKey?: string,
+  ) => Promise<void>;
   updateAccountsList: (accounts: AppConfig['accounts']) => void;
 }
 
@@ -381,7 +390,12 @@ export const useConfigStore = create<ConfigState>((set, get) => {
         console.error('Failed to save secrets:', e);
       }
     },
-    updateAccountSecret: async (accountId: string, cookie?: string, apiKey?: string) => {
+    updateAccountSecret: async (
+      accountId: string,
+      cookie?: string,
+      apiKey?: string,
+      groupApiKey?: string,
+    ) => {
       set((state) => {
         const currentAccount = state.accountSecrets[accountId] ?? {};
         return {
@@ -391,6 +405,7 @@ export const useConfigStore = create<ConfigState>((set, get) => {
               ...currentAccount,
               ...(cookie !== undefined ? { cookie } : {}),
               ...(apiKey !== undefined ? { apiKey } : {}),
+              ...(groupApiKey !== undefined ? { groupApiKey } : {}),
             },
           },
         };

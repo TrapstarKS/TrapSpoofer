@@ -90,7 +90,7 @@ pub(super) async fn persist_job(app: &AppHandle, job: Value) -> crate::error::Re
 #[tauri::command]
 #[specta::specta]
 pub async fn open_job_log(app: AppHandle, log_path: String) -> crate::error::Result<bool> {
-    let logs_dir = app.path().app_data_dir()?.join("ispoofer_logs");
+    let logs_dir = app.path().app_data_dir()?.join("trapspoofer_logs");
     let canonical_logs_dir = tokio::fs::canonicalize(logs_dir).await?;
     let canonical_log_path = tokio::fs::canonicalize(log_path).await?;
 

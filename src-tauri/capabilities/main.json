@@ -48,9 +48,6 @@
           "url": "http://127.0.0.1:3000/**"
         },
         {
-          "url": "https://ispoofermotion.com/**"
-        },
-        {
           "url": "https://api.github.com/**"
         }
       ]

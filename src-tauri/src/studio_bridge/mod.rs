@@ -173,7 +173,6 @@ pub async fn start_server(app_handle: AppHandle) {
                         | "http://127.0.0.1:5173"
                         | "http://localhost:3000"
                         | "http://127.0.0.1:3000"
-                        | "https://ispoofermotion.com"
                         | "tauri://localhost"
                         | "http://tauri.localhost"
                         | "https://tauri.localhost"

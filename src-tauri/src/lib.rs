@@ -90,6 +90,8 @@ macro_rules! specta_commands {
             crate::studio_bridge::get_studio_health_status,
             crate::studio_bridge::get_port_diagnostic,
             crate::studio_bridge::get_studio_asset_snapshots,
+            crate::commands::place_file::scan_place_file_assets,
+            crate::commands::place_file::write_spoofed_place_file,
             crate::mcp::mcp_respond,
             crate::mcp::mcp_set_frontend_ready,
             crate::mcp::mcp_set_enabled,
