@@ -166,9 +166,14 @@ end
 local FLUSH_MAX_RETRIES: number = 10
 local FLUSH_RETRY_WAIT: number = 1.5
 
-local function flushScanRecordsOrError(records: { Record })
+-- Sends one chunk of records, retrying the SAME chunk on failure. Stops
+-- retrying if the scan was reset/aborted in the meantime.
+local function postRecordBatchOrError(batch: { Record }, generation: number)
 	for attempt = 1, FLUSH_MAX_RETRIES do
-		if flushRecords(records) then
+		if generation ~= scanGeneration then
+			error("Scan was reset while sending records", 0)
+		end
+		if postJson("/scan-records", { records = batch }) then
 			return
 		end
 		if attempt < FLUSH_MAX_RETRIES then
@@ -184,7 +189,61 @@ local function flushScanRecordsOrError(records: { Record })
 			task.wait(FLUSH_RETRY_WAIT)
 		end
 	end
-	error("Could not send Studio scan records after " .. FLUSH_MAX_RETRIES .. " attempts")
+	error("Could not send Studio scan records after " .. FLUSH_MAX_RETRIES .. " attempts", 0)
+end
+
+local pendingScanFlush: any = nil
+
+-- Waits for the in-flight chunk (if any) and re-raises its error.
+local function awaitPendingScanFlush()
+	local pending = pendingScanFlush
+	if not pending then
+		return
+	end
+	while not pending.done do
+		task.wait()
+	end
+	pendingScanFlush = nil
+	if not pending.ok then
+		error(pending.err, 0)
+	end
+end
+
+-- Hands the buffered records to a background sender so the DFS keeps going
+-- while the chunk is in flight. At most one chunk is in flight at a time,
+-- which preserves chunk order and bounds memory use.
+local function flushScanRecordsPipelined(records: { Record })
+	awaitPendingScanFlush()
+	if #records == 0 then
+		resetPendingRecordBytes()
+		return
+	end
+
+	local batch = table.clone(records)
+	table.clear(records)
+	resetPendingRecordBytes()
+
+	local state = { done = false, ok = false, err = nil }
+	pendingScanFlush = state
+	local generation = scanGeneration
+	task.spawn(function()
+		local ok, err = pcall(postRecordBatchOrError, batch, generation)
+		state.ok = ok
+		state.err = err
+		state.done = true
+	end)
+end
+
+-- Used when a new scan starts or a scan fails: lets a leftover chunk finish
+-- (so it can't land after the next /scan-start) and drops its result.
+local function discardPendingScanFlush()
+	local pending = pendingScanFlush
+	if pending then
+		while not pending.done do
+			task.wait()
+		end
+	end
+	pendingScanFlush = nil
 end
 
 local function processScannedObject(records: { Record }, obj: Instance)
@@ -269,6 +328,10 @@ local function scanAssets(): ()
 		end
 	end)
 
+	-- A chunk left over from a previous (failed) scan must not land after the
+	-- new /scan-start.
+	discardPendingScanFlush()
+
 	if not postJson("/scan-start", { placeId = placeId, placeName = placeName }) then
 		pcall(function()
 			postJson("/scan-abort", {})
@@ -284,45 +347,66 @@ local function scanAssets(): ()
 	local processed = 0
 	local lastYieldTime = os.clock()
 	local lastProgressTime = 0
+	local progressInFlight = false
 
-	local stack: { { obj: Instance, currentService: string } } = {}
+	-- parentPath: full name of the parent (children derive their full name from
+	-- it); fullName: known full name for roots; exactPath=false means the path
+	-- could not be derived and GetFullName must be used instead.
+	local stack: {
+		{
+			obj: Instance,
+			currentService: string,
+			parentPath: string?,
+			fullName: string?,
+			exactPath: boolean,
+		}
+	} =
+		{}
 
-	if activeScanPath and activeScanPath ~= "" then
-		local targetObj = resolveInstancePath(activeScanPath)
-		if targetObj then
-			local fullPath = "Unknown"
-			pcall(function()
-				fullPath = targetObj:GetFullName()
-			end)
-			logToPlugin("[TrapSpoofer] Scanning targeted path: " .. fullPath)
-			table.insert(stack, { obj = targetObj, currentService = fullPath })
-		else
-			logToPlugin(
-				"[Warning] [TrapSpoofer] Target path not found: "
-					.. tostring(activeScanPath)
-					.. ", scanning all services."
-			)
-			for i = #SERVICES_TO_SCAN, 1, -1 do
-				local serviceName = SERVICES_TO_SCAN[i]
-				local ok, service = pcall(function()
-					return game:GetService(serviceName)
-				end)
-				if ok and service then
-					table.insert(stack, { obj = service, currentService = serviceName })
-				end
-			end
-		end
-		activeScanPath = nil
-	else
+	local function pushServiceRoots()
 		for i = #SERVICES_TO_SCAN, 1, -1 do
 			local serviceName = SERVICES_TO_SCAN[i]
 			local ok, service = pcall(function()
 				return game:GetService(serviceName)
 			end)
 			if ok and service then
-				table.insert(stack, { obj = service, currentService = serviceName })
+				table.insert(stack, {
+					obj = service,
+					currentService = serviceName,
+					parentPath = nil,
+					fullName = nil,
+					exactPath = true,
+				})
 			end
 		end
+	end
+
+	if activeScanPath and activeScanPath ~= "" then
+		local targetObj = resolveInstancePath(activeScanPath)
+		if targetObj then
+			local fullPath = "Unknown"
+			local okPath = pcall(function()
+				fullPath = targetObj:GetFullName()
+			end)
+			logToPlugin("[TrapSpoofer] Scanning targeted path: " .. fullPath)
+			table.insert(stack, {
+				obj = targetObj,
+				currentService = fullPath,
+				parentPath = nil,
+				fullName = if okPath then fullPath else nil,
+				exactPath = okPath,
+			})
+		else
+			logToPlugin(
+				"[Warning] [TrapSpoofer] Target path not found: "
+					.. tostring(activeScanPath)
+					.. ", scanning all services."
+			)
+			pushServiceRoots()
+		end
+		activeScanPath = nil
+	else
+		pushServiceRoots()
 	end
 
 	while #stack > 0 do
@@ -330,27 +414,37 @@ local function scanAssets(): ()
 		local obj = current.obj
 		local currentService = current.currentService
 
+		if current.exactPath then
+			setScanCurrentObject(obj, current.parentPath, current.fullName)
+		else
+			setScanCurrentObject(nil, nil, nil)
+		end
+
 		processed += 1
 		processScannedObject(records, obj)
 
 		if #records >= SEND_CHUNK_SIZE or getPendingRecordBytes() >= SCAN_CHUNK_BYTES then
 			captured += #records
-			flushScanRecordsOrError(records)
+			flushScanRecordsPipelined(records)
 		end
 
 		local now = os.clock()
-		if now - lastProgressTime >= 0.25 then
-			pcall(function()
-				postJson("/scan-progress", {
-					scanning = true,
-					current_service = currentService,
-					scanned = processed,
-				})
+		if now - lastProgressTime >= 0.25 and not progressInFlight then
+			-- Fire-and-forget: progress must never stall the DFS.
+			progressInFlight = true
+			local payload = {
+				scanning = true,
+				current_service = currentService,
+				scanned = processed,
+			}
+			task.spawn(function()
+				pcall(postJson, "/scan-progress", payload)
+				progressInFlight = false
 			end)
 			lastProgressTime = now
 		end
 
-		if now - lastYieldTime >= 0.012 then
+		if now - lastYieldTime >= 0.025 then
 			task.wait(0)
 			lastYieldTime = os.clock()
 		end
@@ -358,15 +452,31 @@ local function scanAssets(): ()
 		local ok, children = pcall(function()
 			return obj:GetChildren()
 		end)
-		if ok and type(children) == "table" then
+		if ok and type(children) == "table" and #children > 0 then
+			local childPath = if current.exactPath then getScanCurrentFullName(obj) else nil
+			local childExact = childPath ~= nil
 			for i = #children, 1, -1 do
-				table.insert(stack, { obj = children[i], currentService = currentService })
+				table.insert(stack, {
+					obj = children[i],
+					currentService = currentService,
+					parentPath = childPath,
+					fullName = nil,
+					exactPath = childExact,
+				})
 			end
 		end
 	end
 
+	setScanCurrentObject(nil, nil, nil)
+
 	captured += #records
-	flushScanRecordsOrError(records)
+	flushScanRecordsPipelined(records)
+	awaitPendingScanFlush()
+
+	-- Make sure no late "scanning" progress update lands after completion.
+	while progressInFlight do
+		task.wait()
+	end
 
 	local completeOk, response = postJson("/scan-complete", {})
 	if not completeOk then
@@ -432,8 +542,12 @@ local function scan(): ()
 	scanRunning = false
 
 	if not ok then
+		setScanCurrentObject(nil, nil, nil)
 		resetObjectRegistry()
 		resetScanRecordState()
+		-- The registry reset stops the background sender's retries; let an
+		-- in-flight chunk settle so it can't arrive after the abort.
+		discardPendingScanFlush()
 		pcall(function()
 			postJson("/scan-abort", {})
 		end)

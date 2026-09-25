@@ -1,96 +1,76 @@
 import { invoke } from '@tauri-apps/api/core';
-import { HelpCircle, Laptop } from 'lucide-react';
+import { GraduationCap, Laptop } from 'lucide-react';
 
 import { useConfig } from '../../../contexts/ConfigContext';
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { logIsm } from '../../../utils/robloxProfiles';
 import { Button } from '../../ui/button';
-import { SettingCard, SettingSwitchRow } from './SettingComponents';
+import { SettingCard, SettingRow, SettingSwitchRow } from './SettingComponents';
+
+/** Event the TutorialGate listens to (re-opens the welcome guide). */
+const START_TUTORIAL_EVENT = 'ism-start-tutorial';
 
 export default function BehaviorCard() {
   const { t } = useLanguage();
   const { config, updateConfig } = useConfig();
 
-  const handleDesktopNotificationsChange = async (enabled: boolean) => {
+  const handleNotifications = async (enabled: boolean) => {
     updateConfig('general', 'desktopNotifications', enabled);
     if (!enabled) {
-      logIsm('info', t('misc.notificationsDisabledTitle'));
+      logIsm('info', t('prefs.behavior.notificationsOff'));
       return;
     }
-
     try {
       const shown = await invoke<boolean>('show_notification', {
-        options: {
-          title: 'TrapSpoofer',
-          body: t('misc.desktopNotificationsEnabled'),
-        },
+        options: { title: 'TrapSpoofer', body: t('prefs.behavior.notificationsOn') },
       });
       logIsm(
         shown ? 'success' : 'warn',
-        shown ? t('misc.notificationsEnabledTitle') : t('misc.notificationsFailed'),
+        shown ? t('prefs.behavior.notificationsOn') : t('prefs.behavior.notificationsFailed'),
       );
-    } catch (err) {
-      logIsm('error', `Desktop notifications failed: ${String(err)}`);
+    } catch {
+      logIsm('warn', t('prefs.behavior.notificationsFailed'));
     }
   };
 
   const handleShowTutorial = () => {
     updateConfig('ui', 'tutorialCompleted', false);
-    window.dispatchEvent(new Event('ism-start-tutorial'));
+    window.dispatchEvent(new Event(START_TUTORIAL_EVENT));
   };
 
   return (
     <SettingCard
       icon={Laptop}
-      title={t('settings.behavior') || 'App Behavior'}
-      description="Configure application tray behavior, desktop notifications, and tutorials."
+      title={t('prefs.behavior.title')}
+      description={t('prefs.behavior.desc')}
     >
       <SettingSwitchRow
-        label={t('settings.desktopNotifications') || 'Desktop Notifications'}
-        description="Show system notifications when downloads or spoof jobs finish."
+        label={t('prefs.behavior.notifications')}
+        description={t('prefs.behavior.notificationsDesc')}
         checked={config.general.desktopNotifications}
-        onCheckedChange={handleDesktopNotificationsChange}
+        onCheckedChange={(v) => void handleNotifications(v)}
       />
-
       <SettingSwitchRow
-        label={t('settings.hideToTray') || 'Minimize to System Tray'}
-        description={
-          t('settings.hideToTrayDesc') ||
-          'Keep the application running in the background when closing the window.'
-        }
+        label={t('prefs.behavior.tray')}
+        description={t('prefs.behavior.trayDesc')}
         checked={config.general.hideToTrayOnClose}
         onCheckedChange={(v) => updateConfig('general', 'hideToTrayOnClose', v)}
       />
-
       <SettingSwitchRow
-        label={t('settings.telemetry') || 'Anonymous Diagnostics'}
-        description={
-          t('settings.telemetryDesc') || 'Send anonymous error logs to help improve compatibility.'
-        }
+        label={t('prefs.behavior.telemetry')}
+        description={t('prefs.behavior.telemetryDesc')}
         checked={config.general.telemetryEnabled}
         onCheckedChange={(v) => updateConfig('general', 'telemetryEnabled', v)}
       />
-
-      <div className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-bg-elevated/20 transition-colors">
-        <div className="space-y-0.5 min-w-0 flex-1">
-          <span className="text-xs font-semibold text-text-primary block">
-            Interactive Onboarding Tutorial
-          </span>
-          <p className="text-[11px] text-text-secondary leading-relaxed">
-            Walk through adding an account, setting up API keys, loading places, and running your
-            first spoof.
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleShowTutorial}
-          className="h-8 px-3 text-xs flex items-center gap-1.5 shrink-0"
-        >
-          <HelpCircle size={13} />
-          <span>Launch Tutorial</span>
+      <SettingRow
+        label={t('prefs.behavior.tutorial')}
+        description={t('prefs.behavior.tutorialDesc')}
+      >
+        <Button variant="outline" onClick={handleShowTutorial}>
+          <GraduationCap />
+          {t('prefs.behavior.tutorialButton')}
         </Button>
-      </div>
+      </SettingRow>
     </SettingCard>
   );
 }

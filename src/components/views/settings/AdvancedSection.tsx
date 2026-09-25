@@ -1,4 +1,4 @@
-import { Wrench } from 'lucide-react';
+import { FlaskConical } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { useConfig } from '../../../contexts/ConfigContext';
@@ -9,42 +9,35 @@ import { SettingCard, SettingSwitchRow } from './SettingComponents';
 export default function AdvancedSection() {
   const { t } = useLanguage();
   const { config, updateConfig } = useConfig();
-  const [memoryInjectionSupported, setMemoryInjectionSupported] = useState(false);
+  const [memorySupported, setMemorySupported] = useState(false);
 
   useEffect(() => {
-    isMemoryInjectionSupported().then(setMemoryInjectionSupported);
+    isMemoryInjectionSupported().then(setMemorySupported);
   }, []);
 
   return (
     <SettingCard
-      icon={Wrench}
-      title={t('settings.advanced') || 'Advanced Options'}
-      description="Experimental injection options and system automation triggers."
+      icon={FlaskConical}
+      title={t('prefs.features.title')}
+      description={t('prefs.features.desc')}
     >
       <SettingSwitchRow
-        label={t('settings.clipboardMonitoring') || 'Auto-Detect Clipboard Asset IDs'}
-        description={
-          t('settings.clipboardMonitoringDesc') ||
-          'Automatically add copied Roblox asset URLs from clipboard into the queue.'
-        }
+        label={t('prefs.features.clipboard')}
+        description={t('prefs.features.clipboardDesc')}
         checked={config.advanced.clipboardMonitoring}
         onCheckedChange={(v) => updateConfig('advanced', 'clipboardMonitoring', v)}
       />
-
       <SettingSwitchRow
-        label={t('settings.memoryInjection') || 'Process Memory Injection'}
+        label={t('prefs.features.memory')}
         description={
-          memoryInjectionSupported
-            ? t('settings.memoryInjectionDescSupported') ||
-              'Direct high-speed process memory bridge for Studio replacements.'
-            : t('settings.memoryInjectionDescUnsupported') ||
-              'Process memory injection is unavailable on this OS/architecture.'
+          memorySupported
+            ? t('prefs.features.memoryDescSupported')
+            : t('prefs.features.memoryDescUnsupported')
         }
-        disabled={!memoryInjectionSupported}
-        checked={memoryInjectionSupported ? config.advanced.memoryInjectionEnabled : false}
+        disabled={!memorySupported}
+        checked={memorySupported ? config.advanced.memoryInjectionEnabled : false}
         onCheckedChange={(v) => {
-          if (!memoryInjectionSupported) return;
-          updateConfig('advanced', 'memoryInjectionEnabled', v);
+          if (memorySupported) updateConfig('advanced', 'memoryInjectionEnabled', v);
         }}
       />
     </SettingCard>

@@ -19,13 +19,16 @@ type Args = Record<string, unknown>;
 export type ToolHandler = (args: Args) => Promise<unknown>;
 
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
-const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+const num = (v: unknown, fallback: number) =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 
 function toTypes(value: unknown): SpoofAssetType[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const out = value
     .map((v) => PUBLIC_TYPE_NAMES[String(v)] ?? (String(v).toLowerCase() as SpoofAssetType))
-    .filter((t): t is SpoofAssetType => ['animation', 'audio', 'image', 'mesh', 'video'].includes(t));
+    .filter((t): t is SpoofAssetType =>
+      ['animation', 'audio', 'image', 'mesh', 'video'].includes(t),
+    );
   return out.length ? out : undefined;
 }
 
@@ -43,7 +46,10 @@ function scanSummary() {
     needsSpoof: foreign,
     ownershipCheckPending: ownersLoading,
     byType: Object.fromEntries(
-      Object.entries(counts).map(([type, count]) => [PUBLIC_NAME_OF[type as SpoofAssetType], count]),
+      Object.entries(counts).map(([type, count]) => [
+        PUBLIC_NAME_OF[type as SpoofAssetType],
+        count,
+      ]),
     ),
   };
 }
@@ -95,7 +101,12 @@ export const handlers: Record<string, ToolHandler> = {
     const path = str(args.path);
     if (!path) throw new Error('path is required');
     const { info } = await spoofer.scanFile(path);
-    return { ...scanSummary(), format: info.format, kind: info.kind, instances: info.instanceCount };
+    return {
+      ...scanSummary(),
+      format: info.format,
+      kind: info.kind,
+      instances: info.instanceCount,
+    };
   },
 
   async list_assets(args) {
@@ -162,12 +173,16 @@ export const handlers: Record<string, ToolHandler> = {
 
   async push_to_studio() {
     const count = await spoofer.pushToStudio();
-    return { queued: count, note: 'The Studio plugin applies them within a few seconds. Remember to save the place.' };
+    return {
+      queued: count,
+      note: 'The Studio plugin applies them within a few seconds. Remember to save the place.',
+    };
   },
 
   async replace_ids(args) {
     const raw = args.mappings;
-    if (!raw || typeof raw !== 'object') throw new Error('mappings must be an object oldId -> newId');
+    if (!raw || typeof raw !== 'object')
+      throw new Error('mappings must be an object oldId -> newId');
     const mappings: Record<string, string> = {};
     for (const [from, to] of Object.entries(raw as Record<string, unknown>)) {
       if (/^\d+$/.test(from) && /^\d+$/.test(String(to))) mappings[from] = String(to);
@@ -192,11 +207,10 @@ export const handlers: Record<string, ToolHandler> = {
   async select_profile(args) {
     const wanted = str(args.profile)?.toLowerCase();
     const { config } = useConfigStore.getState();
-    const account = config.accounts.find(
-      (a) => a.id === wanted || a.name.toLowerCase() === wanted,
-    );
+    const account = config.accounts.find((a) => a.id === wanted || a.name.toLowerCase() === wanted);
     if (!account) throw new Error(`Profile not found: ${args.profile}`);
-    const groupId = args.groupId === null || args.groupId === undefined ? null : String(args.groupId);
+    const groupId =
+      args.groupId === null || args.groupId === undefined ? null : String(args.groupId);
     await spoofer.activateProfile(account.id, groupId);
     if (groupId) await spoofer.fetchGroups(account.id);
     const target = spoofer.getActiveTarget();
@@ -213,7 +227,10 @@ export const handlers: Record<string, ToolHandler> = {
     const mappings =
       args.mappings && typeof args.mappings === 'object'
         ? Object.fromEntries(
-            Object.entries(args.mappings as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+            Object.entries(args.mappings as Record<string, unknown>).map(([k, v]) => [
+              k,
+              String(v),
+            ]),
           )
         : undefined;
     return spoofer.writeSpoofedFile({ path, outputPath: str(args.outputPath), mappings });

@@ -236,11 +236,8 @@ pub async fn get_api_dump_properties() -> ApiDumpProperties {
 
     if should_fetch {
         let client = crate::utils::get_http_client();
-        if let Ok(res) = client
-            .get(API_DUMP_URL)
-            .header(reqwest::header::USER_AGENT, "TrapSpoofer")
-            .send()
-            .await
+        if let Ok(res) =
+            client.get(API_DUMP_URL).header(reqwest::header::USER_AGENT, "TrapSpoofer").send().await
         {
             if let Ok(text) = res.text().await {
                 if let Ok(dump) = serde_json::from_str::<ApiDump>(&text) {

@@ -1,5 +1,3 @@
-import * as tauriApp from '@tauri-apps/api/app';
-import * as tauriOs from '@tauri-apps/plugin-os';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -76,64 +74,9 @@ describe('ErrorBoundary', () => {
     consoleError.mockRestore();
   });
 
-  it('sends telemetry if enabled and not in tauri runtime', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    render(
-      <ErrorBoundary>
-        <ThrowError shouldThrow={true} />
-      </ErrorBoundary>,
-    );
-
-    await vi.waitFor(() => {
-      expect(apiClient.fetchTelemetry).toHaveBeenCalled();
-    });
-
-    expect(apiClient.fetchTelemetry).toHaveBeenCalledWith(
-      'https://ispoofermotion.com/api/app-errors',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: expect.stringContaining('Test error!'),
-      },
-    );
-
-    consoleError.mockRestore();
-  });
-
-  it('sends telemetry with OS info if in tauri runtime', async () => {
+  it('never sends crash reports anywhere', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.mocked(tauriRuntime.isTauriRuntime).mockReturnValue(true);
-
-    render(
-      <ErrorBoundary>
-        <ThrowError shouldThrow={true} />
-      </ErrorBoundary>,
-    );
-
-    await vi.waitFor(() => {
-      expect(apiClient.fetchTelemetry).toHaveBeenCalled();
-    });
-
-    expect(tauriApp.getVersion).toHaveBeenCalled();
-    expect(tauriOs.type).toHaveBeenCalled();
-
-    const fetchCall = vi.mocked(apiClient.fetchTelemetry).mock.calls[0];
-    const payload = JSON.parse(fetchCall[1]!.body as string);
-
-    expect(payload.appVersion).toBe('1.0.0');
-    expect(payload.osInfo).toBe('windows 10.0.0');
-
-    consoleError.mockRestore();
-  });
-
-  it('does not send telemetry if disabled', async () => {
-    useConfigStore.setState({
-      config: {
-        general: { telemetryEnabled: false },
-      } as any,
-    });
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     render(
       <ErrorBoundary>
@@ -146,7 +89,6 @@ describe('ErrorBoundary', () => {
     });
 
     expect(apiClient.fetchTelemetry).not.toHaveBeenCalled();
-
     consoleError.mockRestore();
   });
 

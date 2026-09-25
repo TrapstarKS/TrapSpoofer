@@ -17,6 +17,38 @@ local function getPendingRecordBytes(): number
 	return pendingRecordBytes
 end
 
+-- The scanner walks the tree depth-first and already knows each object's
+-- parent path, so the full name of the object currently being scanned is
+-- derived from it (same result as GetFullName, without walking ancestors for
+-- every record). Other objects fall back to GetFullName.
+local scanCurrentObject: Instance? = nil
+local scanCurrentParentPath: string? = nil
+local scanCurrentFullName: string? = nil
+
+local function setScanCurrentObject(obj: Instance?, parentPath: string?, fullName: string?)
+	scanCurrentObject = obj
+	scanCurrentParentPath = parentPath
+	scanCurrentFullName = fullName
+end
+
+local function getScanCurrentFullName(obj: Instance): string?
+	if obj ~= scanCurrentObject then
+		return nil
+	end
+	if scanCurrentFullName == nil then
+		local okName, name = pcall(function()
+			return obj.Name
+		end)
+		if not okName then
+			return nil
+		end
+		scanCurrentFullName = if scanCurrentParentPath
+			then scanCurrentParentPath .. "." .. name
+			else name
+	end
+	return scanCurrentFullName
+end
+
 local function getSafeObjectMetadata(obj: Instance): (string, string, string)
 	local className = "Unknown"
 	local name = "Unknown"
@@ -30,9 +62,14 @@ local function getSafeObjectMetadata(obj: Instance): (string, string, string)
 		name = obj.Name
 	end)
 
-	pcall(function()
-		fullName = obj:GetFullName()
-	end)
+	local derived = getScanCurrentFullName(obj)
+	if derived then
+		fullName = derived
+	else
+		pcall(function()
+			fullName = obj:GetFullName()
+		end)
+	end
 
 	return className, name, fullName
 end
@@ -93,16 +130,8 @@ local function addRecord(records: { Record }, obj: Instance, property: string, v
 	return addedBytes
 end
 
-local function flushRecords(records: { Record }): boolean
-	if #records == 0 then
-		pendingRecordBytes = 0
-		return true
-	end
-
-	local ok = postJson("/scan-records", { records = records })
-	table.clear(records)
+local function resetPendingRecordBytes()
 	pendingRecordBytes = 0
-	return ok
 end
 
 local function isScanTypeEnabled(category: string): boolean

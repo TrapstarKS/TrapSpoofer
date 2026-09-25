@@ -1,19 +1,10 @@
-import { KeyRound } from 'lucide-react';
-
-import { useLanguage } from '../../../contexts/LanguageContext';
 import CredentialsSection from '../config/CredentialsSection';
-import { SettingCard } from './SettingComponents';
 
+/** "Perfis Roblox" shortcut card shown at the top of Configurações > Geral. */
 export default function CredentialsCard() {
-  const { t } = useLanguage();
-
   return (
-    <SettingCard
-      icon={KeyRound}
-      title={t('spoof.options') || 'Credentials & Authentication'}
-      description="Manage Roblox session cookies and Open Cloud API credentials for downloading and uploading."
-    >
+    <section className="overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface/50">
       <CredentialsSection />
-    </SettingCard>
+    </section>
   );
 }

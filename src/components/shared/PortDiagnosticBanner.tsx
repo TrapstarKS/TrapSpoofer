@@ -11,13 +11,9 @@ export function PortDiagnosticBanner() {
   return (
     <>
       {visible && diag && (
-        <div className="w-full px-4 pt-4 shrink-0">
-          <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 flex items-start gap-3">
-            <AlertTriangle
-              size={18}
-              className="text-yellow-500 shrink-0 mt-0.5"
-              strokeWidth={2.5}
-            />
+        <div className="w-full px-4 pt-3 shrink-0">
+          <div className="rounded-xl border border-warning/30 bg-warning/[0.08] px-4 py-2.5 flex items-start gap-3">
+            <AlertTriangle size={18} className="text-warning shrink-0 mt-0.5" strokeWidth={2.5} />
             <div className="text-sm text-foreground space-y-1">
               {diag.failed ? (
                 <span className="font-medium">{t('misc.portDiagnosticFailed')}</span>

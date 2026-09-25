@@ -1,248 +1,207 @@
-import { invoke } from '@tauri-apps/api/core';
-import { Check, ChevronRight, Loader2, Plus, UserCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { AlertTriangle, Check, ChevronsUpDown, Plus, Settings2, UserCircle } from 'lucide-react';
+import { useState } from 'react';
 
-import { useConfig } from '../../contexts/ConfigContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { cn } from '../../lib/utils';
-import { addDebugLog } from '../../utils/debugLogger';
-import {
-  loadCachedGroups,
-  loadCachedUsers,
-  logIsm,
-  normalizeId,
-  type RobloxGroup,
-  type RobloxUserInfo,
-  saveCachedGroups,
-  validateCookieProfile,
-} from '../../utils/robloxProfiles';
+import { activateProfile, setUploadGroup } from '../../services/spoofer';
+import { useConfigStore } from '../../stores/configStore';
+import { loadCachedGroups, loadCachedUsers, normalizeId } from '../../utils/robloxProfiles';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import AddProfileDialog from '../views/accounts/AddProfileDialog';
+import { keyStatus, sessionStatus } from '../views/accounts/profileActions';
+import { ProfileAvatar, UploadTargetSelect } from '../views/accounts/ProfileBits';
 
 export default function ProfilePopup({ collapsed = false }: { collapsed?: boolean }) {
-  const { t } = useLanguage();
-  const { config, updateConfig, updateCategory } = useConfig();
-  const [users, setUsers] = useState<RobloxUserInfo[]>(loadCachedUsers);
-  const [groups, setGroups] = useState<RobloxGroup[]>(() =>
-    loadCachedGroups(config.spoofing.selectedUser),
-  );
-  const [loadingGroups, setLoadingGroups] = useState(false);
+  const { t, tf } = useLanguage();
+  const accounts = useConfigStore((s) => s.config.accounts);
+  const selectedUser = useConfigStore((s) => s.config.spoofing.selectedUser);
+  const selectedGroup = useConfigStore((s) => s.config.spoofing.selectedGroup);
+  const accountSecrets = useConfigStore((s) => s.accountSecrets);
+  const secretsLoaded = useConfigStore((s) => s.secretsLoaded);
+  const updateConfig = useConfigStore((s) => s.updateConfig);
   const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
 
-  useEffect(() => {
-    if (open) setUsers(loadCachedUsers());
-  }, [open]);
+  const active = accounts.find((a) => a.id === selectedUser);
+  // Legacy auto-detected session that isn't a saved profile yet.
+  const legacyUser =
+    !active && selectedUser !== 'none'
+      ? loadCachedUsers().find((u) => normalizeId(u.id) === normalizeId(selectedUser))
+      : undefined;
+  const name = active?.name || legacyUser?.displayName || legacyUser?.name;
+  const avatarUrl = active?.avatarUrl || legacyUser?.avatarUrl;
 
-  useEffect(() => {
-    if (!open) return;
-    const userId = config.spoofing.selectedUser;
-    const cached = loadCachedGroups(userId);
-    setGroups(cached);
-    if (!config.spoofing.cookie || !userId || userId === 'none') {
-      setLoadingGroups(false);
-      return;
-    }
-    let cancelled = false;
-    const run = async () => {
-      try {
-        setLoadingGroups(true);
-        const rawGroups = await invoke<RobloxGroup[]>('get_manageable_groups', {
-          cookie: config.spoofing.cookie,
-        });
-        const groupIds = rawGroups.map((g) => String(g.id));
-        const iconMap = await invoke<Record<string, string>>('get_group_icons_batch', {
-          groupIds,
-        }).catch(() => ({}) as Record<string, string>);
-        const withIcons = rawGroups.map((group) => ({
-          ...group,
-          iconUrl: iconMap[String(group.id)] || undefined,
-        }));
-        if (!cancelled) {
-          setGroups(withIcons);
-          saveCachedGroups(userId, withIcons);
-        }
-      } catch (e) {
-        addDebugLog('warn', ['ProfilePopup: failed to load groups', e]);
-        if (!cancelled) setGroups(cached);
-      } finally {
-        if (!cancelled) setLoadingGroups(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, config.spoofing.cookie, config.spoofing.selectedUser]);
+  const needsAttention = (id: string) => {
+    const profile = accounts.find((a) => a.id === id);
+    if (!profile || !secretsLoaded) return false;
+    const s = sessionStatus(profile, accountSecrets[id]?.cookie);
+    const k = keyStatus(profile, accountSecrets[id]?.apiKey);
+    return s === 'expired' || s === 'missing' || k === 'invalid' || k === 'missing';
+  };
 
-  const selectedUser = config.spoofing.selectedUser;
-  const activeAccount = config.accounts.find((a) => String(a.id) === String(selectedUser));
-  const fallbackUser = users.find((u) => normalizeId(u.id) === normalizeId(selectedUser));
-  const avatarUrl = activeAccount?.avatarUrl || fallbackUser?.avatarUrl;
+  const targetLabel = (() => {
+    if (!name) return t('profiles.popup.noneHint');
+    if (selectedGroup === 'none') return t('profiles.card.personal');
+    const group = loadCachedGroups(selectedUser).find(
+      (g) => normalizeId(g.id) === normalizeId(selectedGroup),
+    );
+    return group?.name ?? `#${selectedGroup}`;
+  })();
 
-  const handleSelectUser = async (userId: string) => {
-    if (!userId || userId === 'none') {
-      updateCategory('spoofing', {
-        selectedUser: 'none',
-        selectedGroup: 'none',
-        cookie: '',
-      });
-      setGroups([]);
-      return;
-    }
-    let profileCookie = '';
-    try {
-      const secrets = await invoke<Record<string, unknown>>('load_profile_secrets');
-      const profileCookies = secrets?.profileCookies as Record<string, unknown> | undefined;
-      const stored = profileCookies?.[userId];
-      const cookieRaw = secrets?.cookie;
-      const candidate =
-        typeof stored === 'string' && stored
-          ? stored
-          : typeof cookieRaw === 'string'
-            ? cookieRaw
-            : '';
-      if (candidate) {
-        const result = await validateCookieProfile(candidate);
-        if (normalizeId(result.user.id) === normalizeId(userId)) profileCookie = result.cookie;
-      }
-    } catch (e) {
-      addDebugLog('error', ['ProfilePopup: failed to load profile secrets', e]);
-      logIsm('warn', 'The saved cookie for this Roblox profile could not be restored.', true);
-    }
-    updateCategory('spoofing', {
-      selectedUser: userId,
-      selectedGroup: 'none',
-      cookie: profileCookie,
-    });
+  const activeWarn = active ? needsAttention(active.id) : false;
+
+  const goToAccounts = () => {
+    setOpen(false);
+    updateConfig('ui', 'activeTab', 'accounts');
   };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            className={
-              collapsed
-                ? 'flex items-center justify-start w-full h-10 px-3 rounded-md hover:bg-bg-elevated transition-colors shrink-0'
-                : 'flex items-center gap-3 w-full h-11 px-3 rounded-md hover:bg-bg-elevated transition-colors border border-border-subtle bg-bg-surface/40 shrink-0'
-            }
-            aria-label="Profile"
-          >
-            {avatarUrl ? (
-              <img
-                src={avatarUrl}
-                alt=""
-                className="w-7 h-7 rounded-full object-cover ring-1 ring-border shrink-0"
-              />
-            ) : (
-              <UserCircle size={22} className="text-muted-foreground shrink-0" />
-            )}
-            {!collapsed && (
-              <span className="flex-1 text-left min-w-0">
-                <span className="block text-[12px] text-text-primary font-medium truncate leading-tight">
-                  {activeAccount?.name ||
-                    fallbackUser?.displayName ||
-                    t('accounts.anonymousDownloader')}
-                </span>
-                <span className="block text-[10px] text-text-muted truncate leading-tight">
-                  {t('nav.accounts')}
-                </span>
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              aria-label={t('profiles.popup.label')}
+              className={cn(
+                'group flex w-full shrink-0 items-center rounded-lg transition-colors hover:bg-bg-elevated',
+                collapsed
+                  ? 'h-10 justify-center px-0'
+                  : 'h-12 gap-2.5 border border-border-subtle bg-bg-surface/50 px-2.5',
+              )}
+            >
+              <span className="relative shrink-0">
+                {name ? (
+                  <ProfileAvatar url={avatarUrl} name={name} size={collapsed ? 28 : 30} />
+                ) : (
+                  <UserCircle size={26} className="text-text-muted" />
+                )}
+                {activeWarn && (
+                  <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-amber-500 ring-2 ring-bg-surface" />
+                )}
               </span>
+              {!collapsed && (
+                <>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block truncate text-[12.5px] font-semibold leading-tight text-text-primary">
+                      {name || t('profiles.popup.none')}
+                    </span>
+                    <span className="block truncate text-[10.5px] leading-tight text-text-muted">
+                      {targetLabel}
+                    </span>
+                  </span>
+                  <ChevronsUpDown size={14} className="shrink-0 text-text-muted" />
+                </>
+              )}
+            </button>
+          }
+        />
+        <PopoverContent
+          align="start"
+          side={collapsed ? 'right' : 'top'}
+          sideOffset={8}
+          className="w-72 gap-0 overflow-hidden p-0"
+        >
+          {active && (
+            <div className="flex flex-col gap-2 border-b border-border-subtle p-3">
+              <div className="flex items-center gap-2.5">
+                <ProfileAvatar url={active.avatarUrl} name={active.name} size={36} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                    {t('profiles.popup.label')}
+                  </p>
+                  <p className="truncate text-sm font-semibold text-text-primary">{active.name}</p>
+                </div>
+              </div>
+              {activeWarn && (
+                <button
+                  type="button"
+                  onClick={goToAccounts}
+                  className="flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-left text-[11.5px] font-medium text-amber-700 dark:text-amber-300"
+                >
+                  <AlertTriangle size={13} />
+                  {t('profiles.popup.needsAttention')}
+                </button>
+              )}
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-medium text-text-secondary">
+                  {t('profiles.popup.uploadTo')}
+                </span>
+                <UploadTargetSelect
+                  accountId={active.id}
+                  value={selectedGroup}
+                  onChange={(g) => void setUploadGroup(g)}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-0.5 p-1.5">
+            {accounts.length > 0 && (
+              <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
+                {t('profiles.popup.switchTo')}
+              </p>
             )}
-          </button>
-        }
-      />
-      <PopoverContent align="start" sideOffset={8} className="w-72 p-2">
-        <div className="flex flex-col gap-1">
-          <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-text-muted">
-            {t('spoof.targetContext')}
-          </div>
-
-          {(() => {
-            const configIds = new Set(config.accounts.map((a) => normalizeId(a.id)));
-            const discovered = users.filter((u) => !configIds.has(normalizeId(u.id)));
-            const allAccounts = [
-              ...config.accounts.map((acc) => ({
-                id: acc.id,
-                name: acc.name,
-                avatarUrl: acc.avatarUrl,
-              })),
-              ...discovered.map((u) => ({
-                id: String(u.id),
-                name: u.displayName || u.name || String(u.id),
-                avatarUrl: u.avatarUrl,
-              })),
-            ];
-
-            if (allAccounts.length === 0) {
-              return (
-                <div className="px-2 py-2 text-xs text-text-muted">{t('accounts.noAccounts')}</div>
-              );
-            }
-
-            return allAccounts.map((acc) => {
-              const isActive = String(acc.id) === String(selectedUser);
+            {accounts.map((profile) => {
+              const isActive = profile.id === selectedUser;
+              const warn = needsAttention(profile.id);
               return (
                 <button
-                  key={acc.id}
+                  key={profile.id}
                   type="button"
-                  onClick={() => void handleSelectUser(String(acc.id))}
+                  onClick={async () => {
+                    if (isActive) return;
+                    await activateProfile(profile.id, null);
+                    window.ismLog?.(
+                      'success',
+                      tf('profiles.toast.activated', { name: profile.name }),
+                    );
+                  }}
                   className={cn(
-                    'flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-left text-xs transition-colors',
+                    'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] transition-colors',
                     isActive
-                      ? 'bg-primary/10 text-primary'
-                      : 'hover:bg-bg-surface text-text-primary',
+                      ? 'bg-primary/10 text-text-primary'
+                      : 'text-text-primary hover:bg-bg-elevated',
                   )}
                 >
-                  {acc.avatarUrl ? (
-                    <img src={acc.avatarUrl} alt="" className="w-6 h-6 rounded-full object-cover" />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-bg-surface flex items-center justify-center">
-                      <UserCircle size={16} className="text-muted-foreground" />
-                    </div>
-                  )}
-                  <span className="flex-1 truncate">{acc.name}</span>
+                  <ProfileAvatar url={profile.avatarUrl} name={profile.name} size={24} />
+                  <span className="flex-1 truncate">{profile.name}</span>
+                  {warn && <AlertTriangle size={13} className="text-amber-500" />}
                   {isActive && <Check size={14} className="text-primary" />}
                 </button>
               );
-            });
-          })()}
-
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              updateConfig('ui', 'activeTab', 'accounts');
-            }}
-            className="flex items-center gap-2 w-full px-2 py-1.5 rounded-md text-left text-xs text-text-secondary hover:bg-bg-surface transition-colors"
-          >
-            <Plus size={14} className="text-muted-foreground" />
-            <span className="flex-1">{t('accounts.addAccount')}</span>
-            <ChevronRight size={14} className="text-muted-foreground" />
-          </button>
-
-          <div className="h-px bg-border my-1.5" />
-
-          <div className="flex flex-col gap-1 px-1">
-            <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-widest text-text-muted">
-              <span>{t('spoof.selectedGroup')}</span>
-              {loadingGroups && <Loader2 size={11} className="animate-spin text-text-muted" />}
-            </div>
-            <select
-              value={config.spoofing.selectedGroup}
-              onChange={(e) => updateConfig('spoofing', 'selectedGroup', e.target.value)}
-              className="h-8 w-full bg-bg-base text-text-primary text-xs rounded-md border border-border-strong px-2 focus:outline-none focus:border-primary/50"
-            >
-              <option value="none">{t('common.none')}</option>
-              {groups.map((g) => (
-                <option key={g.id} value={String(g.id)}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
+            })}
+            {accounts.length === 0 && (
+              <p className="px-2 py-2 text-[12px] text-text-muted">
+                {t('profiles.popup.noneHint')}
+              </p>
+            )}
           </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+
+          <div className="flex flex-col gap-0.5 border-t border-border-subtle p-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setAdding(true);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
+            >
+              <Plus size={14} />
+              {t('profiles.popup.add')}
+            </button>
+            <button
+              type="button"
+              onClick={goToAccounts}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
+            >
+              <Settings2 size={14} />
+              {t('profiles.popup.manage')}
+            </button>
+          </div>
+        </PopoverContent>
+      </Popover>
+      <AddProfileDialog open={adding} onOpenChange={setAdding} />
+    </>
   );
 }

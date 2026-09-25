@@ -194,7 +194,8 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 : mergedReplacements;
             const session = useSessionStore.getState();
             const autoApply =
-              session.autoApplyOverride ?? useConfigStore.getState().config.general.autoApplyResults;
+              session.autoApplyOverride ??
+              useConfigStore.getState().config.general.autoApplyResults;
             if (session.autoApplyOverride !== null) {
               useSessionStore.setState({ autoApplyOverride: null });
             }

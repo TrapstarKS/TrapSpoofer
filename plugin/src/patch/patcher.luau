@@ -566,6 +566,86 @@ local function applyPatches(patches: any)
 	local frameStart = os.clock()
 	local lastProgressPost = 0
 
+	local function isRateLimitError(err: any): boolean
+		local errStr = string.lower(tostring(err))
+		return (
+			string.find(errStr, "limit")
+			or string.find(errStr, "rate")
+			or string.find(errStr, "429")
+			or string.find(errStr, "exceed")
+			or string.find(errStr, "too many")
+			or string.find(errStr, "throttle")
+			or string.find(errStr, "timeout")
+			or string.find(errStr, "timed out")
+		) ~= nil
+	end
+
+	local function runPatchWithRetry(patch: Patch): (boolean, any)
+		local maxAttempts = 5
+		local attempt = 0
+		local ok, patchOk, patchErr
+
+		while attempt < maxAttempts do
+			attempt += 1
+			ok, patchOk, patchErr = pcall(function()
+				return applyPatch(patch)
+			end)
+
+			if ok and patchOk then
+				return true, nil
+			end
+
+			local err = if ok then patchErr else patchOk
+			if isRateLimitError(err) and attempt < maxAttempts then
+				local patchName = patch.fullName or patch.token or "unknown"
+				logToPlugin(
+					string.format(
+						"[Warning] [TrapSpoofer] Rate limit hit applying patch to '%s'. Waiting 5s before retry (%d/%d)...",
+						tostring(patchName),
+						attempt,
+						maxAttempts
+					)
+				)
+				task.wait(5)
+			else
+				return false, err
+			end
+		end
+
+		return false, if ok then patchErr else patchOk
+	end
+
+	local function recordPatchOutcome(patch: Patch, patchOk: boolean, err: any)
+		if patchOk then
+			succeeded += 1
+			return
+		end
+		failed += 1
+		local patchName = patch.fullName or patch.token or "unknown patch"
+		local failedId = patch.token or patch.id or patchName
+		table.insert(failedPatchesList, failedId)
+
+		logToPlugin(
+			"[Warning] "
+				.. "[TrapSpoofer] Patch failed for "
+				.. tostring(patchName)
+				.. ": "
+				.. tostring(err)
+		)
+	end
+
+	-- MeshPart replacements go through CreateMeshPartAsync, which is slow and
+	-- network bound, so they run in a small bounded pool while the cheap
+	-- property patches continue on the main loop.
+	local MESH_PATCH_CONCURRENCY = 5
+	local meshInFlight = 0
+
+	local function waitForMeshSlot(limit: number)
+		while meshInFlight > limit do
+			task.wait()
+		end
+	end
+
 	local batchOk, batchErr = pcall(function()
 		for index, rawPatch in ipairs(patches) do
 			local patch, validationErr = normalizePatch(rawPatch)
@@ -576,65 +656,21 @@ local function applyPatches(patches: any)
 					else "unknown"
 				table.insert(failedPatchesList, failedId)
 				logToPlugin("[Warning] [TrapSpoofer] Invalid patch: " .. tostring(validationErr))
-			else
-				local maxAttempts = 5
-				local attempt = 0
-				local ok, patchOk, patchErr
-
-				while attempt < maxAttempts do
-					attempt += 1
-					ok, patchOk, patchErr = pcall(function()
-						return applyPatch(patch)
-					end)
-
-					if ok and patchOk then
-						break
-					end
-
-					local err = if ok then patchErr else patchOk
-					local errStr = string.lower(tostring(err))
-					local isRateLimit = string.find(errStr, "limit")
-						or string.find(errStr, "rate")
-						or string.find(errStr, "429")
-						or string.find(errStr, "exceed")
-						or string.find(errStr, "too many")
-						or string.find(errStr, "throttle")
-						or string.find(errStr, "timeout")
-						or string.find(errStr, "timed out")
-
-					if isRateLimit and attempt < maxAttempts then
-						local patchName = patch.fullName or patch.token or "unknown"
-						logToPlugin(
-							string.format(
-								"[Warning] [TrapSpoofer] Rate limit hit applying patch to '%s'. Waiting 5s before retry (%d/%d)...",
-								tostring(patchName),
-								attempt,
-								maxAttempts
-							)
-						)
-						task.wait(5)
+			elseif patch.action == "replaceMeshPart" and patch.meshId ~= nil then
+				waitForMeshSlot(MESH_PATCH_CONCURRENCY - 1)
+				meshInFlight += 1
+				task.spawn(function()
+					local runOk, patchOk, err = pcall(runPatchWithRetry, patch)
+					if runOk then
+						recordPatchOutcome(patch, patchOk, err)
 					else
-						break
+						recordPatchOutcome(patch, false, patchOk)
 					end
-				end
-
-				if ok and patchOk then
-					succeeded += 1
-				else
-					failed += 1
-					local err = if ok then patchErr else patchOk
-					local patchName = patch.fullName or patch.token or "unknown patch"
-					local failedId = patch.token or patch.id or patchName
-					table.insert(failedPatchesList, failedId)
-
-					logToPlugin(
-						"[Warning] "
-							.. "[TrapSpoofer] Patch failed for "
-							.. tostring(patchName)
-							.. ": "
-							.. tostring(err)
-					)
-				end
+					meshInFlight -= 1
+				end)
+			else
+				local patchOk, err = runPatchWithRetry(patch)
+				recordPatchOutcome(patch, patchOk, err)
 			end
 
 			local now = os.clock()
@@ -658,6 +694,22 @@ local function applyPatches(patches: any)
 			end
 		end
 	end)
+
+	-- Always wait for in-flight MeshPart replacements before committing the
+	-- ChangeHistory recording, even if the loop itself errored.
+	if meshInFlight > 0 then
+		setPluginGuiStatus(
+			string.format("Finishing %d MeshPart replacement(s)...", meshInFlight),
+			true
+		)
+		waitForMeshSlot(0)
+		pcall(function()
+			postJson("/patch-progress", {
+				current = #patches,
+				total = #patches,
+			})
+		end)
+	end
 
 	if not batchOk then
 		failed += 1

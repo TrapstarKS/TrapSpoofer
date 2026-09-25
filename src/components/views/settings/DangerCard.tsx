@@ -1,50 +1,61 @@
-import { ask } from '@tauri-apps/plugin-dialog';
-import { TriangleAlert } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
+import { useState } from 'react';
 
-import { useConfig } from '../../../contexts/ConfigContext';
 import { useLanguage } from '../../../contexts/LanguageContext';
+import { activateProfile } from '../../../services/spoofer';
+import { useConfigStore } from '../../../stores/configStore';
 import { Button } from '../../ui/button';
-import { SettingCard } from './SettingComponents';
+import { SettingCard, SettingRow } from './SettingComponents';
 
 export default function DangerCard() {
   const { t } = useLanguage();
-  const { resetConfig } = useConfig();
+  const [confirming, setConfirming] = useState(false);
+
+  const handleReset = async () => {
+    const store = useConfigStore.getState();
+    // Profiles are not preferences: keep them (and the active one) across a reset.
+    const accounts = store.config.accounts;
+    const { selectedUser, selectedGroup } = store.config.spoofing;
+    store.resetConfig();
+    const fresh = useConfigStore.getState();
+    fresh.updateAccountsList(accounts);
+    fresh.updateCategory('ui', { tutorialCompleted: true, activeTab: 'settings' });
+    if (accounts.some((a) => a.id === selectedUser)) {
+      await activateProfile(selectedUser, selectedGroup === 'none' ? null : selectedGroup);
+    }
+    setConfirming(false);
+    window.ismLog?.('success', t('prefs.danger.done'), true);
+  };
 
   return (
     <SettingCard
-      icon={<TriangleAlert size={16} className="text-red-500" />}
-      title={t('settings.dangerZone') || 'Danger Zone'}
-      description="Irreversible actions and complete configuration reset."
-      className="bg-red-500/5 border-red-500/20"
+      tone="danger"
+      icon={RotateCcw}
+      title={t('prefs.danger.title')}
+      description={t('prefs.danger.desc')}
     >
-      <div className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-red-500/10 transition-colors">
-        <div className="space-y-0.5 min-w-0 flex-1">
-          <span className="text-xs font-semibold text-text-primary block">Reset All Settings</span>
-          <p className="text-[11px] text-text-secondary leading-relaxed">
-            Reset all settings and preferences to default values. This cannot be undone.
-          </p>
-        </div>
-        <Button
-          variant="destructive"
-          size="sm"
-          className="h-8 px-3 font-semibold text-xs shadow-xs bg-red-500 hover:bg-red-600 text-white shrink-0 rounded-md"
-          onClick={async () => {
-            const confirmed = await ask(
-              'Reset all settings to their default values? This cannot be undone.',
-              {
-                title: 'Reset Settings',
-                kind: 'warning',
-              },
-            );
-            if (confirmed) {
-              resetConfig();
-              window.ismLog?.('success', t('settings.resetSuccess'));
-            }
-          }}
-        >
-          Reset to Defaults
-        </Button>
-      </div>
+      <SettingRow
+        label={t('prefs.danger.reset')}
+        description={confirming ? t('prefs.danger.confirm') : t('prefs.danger.resetDesc')}
+      >
+        {confirming ? (
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => setConfirming(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              className="bg-red-500 text-white hover:bg-red-600"
+              onClick={() => void handleReset()}
+            >
+              {t('prefs.danger.confirmYes')}
+            </Button>
+          </div>
+        ) : (
+          <Button variant="destructive" onClick={() => setConfirming(true)}>
+            {t('prefs.danger.button')}
+          </Button>
+        )}
+      </SettingRow>
     </SettingCard>
   );
 }

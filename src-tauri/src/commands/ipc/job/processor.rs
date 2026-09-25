@@ -48,11 +48,63 @@ struct JobContext {
     download_semaphore: Arc<Semaphore>,
     discoveries: Mutex<Vec<(String, String)>>,
 
+    /// Post-upload universe permission grants, run concurrently (bounded by
+    /// `permission_semaphore`) and awaited before the job result is emitted.
+    permission_tasks: Mutex<tokio::task::JoinSet<()>>,
+    permission_semaphore: Arc<Semaphore>,
+
     client: reqwest::Client,
     app: AppHandle,
 }
 
+/// Concurrent universe permission grants per job.
+const PERMISSION_GRANT_CONCURRENCY: usize = 8;
+/// Upper bound on waiting for outstanding permission grants at job end.
+const PERMISSION_DRAIN_TIMEOUT_SECS: u64 = 180;
+
 impl JobContext {
+    fn spawn_permission_grant(&self, asset_id: String, universe_id: String) {
+        let semaphore = Arc::clone(&self.permission_semaphore);
+        let cookie = self.cookie.clone();
+        let csrf_token = self.csrf_token.clone();
+        if let Ok(mut tasks) = self.permission_tasks.lock() {
+            tasks.spawn(async move {
+                let _permit = semaphore.acquire_owned().await.ok();
+                if let Err(error) = crate::commands::spoofer::patch_asset_permissions(
+                    asset_id.clone(),
+                    universe_id,
+                    cookie,
+                    csrf_token,
+                )
+                .await
+                {
+                    log::warn!("[Spoofer] Permission grant for asset {asset_id} failed: {error}");
+                }
+            });
+        }
+    }
+
+    async fn drain_permission_grants(&self) {
+        let mut tasks = match self.permission_tasks.lock() {
+            Ok(mut guard) => std::mem::take(&mut *guard),
+            Err(_) => return,
+        };
+        if tasks.is_empty() {
+            return;
+        }
+        self.log(&format!("Finishing {} universe permission grant(s)...", tasks.len()), "info");
+        let drain = async { while tasks.join_next().await.is_some() {} };
+        if tokio::time::timeout(
+            std::time::Duration::from_secs(PERMISSION_DRAIN_TIMEOUT_SECS),
+            drain,
+        )
+        .await
+        .is_err()
+        {
+            self.log("Some universe permission grants did not finish in time.", "warn");
+        }
+    }
+
     fn log(&self, msg: &str, level: &str) {
         let _ = append_log_entry(&self.app, level, "spoofer", msg);
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
@@ -85,6 +137,79 @@ impl JobContext {
             results.push(result);
         }
     }
+}
+
+/// Resolves candidate place IDs from the asset's creator (cached per creator
+/// for the job). Only awaited when the fast download path fails.
+async fn resolve_creator_place_ids(ctx: Arc<JobContext>, asset_id: String) -> Vec<String> {
+    let Ok((creator_type, creator_id)) = crate::commands::spoofer::get_asset_creator_for_asset(
+        ctx.app.clone(),
+        asset_id,
+        ctx.cookie.clone(),
+    )
+    .await
+    else {
+        return Vec::new();
+    };
+
+    let cache_key = format!("{creator_type}:{creator_id}");
+    if let Some(ids) = ctx.creator_place_ids_cache.get(&cache_key).map(|v| v.value().clone()) {
+        return ids;
+    }
+
+    if let Ok(ids) = crate::commands::spoofer::get_place_id_from_creator(
+        ctx.app.clone(),
+        creator_type.clone(),
+        creator_id.clone(),
+        ctx.cookie.clone(),
+        Some(100),
+        Some(ctx.place_name_raw.clone()),
+    )
+    .await
+    {
+        if !ids.is_empty() {
+            ctx.log(
+                &format!(
+                    "Found {} candidate Place ID(s) for {} {}.",
+                    ids.len(),
+                    creator_type,
+                    creator_id
+                ),
+                "info",
+            );
+        }
+        ctx.creator_place_ids_cache.insert(cache_key, ids.clone());
+        return ids;
+    }
+
+    let mut fallback_ids = Vec::new();
+    if let Some(uid) = ctx.account_id.clone() {
+        if uid != creator_id {
+            if let Ok(ids) = crate::commands::spoofer::get_place_id_from_creator(
+                ctx.app.clone(),
+                "user".to_string(),
+                uid,
+                ctx.cookie.clone(),
+                Some(100),
+                Some(ctx.place_name_raw.clone()),
+            )
+            .await
+            {
+                fallback_ids = ids;
+            }
+        }
+    }
+    if !fallback_ids.is_empty() {
+        ctx.log(
+            &format!(
+                "Asset creator has no valid places. Fell back to {} candidate Place ID(s) from your account.",
+                fallback_ids.len()
+            ),
+            "info",
+        );
+    }
+    ctx.creator_place_ids_cache.insert(cache_key, fallback_ids.clone());
+    fallback_ids
 }
 
 fn valid_place_ids(raw: Option<&str>) -> Vec<String> {
@@ -178,6 +303,72 @@ async fn fetch_asset_details(
 
 type BatchCreatorInfo = HashMap<String, (String, u64)>;
 
+/// Number of metadata chunk requests in flight at once.
+const METADATA_CHUNK_CONCURRENCY: usize = 6;
+
+fn string_field<'a>(item: &'a serde_json::Value, key: &str, fallback: &'a str) -> &'a str {
+    item.get(key).and_then(|v| v.as_str()).unwrap_or(fallback)
+}
+
+/// Parses a catalog `items/details` response into details + creator info.
+fn parse_catalog_details(
+    json: &serde_json::Value,
+    details: &mut HashMap<String, AssetDetails>,
+    creators: &mut BatchCreatorInfo,
+) {
+    let Some(data) = json.get("data").and_then(|v| v.as_array()) else {
+        return;
+    };
+    for item in data {
+        let Some(id) = item.get("id").and_then(serde_json::Value::as_u64) else {
+            continue;
+        };
+        let name = string_field(item, "name", "Spoofed Asset").to_string();
+        let description = string_field(item, "description", "Uploaded by TrapSpoofer.").to_string();
+        details.insert(id.to_string(), AssetDetails { name, description });
+
+        let creator_type = item.get("creatorType").and_then(|v| v.as_str()).map(str::to_string);
+        let creator_id = item.get("creatorTargetId").and_then(serde_json::Value::as_u64);
+        if let (Some(t), Some(cid)) = (creator_type, creator_id) {
+            if cid != 0 && !t.is_empty() {
+                creators.insert(id.to_string(), (t, cid));
+            }
+        }
+    }
+}
+
+/// Parses a develop `v1/assets` response into details + creator info.
+fn parse_develop_details(
+    json: &serde_json::Value,
+    details: &mut HashMap<String, AssetDetails>,
+    creators: &mut BatchCreatorInfo,
+) {
+    let Some(data) = json.get("data").and_then(|v| v.as_array()) else {
+        return;
+    };
+    for item in data {
+        let Some(id) = item.get("id").and_then(serde_json::Value::as_u64) else {
+            continue;
+        };
+        let name = string_field(item, "name", "Spoofed Asset").to_string();
+        let description = string_field(item, "description", "Uploaded by TrapSpoofer.").to_string();
+        details.insert(id.to_string(), AssetDetails { name, description });
+
+        let creator_type = item
+            .get("creator")
+            .and_then(|c| c.get("type"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let creator_id =
+            item.get("creator").and_then(|c| c.get("targetId")).and_then(serde_json::Value::as_u64);
+        if let (Some(t), Some(cid)) = (creator_type, creator_id) {
+            if cid != 0 && !t.is_empty() {
+                creators.insert(id.to_string(), (t, cid));
+            }
+        }
+    }
+}
+
 async fn batch_fetch_asset_details(
     asset_ids: &[String],
     cookie: &str,
@@ -187,21 +378,12 @@ async fn batch_fetch_asset_details(
     let mut details = HashMap::new();
     let mut creators: BatchCreatorInfo = HashMap::new();
 
-    let chunks = asset_ids.chunks(30);
-
-    for chunk in chunks {
+    let mut catalog_requests = Vec::new();
+    for chunk in asset_ids.chunks(30) {
         let items: Vec<serde_json::Value> = chunk
             .iter()
-            .filter_map(|id| {
-                if let Ok(id_num) = id.parse::<u64>() {
-                    Some(serde_json::json!({
-                        "itemType": "Asset",
-                        "id": id_num
-                    }))
-                } else {
-                    None
-                }
-            })
+            .filter_map(|id| id.parse::<u64>().ok())
+            .map(|id_num| serde_json::json!({ "itemType": "Asset", "id": id_num }))
             .collect();
 
         if items.is_empty() {
@@ -216,45 +398,22 @@ async fn batch_fetch_asset_details(
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .json(&payload);
+        catalog_requests.push(async move {
+            let res = req.send().await.ok()?;
+            res.json::<serde_json::Value>().await.ok()
+        });
+    }
 
-        if let Ok(res) = req.send().await {
-            if let Ok(json) = res.json::<serde_json::Value>().await {
-                if let Some(data) = json.get("data").and_then(|v| v.as_array()) {
-                    for item in data {
-                        if let Some(id) = item.get("id").and_then(serde_json::Value::as_u64) {
-                            let name = item
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Spoofed Asset")
-                                .to_string();
-                            let description = item
-                                .get("description")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Uploaded by TrapSpoofer.")
-                                .to_string();
-                            details.insert(id.to_string(), AssetDetails { name, description });
-
-                            let creator_type = item
-                                .get("creatorType")
-                                .and_then(|v| v.as_str())
-                                .map(str::to_string);
-                            let creator_id =
-                                item.get("creatorTargetId").and_then(serde_json::Value::as_u64);
-                            if let (Some(t), Some(cid)) = (creator_type, creator_id) {
-                                if cid != 0 && !t.is_empty() {
-                                    creators.insert(id.to_string(), (t, cid));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    let catalog_responses: Vec<Option<serde_json::Value>> =
+        stream::iter(catalog_requests).buffer_unordered(METADATA_CHUNK_CONCURRENCY).collect().await;
+    for json in catalog_responses.iter().flatten() {
+        parse_catalog_details(json, &mut details, &mut creators);
     }
 
     let missing_ids: Vec<String> =
         asset_ids.iter().filter(|id| !details.contains_key(*id)).cloned().collect();
 
+    let mut develop_requests = Vec::new();
     for chunk in missing_ids.chunks(50) {
         let id_str = chunk.join(",");
         let url = format!("https://develop.roblox.com/v1/assets?assetIds={id_str}");
@@ -262,44 +421,18 @@ async fn batch_fetch_asset_details(
             .get(&url)
             .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
             .header("Accept", "application/json");
-
-        if let Ok(res) = req.send().await {
-            if let Ok(json) = res.json::<serde_json::Value>().await {
-                if let Some(data) = json.get("data").and_then(|v| v.as_array()) {
-                    for item in data {
-                        if let Some(id) = item.get("id").and_then(serde_json::Value::as_u64) {
-                            let name = item
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Spoofed Asset")
-                                .to_string();
-                            let description = item
-                                .get("description")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Uploaded by TrapSpoofer.")
-                                .to_string();
-                            details.insert(id.to_string(), AssetDetails { name, description });
-
-                            let creator_type = item
-                                .get("creator")
-                                .and_then(|c| c.get("type"))
-                                .and_then(|v| v.as_str())
-                                .map(str::to_string);
-                            let creator_id = item
-                                .get("creator")
-                                .and_then(|c| c.get("targetId"))
-                                .and_then(serde_json::Value::as_u64);
-                            if let (Some(t), Some(cid)) = (creator_type, creator_id) {
-                                if cid != 0 && !t.is_empty() {
-                                    creators.insert(id.to_string(), (t, cid));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        develop_requests.push(async move {
+            let res = req.send().await.ok()?;
+            res.json::<serde_json::Value>().await.ok()
+        });
     }
+
+    let develop_responses: Vec<Option<serde_json::Value>> =
+        stream::iter(develop_requests).buffer_unordered(METADATA_CHUNK_CONCURRENCY).collect().await;
+    for json in develop_responses.iter().flatten() {
+        parse_develop_details(json, &mut details, &mut creators);
+    }
+
     (details, creators)
 }
 
@@ -682,6 +815,8 @@ pub async fn process_spoofer_action(
         log_file: Mutex::new(log_file_extracted),
         download_semaphore: Arc::new(Semaphore::new(max_download_concurrency)),
         discoveries: Mutex::new(Vec::new()),
+        permission_tasks: Mutex::new(tokio::task::JoinSet::new()),
+        permission_semaphore: Arc::new(Semaphore::new(PERMISSION_GRANT_CONCURRENCY)),
         client,
         app: app.clone(),
     });
@@ -710,7 +845,10 @@ pub async fn process_spoofer_action(
 
                 let task_body = async move {
 
-                let _adaptive_permit = crate::commands::spoofer::acquire_adaptive_permit().await;
+                // Concurrency permit for filtering + download + the upload request.
+                // It is released before Open Cloud operation polling and permission
+                // grants, which previously held it for the whole asset lifecycle.
+                let asset_permit = crate::commands::spoofer::acquire_adaptive_permit().await;
                 if ctx.interrupted.load(Ordering::Relaxed) {
                     return;
                 }
@@ -789,47 +927,14 @@ pub async fn process_spoofer_action(
 
                 let file_path = downloads_dir.join(file_name).to_string_lossy().to_string();
 
-                let place_ids_for_download = if ctx.forced_place_ids.is_empty() {
-                    match crate::commands::spoofer::get_asset_creator_for_asset(ctx.app.clone(), asset_id.clone(), ctx.cookie.clone()).await {
-                        Ok((creator_type, creator_id)) => {
-                            let cache_key = format!("{creator_type}:{creator_id}");
-                            if let Some(ids) = ctx.creator_place_ids_cache.get(&cache_key).map(|v| v.value().clone()) {
-                                ids
-                            } else {
-                                if let Ok(ids) = crate::commands::spoofer::get_place_id_from_creator(
-                                    ctx.app.clone(), creator_type.clone(), creator_id.clone(), ctx.cookie.clone(), Some(100), Some(ctx.place_name_raw.clone())
-                                ).await {
-                                    if !ids.is_empty() {
-                                        ctx.log(&format!("Found {} candidate Place ID(s) for {} {}.", ids.len(), creator_type, creator_id), "info");
-                                    }
-                                    ctx.creator_place_ids_cache.insert(cache_key, ids.clone());
-                                    ids
-                                } else {
-                                    let mut fallback_ids = Vec::new();
-                                    if let Some(uid) = ctx.account_id.clone() {
-                                        if uid != creator_id {
-                                            if let Ok(ids) = crate::commands::spoofer::get_place_id_from_creator(
-                                                ctx.app.clone(), "user".to_string(), uid.clone(), ctx.cookie.clone(), Some(100), Some(ctx.place_name_raw.clone())
-                                            ).await {
-                                                fallback_ids = ids;
-                                            }
-                                        }
-                                    }
-                                    if !fallback_ids.is_empty() {
-                                        ctx.log(&format!("Asset creator has no valid places. Fell back to {} candidate Place ID(s) from your account.", fallback_ids.len()), "info");
-                                    }
-                                    ctx.creator_place_ids_cache.insert(cache_key, fallback_ids.clone());
-                                    fallback_ids
-                                }
-                            }
-                        }
-                        Err(_) => Vec::new(),
-                    }
-                } else {
-                    ctx.forced_place_ids.clone()
-                };
-
-                let place_id_arg = if place_ids_for_download.is_empty() { None } else { Some(place_ids_for_download.join(",")) };
+                // Creator place lookup is only needed when the batch-resolved direct
+                // URL fails (or there is none), so it is deferred into the download.
+                let (place_id_arg, deferred_place_ids): (Option<String>, Option<crate::commands::spoofer::DeferredPlaceIds>) =
+                    if ctx.forced_place_ids.is_empty() {
+                        (None, Some(Box::pin(resolve_creator_place_ids(Arc::clone(&ctx), asset_id.clone()))))
+                    } else {
+                        (Some(ctx.forced_place_ids.join(",")), None)
+                    };
                 let mut remove_download_file = false;
 
                 let dl_res = if asset_type == "raw_keyframe_sequence" {
@@ -845,8 +950,8 @@ pub async fn process_spoofer_action(
                     }
                 } else {
                     let _dl_permit = ctx.download_semaphore.acquire().await.ok();
-                    crate::commands::spoofer::download_animation_asset_with_progress(
-                        ctx.app.clone(), direct_url, ctx.cookie.clone(), ctx.fallback_cookies.clone(), file_path.clone(), format!("dl_{asset_id}"), exact_name.clone(), asset_id.clone(), Some(asset_type.clone()), place_id_arg, ctx.enable_archive_recovery, ctx.proxy_url.clone()
+                    crate::commands::spoofer::download_asset_with_deferred_places(
+                        ctx.app.clone(), direct_url, ctx.cookie.clone(), ctx.fallback_cookies.clone(), file_path.clone(), format!("dl_{asset_id}"), exact_name.clone(), asset_id.clone(), Some(asset_type.clone()), place_id_arg, deferred_place_ids, ctx.enable_archive_recovery, ctx.proxy_url.clone()
                     ).await
                 };
 
@@ -891,8 +996,15 @@ pub async fn process_spoofer_action(
                         let details = details.unwrap_or_else(|| AssetDetails { name: exact_name.clone(), description: "Uploaded by TrapSpoofer.".to_string() });
                         let final_description = if preserve_metadata { details.description } else { "Uploaded by TrapSpoofer.".to_string() };
 
-                        let up_res = crate::commands::spoofer::publish_asset_with_progress(
-                            ctx.app.clone(), file_path.clone(), details.name, final_description, ctx.cookie.clone(), ctx.csrf_token.clone(), ctx.group_id.clone(), format!("up_{asset_id}"), Some(mapped_type_name.to_string()), Some(ctx.api_key.clone()), upload_user_id, false, Some(asset_id.clone()), ctx.universe_id.clone(), Some(ctx.downloads_root.clone()), ctx.proxy_url.clone(), ctx.operation_poll_interval_ms
+                        // The permit is handed to publish, which releases it as soon as
+                        // the upload request finishes (before operation polling).
+                        // Permission grants run concurrently in the job's permission pool.
+                        let sink_ctx = Arc::clone(&ctx);
+                        let permission_sink: crate::commands::spoofer::PermissionSink =
+                            Arc::new(move |new_asset_id, universe_id| sink_ctx.spawn_permission_grant(new_asset_id, universe_id));
+                        let up_res = crate::commands::spoofer::publish_asset_with_hooks(
+                            ctx.app.clone(), file_path.clone(), details.name, final_description, ctx.cookie.clone(), ctx.csrf_token.clone(), ctx.group_id.clone(), format!("up_{asset_id}"), Some(mapped_type_name.to_string()), Some(ctx.api_key.clone()), upload_user_id, Some(asset_id.clone()), ctx.universe_id.clone(), Some(ctx.downloads_root.clone()), ctx.proxy_url.clone(), ctx.operation_poll_interval_ms,
+                            crate::commands::spoofer::PublishHooks { upload_permit: Some(asset_permit), permission_sink: Some(permission_sink) },
                         ).await;
 
                         match up_res {
@@ -1010,6 +1122,8 @@ pub async fn process_spoofer_action(
         })
         .await;
 
+    ctx.drain_permission_grants().await;
+
     let success = ctx.success_count.load(Ordering::Relaxed);
     let skipped = ctx.skip_count.load(Ordering::Relaxed);
     let failed = ctx.fail_count.load(Ordering::Relaxed);
@@ -1124,25 +1238,10 @@ pub async fn process_spoofer_action(
             .lock()
             .map(|disc| disc.iter().cloned().collect::<HashMap<_, _>>())
             .unwrap_or_default();
-        let write_failures = stream::iter(discoveries)
-            .map(|(asset_id, place_id)| async move {
-                crate::commands::spoofer::remote_cache::push_discovery(asset_id, place_id).await
-            })
-            .buffer_unordered(8)
-            .filter_map(|result| async move { result.err() })
-            .collect::<Vec<_>>()
-            .await;
-
-        if !write_failures.is_empty() {
-            let first_error = write_failures.first().map(String::as_str).unwrap_or("unknown error");
-            ctx.log(
-                &format!(
-                    "Failed to contribute {} discovery entry/entries to the community cache. First error: {}",
-                    write_failures.len(),
-                    first_error
-                ),
-                "warn",
-            );
+        // Local-only cache; nothing is sent to any third-party server.
+        for (asset_id, place_id) in discoveries {
+            let _ =
+                crate::commands::spoofer::remote_cache::push_discovery(asset_id, place_id).await;
         }
     }
 

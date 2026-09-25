@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as LanguageContext from '../../contexts/LanguageContext';
 import Sidebar from './Sidebar';
@@ -8,59 +8,57 @@ vi.mock('../../contexts/LanguageContext', () => ({
   useLanguage: vi.fn(),
 }));
 
-vi.mock('../../contexts/StudioConnectionContext', () => ({
-  useStudioConnectionState: () => ({ studioConnected: true }),
-}));
-
-vi.mock('../../contexts/ConfigContext', () => ({
-  useConfig: () => ({
-    config: {
-      ui: { theme: 'dark', language: 'en' },
-      advanced: { forcePlaceIds: '' },
-      spoofing: { selectedUser: 'none', selectedGroup: 'none', cookie: '', apiKey: '' },
-      accounts: [],
-    },
-    updateConfig: vi.fn(),
-  }),
+vi.mock('./ProfilePopup', () => ({
+  default: ({ collapsed }: { collapsed?: boolean }) => (
+    <div data-testid="profile-popup" data-collapsed={String(Boolean(collapsed))} />
+  ),
 }));
 
 describe('Sidebar', () => {
-  const mockT = vi.fn((key) => {
-    const map: Record<string, string> = {
-      'nav.spoofing': 'Spoofing',
-      'nav.activity': 'Activity',
-      'nav.settings': 'Settings',
-    };
-    return map[key] || key;
-  });
+  const labels: Record<string, string> = {
+    'shell.nav.home': 'Início',
+    'shell.nav.spoof': 'Spoofar',
+    'shell.nav.accounts': 'Contas',
+    'shell.nav.history': 'Histórico',
+    'shell.nav.mcp': 'IA / MCP',
+    'shell.nav.settings': 'Configurações',
+  };
+  const mockT = vi.fn((key: string) => labels[key] ?? key);
 
   beforeEach(() => {
+    localStorage.clear();
     vi.mocked(LanguageContext.useLanguage).mockReturnValue({ t: mockT } as any);
   });
 
-  it('renders all tabs with correct labels', () => {
-    render(<Sidebar activeTab="spoofing" onTabChange={() => {}} />);
-
-    expect(screen.getByText('Spoofing')).toBeInTheDocument();
-    expect(screen.getByText('Activity')).toBeInTheDocument();
-    expect(screen.getByText('Settings')).toBeInTheDocument();
+  it('renders every main tab plus settings and the profile popup', () => {
+    render(<Sidebar activeTab="home" onTabChange={() => {}} />);
+    for (const label of Object.values(labels)) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+    }
+    expect(screen.getByTestId('profile-popup')).toBeInTheDocument();
   });
 
-  it('calls onTabChange with correct id when a tab is clicked', () => {
-    const handleTabChange = vi.fn();
-    render(<Sidebar activeTab="spoofing" onTabChange={handleTabChange} />);
-
-    fireEvent.click(screen.getByText('Settings'));
-    expect(handleTabChange).toHaveBeenCalledWith('settings');
+  it('calls onTabChange with the tab id', () => {
+    const onTabChange = vi.fn();
+    render(<Sidebar activeTab="home" onTabChange={onTabChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Configurações' }));
+    expect(onTabChange).toHaveBeenCalledWith('settings');
+    fireEvent.click(screen.getByRole('button', { name: 'IA / MCP' }));
+    expect(onTabChange).toHaveBeenCalledWith('mcp');
   });
 
-  it('applies active styling to the active tab', () => {
-    render(<Sidebar activeTab="activity" onTabChange={() => {}} />);
+  it('marks the active tab with aria-current', () => {
+    render(<Sidebar activeTab="history" onTabChange={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Histórico' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByRole('button', { name: 'Spoofar' })).not.toHaveAttribute('aria-current');
+  });
 
-    const activityBtn = screen.getByText('Activity').closest('[role="button"]');
-    const spoofingBtn = screen.getByText('Spoofing').closest('[role="button"]');
-
-    expect(activityBtn).toHaveClass('bg-bg-elevated');
-    expect(spoofingBtn).not.toHaveClass('bg-bg-elevated');
+  it('collapses and passes collapsed to the profile popup', () => {
+    render(<Sidebar activeTab="home" onTabChange={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: 'shell.nav.collapse' }));
+    expect(screen.getByTestId('profile-popup')).toHaveAttribute('data-collapsed', 'true');
   });
 });

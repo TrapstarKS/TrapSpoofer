@@ -1,109 +1,109 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 
+import { useFlowAutoAdvance } from './components/app/hooks';
+import { goTo, normalizeTab, setConsoleOpen, type TabId } from './components/app/nav';
 import Sidebar from './components/layout/Sidebar';
 import Titlebar from './components/layout/Titlebar';
 import { PortDiagnosticBanner } from './components/shared/PortDiagnosticBanner';
 import { RobloxStatusBanner } from './components/shared/RobloxStatusBanner';
 import { TutorialGate } from './components/tutorial/TutorialGate';
 import { useConfig } from './contexts/ConfigContext';
-import { useLanguage } from './contexts/LanguageContext';
 import { useAppInitialization } from './hooks/useAppInitialization';
+import { useLegacyExplorerBridge } from './hooks/useLegacyExplorerBridge';
+import { useMcpBridge } from './hooks/useMcpBridge';
 
+const HomePage = lazy(() => import('./components/app/HomePage'));
+const SpoofPage = lazy(() => import('./components/app/spoof/SpoofPage'));
+const McpPage = lazy(() => import('./components/app/McpPage'));
 const ActivityView = lazy(() => import('./components/views/ActivityView'));
-const AssetExplorer = lazy(() => import('./components/views/AssetExplorer'));
-const ConsoleView = lazy(() => import('./components/views/ConsoleView'));
-const DebugConsole = lazy(() => import('./components/views/DebugConsole'));
-
-const SettingsView = lazy(() => import('./components/views/SettingsView'));
-const SpoofingView = lazy(() => import('./components/views/SpoofingView'));
 const AccountsView = lazy(() => import('./components/views/accounts/AccountsView'));
+const SettingsView = lazy(() => import('./components/views/SettingsView'));
+const DebugConsole = lazy(() => import('./components/views/DebugConsole'));
+const PasteIdsModal = lazy(() => import('./components/modals/PasteIdsModal'));
+
+function PageFallback() {
+  return (
+    <div className="flex h-full w-full flex-col gap-4 p-8">
+      <div className="ts-skeleton h-7 w-48 rounded-lg" />
+      <div className="ts-skeleton h-4 w-80 rounded-md" />
+      <div className="ts-skeleton mt-4 h-40 w-full rounded-xl" />
+    </div>
+  );
+}
+
+function Page({ tab }: { tab: TabId }) {
+  switch (tab) {
+    case 'home':
+      return <HomePage />;
+    case 'spoof':
+      return <SpoofPage />;
+    case 'accounts':
+      return <AccountsView />;
+    case 'history':
+      return <ActivityView />;
+    case 'mcp':
+      return <McpPage />;
+    case 'settings':
+      return <SettingsView />;
+  }
+}
 
 export default function App() {
-  const { t } = useLanguage();
   const { config, updateConfig } = useConfig();
-  const activeTab = config.ui.activeTab;
-  const isExplorerOpen = config.ui.assetExplorerOpen;
+  const rawTab = config.ui.activeTab;
+  const tab = normalizeTab(rawTab);
+  const consoleOpen = Boolean(config.debug?.debugMode);
 
-  const { maintenance, isRobloxApiDown } = useAppInitialization();
+  const { isRobloxApiDown } = useAppInitialization();
+  useMcpBridge();
+  useFlowAutoAdvance();
 
-  const setActiveTab = (tabId: string) => updateConfig('ui', 'activeTab', tabId);
-  const setIsExplorerOpen = (isOpen: boolean) => updateConfig('ui', 'assetExplorerOpen', isOpen);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const openPasteIds = useCallback(() => setPasteOpen(true), []);
+  useLegacyExplorerBridge(openPasteIds);
 
-  if (maintenance.mode) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen w-screen bg-background text-foreground p-8 text-center space-y-4 font-sans antialiased">
-        <div className="text-yellow-500 mb-4">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="64"
-            height="64"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-          </svg>
-        </div>
-        <h1 className="text-3xl font-bold tracking-tight">{t('misc.maintenanceBreak')}</h1>
-        <p className="text-muted-foreground max-w-md">
-          {maintenance.message || t('misc.maintenanceDesc')}
-        </p>
-      </div>
-    );
-  }
+  // Legacy tab ids ("spoofing", "activity", "console"...) from older configs / components.
+  useEffect(() => {
+    if (rawTab === 'console') {
+      setConsoleOpen(true);
+      updateConfig('ui', 'activeTab', 'home');
+    } else if (rawTab !== tab) {
+      updateConfig('ui', 'activeTab', tab);
+    }
+  }, [rawTab, tab]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden text-foreground relative font-sans selection:bg-primary/30 antialiased bg-background">
-      {}
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+    <div className="relative flex h-screen w-screen overflow-hidden bg-background font-sans text-foreground antialiased selection:bg-brand/30">
+      <Sidebar activeTab={tab} onTabChange={goTo} />
 
-      <div className="flex flex-col flex-1 min-w-0 h-full relative z-10">
+      <div className="relative z-10 flex h-full min-w-0 flex-1 flex-col">
         <Titlebar />
 
-        <div className="flex-1 relative overflow-hidden bg-transparent flex flex-col">
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <RobloxStatusBanner isVisible={isRobloxApiDown} />
           <PortDiagnosticBanner />
 
-          <div className="flex-1 relative overflow-hidden">
-            <Suspense fallback={<div className="w-full h-full bg-background/50" />}>
-              {activeTab === 'spoofing' && (
-                <div key="spoofing" className="w-full h-full flex">
-                  <AssetExplorer
-                    isOpen={isExplorerOpen}
-                    setIsOpen={setIsExplorerOpen}
-                    mode="main"
-                  />
-                  {}
-                  <div className="hidden" aria-hidden>
-                    <SpoofingView />
-                  </div>
-                </div>
-              )}
-              {activeTab === 'activity' && <ActivityView key="activity" />}
-              {activeTab === 'accounts' && <AccountsView key="accounts" />}
-              {activeTab === 'settings' && <SettingsView key="settings" />}
-              {activeTab === 'console' && <ConsoleView key="console" />}
+          <main className="relative min-h-0 flex-1 overflow-hidden">
+            <Suspense fallback={<PageFallback />}>
+              <Page key={tab} tab={tab} />
             </Suspense>
-          </div>
+          </main>
 
-          <Suspense fallback={null}>
-            <DebugConsole
-              isOpen={config.debug?.debugMode || false}
-              onClose={() => updateConfig('debug', 'debugMode', false)}
-            />
-          </Suspense>
+          {consoleOpen && (
+            <div className="relative h-[38%] min-h-[180px] shrink-0">
+              <Suspense fallback={null}>
+                <DebugConsole isOpen onClose={() => setConsoleOpen(false)} fill />
+              </Suspense>
+            </div>
+          )}
         </div>
-
-        <div
-          className="absolute bottom-0 left-0 right-0 h-32 pointer-events-none z-60 opacity-[0.03] mix-blend-screen"
-          style={{
-            background: 'linear-gradient(to top, var(--primary), transparent)',
-          }}
-        />
       </div>
+
+      {pasteOpen && (
+        <Suspense fallback={null}>
+          <PasteIdsModal open={pasteOpen} onOpenChange={setPasteOpen} />
+        </Suspense>
+      )}
 
       <TutorialGate />
     </div>

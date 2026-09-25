@@ -1,4 +1,4 @@
-import { ShieldAlert } from 'lucide-react';
+import { Ban } from 'lucide-react';
 
 import { useConfig } from '../../../contexts/ConfigContext';
 import { useLanguage } from '../../../contexts/LanguageContext';
@@ -10,25 +10,20 @@ export default function ExclusionsSection() {
 
   return (
     <SettingCard
-      icon={ShieldAlert}
-      title={t('config.exclusions') || 'Exclusions'}
-      description="Prevent specific Roblox users or groups from being spoofed or modified."
+      icon={Ban}
+      title={t('prefs.exclusions.title')}
+      description={t('prefs.exclusions.desc')}
     >
       <SettingFieldRow
-        label={t('settings.excludedUsers') || 'Excluded Users'}
-        description={
-          t('settings.excludedUsersPlaceholder') || 'Comma-separated user IDs (e.g. 12345, 67890)'
-        }
+        label={t('prefs.exclusions.users')}
+        description={t('prefs.exclusions.usersDesc')}
         value={config.advanced.excludedUserIds}
         onChange={(val) => updateConfig('advanced', 'excludedUserIds', val)}
         placeholder="12345, 67890"
       />
-
       <SettingFieldRow
-        label={t('settings.excludedGroups') || 'Excluded Groups'}
-        description={
-          t('settings.excludedGroupsPlaceholder') || 'Comma-separated group IDs (e.g. 54321, 98765)'
-        }
+        label={t('prefs.exclusions.groups')}
+        description={t('prefs.exclusions.groupsDesc')}
         value={config.advanced.excludedGroupIds}
         onChange={(val) => updateConfig('advanced', 'excludedGroupIds', val)}
         placeholder="54321, 98765"

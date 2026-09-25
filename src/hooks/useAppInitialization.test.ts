@@ -20,9 +20,7 @@ vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
 }));
 
 describe('useAppInitialization', () => {
-  let mockFetch: any;
-
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     useConfigStore.setState({ config: DEFAULT_APP_CONFIG });
@@ -30,14 +28,7 @@ describe('useAppInitialization', () => {
       if (command === 'check_roblox_api_status') return Promise.resolve(true);
       return Promise.resolve(null);
     });
-
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) }),
-    );
-
-    const tauriHttp = await import('@tauri-apps/plugin-http');
-    mockFetch = tauriHttp.fetch as any;
+    vi.stubGlobal('fetch', vi.fn());
   });
 
   afterEach(() => {
@@ -45,180 +36,51 @@ describe('useAppInitialization', () => {
     vi.restoreAllMocks();
   });
 
-  it('initializes with default state', async () => {
-    mockFetch.mockImplementation(() =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
-    );
-
+  it('initializes with the Roblox API reported as up', async () => {
     const { result } = renderHook(() => useAppInitialization());
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-
     expect(result.current.isRobloxApiDown).toBe(false);
-    expect(result.current.maintenance.mode).toBe(false);
   });
 
-  it('sets Roblox API down if check_roblox_api_status returns false', async () => {
-    mockFetch.mockImplementation(() =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
-    );
-
+  it('flags the Roblox API as down when the status check fails', async () => {
     (tauriCore.invoke as any).mockImplementation((cmd: string) => {
       if (cmd === 'check_roblox_api_status') return Promise.resolve(false);
       return Promise.resolve(null);
     });
-
     const { result } = renderHook(() => useAppInitialization());
-
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
     expect(result.current.isRobloxApiDown).toBe(true);
   });
 
-  it('sets maintenance mode if config returns true', async () => {
-    mockFetch.mockImplementation(() =>
-      Promise.resolve({
-        ok: true,
-        json: () =>
-          Promise.resolve({ maintenanceMode: true, maintenanceMessage: 'Down for updates' }),
-      }),
-    );
-
-    const { result } = renderHook(() => useAppInitialization());
-
+  it('never phones home (no telemetry, heartbeat or remote config)', async () => {
+    const tauriHttp = await import('@tauri-apps/plugin-http');
+    renderHook(() => useAppInitialization());
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(120_000);
     });
-    expect(result.current.maintenance.mode).toBe(true);
-    expect(result.current.maintenance.message).toBe('Down for updates');
+    expect(tauriHttp.fetch).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    const commands = (tauriCore.invoke as any).mock.calls.map((c: unknown[]) => c[0]);
+    expect(commands).not.toContain('initialize_remote_cache');
   });
 
-  it('clears maintenance mode when the server reports recovery', async () => {
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({ maintenanceMode: true, maintenanceMessage: 'Down for updates' }),
-      })
-      .mockResolvedValue({ ok: true, json: () => Promise.resolve({ maintenanceMode: false }) });
-
-    const { result, rerender } = renderHook(() => useAppInitialization());
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-    expect(result.current.maintenance.mode).toBe(true);
-
-    act(() => {
-      useConfigStore.setState((state) => ({
-        config: {
-          ...state.config,
-          general: {
-            ...state.config.general,
-            telemetryEnabled: false,
-          },
-        },
-      }));
-    });
-    rerender();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    expect(result.current.maintenance).toEqual({ mode: false, message: '' });
-  });
-
-  it('disables cache contributions and heartbeat even if config fetch fails', async () => {
+  it('forwards the proxy setting to the backend', async () => {
     useConfigStore.setState((state) => ({
       config: {
         ...state.config,
-        general: {
-          ...state.config.general,
-          telemetryEnabled: false,
-        },
+        advanced: { ...state.config.advanced, proxyUrl: 'socks5://127.0.0.1:9050' },
       },
     }));
-    mockFetch.mockRejectedValue(new Error('offline'));
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    renderHook(() => useAppInitialization());
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-
-    expect(tauriCore.invoke).toHaveBeenCalledWith('initialize_remote_cache', { pushUrl: null });
-    expect(mockFetch.mock.calls.some(([url]: [string]) => url.endsWith('/api/dev/heartbeat'))).toBe(
-      false,
-    );
-    expect(warnSpy).toHaveBeenCalledWith(
-      'Could not connect to app config server:',
-      expect.any(Error),
-    );
-  });
-
-  it('does not let a stale config response re-enable cache contributions after opt-out', async () => {
-    let resolveConfig!: (value: {
-      ok: boolean;
-      json: () => Promise<{ communityCacheUrl: string }>;
-    }) => void;
-    mockFetch.mockImplementation((url: string) => {
-      if (url.endsWith('/api/config')) {
-        return new Promise((resolve) => {
-          resolveConfig = resolve;
-        });
-      }
-      return Promise.resolve({ ok: true });
-    });
-
     renderHook(() => useAppInitialization());
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-
-    act(() => {
-      useConfigStore.setState((state) => ({
-        config: {
-          ...state.config,
-          general: {
-            ...state.config.general,
-            telemetryEnabled: false,
-          },
-        },
-      }));
+    expect(tauriCore.invoke).toHaveBeenCalledWith('set_proxy_url', {
+      url: 'socks5://127.0.0.1:9050',
     });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-
-    resolveConfig({
-      ok: true,
-      json: () => Promise.resolve({ communityCacheUrl: 'https://cache.example.test/write' }),
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-
-    const cacheCalls = vi
-      .mocked(tauriCore.invoke)
-      .mock.calls.filter(([command]) => command === 'initialize_remote_cache');
-    expect(cacheCalls).toEqual([['initialize_remote_cache', { pushUrl: null }]]);
-  });
-
-  it('registers keyboard shortcuts and events on mount', async () => {
-    mockFetch.mockImplementation(() =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
-    );
-
-    const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
-
-    renderHook(() => useAppInitialization());
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-    expect(addEventListenerSpy).toHaveBeenCalledWith('dragover', expect.any(Function));
-    expect(addEventListenerSpy).toHaveBeenCalledWith('drop', expect.any(Function));
-    expect(addEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
   });
 });

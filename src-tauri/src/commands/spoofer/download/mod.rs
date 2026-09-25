@@ -111,6 +111,88 @@ async fn run_discovery_and_extend_urls(
     }
 }
 
+/// Place IDs that are only resolved if the fast path (the batch-resolved
+/// direct URL) fails. Resolving creator places costs several API calls, so
+/// it is skipped entirely for the common case.
+pub type DeferredPlaceIds =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Vec<String>> + Send + 'static>>;
+
+/// Builds every fallback download candidate (place-scoped URLs, location
+/// resolution, discovery, CDN/economy/version fallbacks). Returns whether the
+/// usage/social-graph discovery already ran.
+async fn extend_with_fallback_candidates(
+    app: &AppHandle,
+    client: &reqwest::Client,
+    asset_id: &str,
+    asset_type: Option<&str>,
+    cookie_header: &str,
+    transfer_id: &str,
+    name: &str,
+    place_ids: &mut Vec<String>,
+    deferred_place_ids: &mut Option<DeferredPlaceIds>,
+    candidate_urls: &mut Vec<String>,
+) -> crate::error::Result<bool> {
+    if let Some(resolver) = deferred_place_ids.take() {
+        for place_id in resolver.await {
+            if is_valid_numeric_id(&place_id) && !place_ids.contains(&place_id) {
+                place_ids.push(place_id);
+            }
+        }
+    }
+
+    for url in build_direct_asset_download_urls(asset_id, asset_type, place_ids) {
+        push_unique_url(candidate_urls, url);
+    }
+
+    for place_id in place_ids.iter().map(String::as_str).map(Some).chain(std::iter::once(None)) {
+        if let Some(resolved_url) =
+            resolve_asset_id_location(app, client, asset_id, cookie_header, place_id).await?
+        {
+            push_unique_url(candidate_urls, resolved_url);
+        }
+    }
+
+    let mut discovery_attempted = false;
+    if place_ids.is_empty() {
+        run_discovery_and_extend_urls(
+            app,
+            asset_id,
+            asset_type,
+            cookie_header,
+            transfer_id,
+            name,
+            candidate_urls,
+        )
+        .await;
+        discovery_attempted = true;
+    }
+
+    for cdn_url in build_cdn_fallback_urls(asset_id).await {
+        push_unique_url(candidate_urls, cdn_url);
+    }
+
+    for url in resolve_asset_economy_urls(asset_id, cookie_header).await {
+        push_unique_url(candidate_urls, url);
+    }
+
+    for url in build_saved_versions_urls(asset_id, cookie_header).await {
+        push_unique_url(candidate_urls, url);
+    }
+
+    if matches!(asset_type, Some("Audio") | Some("Sound")) {
+        if let Some(cdn_url) = api::get_scraped_asset_cdn_url(client, asset_id).await {
+            emit_spoofer_log(
+                app,
+                "info",
+                &format!("Web scraper fallback found CDN URL for audio asset {asset_id}."),
+            );
+            push_unique_url(candidate_urls, cdn_url);
+        }
+    }
+
+    Ok(discovery_attempted)
+}
+
 pub async fn download_animation_asset_with_progress(
     app: AppHandle,
     direct_url: Option<String>,
@@ -125,6 +207,43 @@ pub async fn download_animation_asset_with_progress(
     enable_archive_recovery: bool,
     proxy_url: Option<String>,
 ) -> crate::error::Result<DownloadResult> {
+    download_asset_with_deferred_places(
+        app,
+        direct_url,
+        cookie,
+        fallback_cookies,
+        file_path,
+        transfer_id,
+        name,
+        asset_id,
+        asset_type,
+        place_id,
+        None,
+        enable_archive_recovery,
+        proxy_url,
+    )
+    .await
+}
+
+/// Same as [`download_animation_asset_with_progress`], but when a direct URL
+/// is available it is tried first and the (expensive) fallback candidates,
+/// including `deferred_place_ids`, are only built if it fails.
+pub async fn download_asset_with_deferred_places(
+    app: AppHandle,
+    direct_url: Option<String>,
+    cookie: String,
+    fallback_cookies: Option<Vec<String>>,
+    file_path: String,
+    transfer_id: String,
+    name: String,
+    asset_id: String,
+    asset_type: Option<String>,
+    place_id: Option<String>,
+    deferred_place_ids: Option<DeferredPlaceIds>,
+    enable_archive_recovery: bool,
+    proxy_url: Option<String>,
+) -> crate::error::Result<DownloadResult> {
+    let mut deferred_place_ids = deferred_place_ids;
     if !is_valid_numeric_id(&asset_id) {
         return Err("Invalid Roblox asset ID: IDs must contain only numeric digits.".into());
     }
@@ -174,62 +293,31 @@ pub async fn download_animation_asset_with_progress(
     }
 
     let mut candidate_urls = Vec::new();
+    let mut discovery_attempted = false;
+    // Fast path: when the batch endpoint already produced a direct URL, try it
+    // alone first and only build the expensive fallback list if it fails.
+    let mut fallbacks_built = false;
 
     if let Some(url) = direct_url.clone().filter(|url| !url.trim().is_empty()) {
         push_unique_url(&mut candidate_urls, url);
-    }
-
-    for url in build_direct_asset_download_urls(&asset_id, asset_type.as_deref(), &place_ids) {
-        push_unique_url(&mut candidate_urls, url);
-    }
-
-    for place_id in place_ids.iter().map(String::as_str).map(Some).chain(std::iter::once(None)) {
-        if let Some(resolved_url) =
-            resolve_asset_id_location(&app, &client, &asset_id, &cookie_header, place_id).await?
-        {
-            push_unique_url(&mut candidate_urls, resolved_url);
-        }
-    }
-
-    let mut discovery_attempted = false;
-    if place_ids.is_empty() {
-        run_discovery_and_extend_urls(
+    } else {
+        discovery_attempted = extend_with_fallback_candidates(
             &app,
+            &client,
             &asset_id,
             asset_type.as_deref(),
             &cookie_header,
             &transfer_id,
             &name,
+            &mut place_ids,
+            &mut deferred_place_ids,
             &mut candidate_urls,
         )
-        .await;
-        discovery_attempted = true;
+        .await?;
+        fallbacks_built = true;
     }
 
-    for cdn_url in build_cdn_fallback_urls(&asset_id).await {
-        push_unique_url(&mut candidate_urls, cdn_url);
-    }
-
-    for url in resolve_asset_economy_urls(&asset_id, &cookie_header).await {
-        push_unique_url(&mut candidate_urls, url);
-    }
-
-    for url in build_saved_versions_urls(&asset_id, &cookie_header).await {
-        push_unique_url(&mut candidate_urls, url);
-    }
-
-    if matches!(asset_type.as_deref(), Some("Audio") | Some("Sound")) {
-        if let Some(cdn_url) = api::get_scraped_asset_cdn_url(&client, &asset_id).await {
-            emit_spoofer_log(
-                &app,
-                "info",
-                &format!("Web scraper fallback found CDN URL for audio asset {asset_id}."),
-            );
-            push_unique_url(&mut candidate_urls, cdn_url);
-        }
-    }
-
-    let universe_id = if let Some(pid) = place_ids.first() {
+    let mut universe_id = if let Some(pid) = place_ids.first() {
         crate::commands::spoofer::get_universe_id_from_place_id(pid.clone(), cookie.clone())
             .await
             .ok()
@@ -519,6 +607,38 @@ pub async fn download_animation_asset_with_progress(
                 ),
             );
                 break;
+            }
+        }
+
+        if !fallbacks_built {
+            fallbacks_built = true;
+            let before = candidate_urls.len();
+            discovery_attempted |= extend_with_fallback_candidates(
+                &app,
+                &client,
+                &asset_id,
+                asset_type.as_deref(),
+                &cookie_header,
+                &transfer_id,
+                &name,
+                &mut place_ids,
+                &mut deferred_place_ids,
+                &mut candidate_urls,
+            )
+            .await?;
+            if universe_id.is_none() {
+                if let Some(pid) = place_ids.first() {
+                    universe_id = crate::commands::spoofer::get_universe_id_from_place_id(
+                        pid.clone(),
+                        cookie.clone(),
+                    )
+                    .await
+                    .ok();
+                }
+            }
+            if candidate_urls.len() > before {
+                consecutive_perm_failures = 0;
+                continue 'phases;
             }
         }
 

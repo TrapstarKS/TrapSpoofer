@@ -52,7 +52,11 @@ async function resolveScriptRefs(stores: AssetStores): Promise<Record<string, st
   const ids = scriptRefIds(stores);
   if (ids.length === 0 || !isTauriRuntime()) return {};
   try {
-    return await invoke<Record<string, string>>('resolve_script_references', { assetIds: ids });
+    return (
+      (await invoke<Record<string, string> | null>('resolve_script_references', {
+        assetIds: ids,
+      })) ?? {}
+    );
   } catch (e) {
     addDebugLog('warn', ['resolve_script_references failed', e]);
     return {};
@@ -128,7 +132,7 @@ export async function scanStudio(options: StudioScanOptions = {}): Promise<Spoof
     const message = error instanceof Error ? error.message : String(error);
     session.setScanPhase('error', message);
     log(`[ERROR] Studio scan failed: ${message}`);
-    throw new Error(message);
+    throw new Error(message, { cause: error });
   } finally {
     spoofer.setIsScanningStudio(false);
   }
@@ -144,7 +148,9 @@ export interface FileScanResult {
   stores: AssetStores;
 }
 
-export async function scanFile(path: string): Promise<{ assets: SpoofAsset[]; info: FileScanResult }> {
+export async function scanFile(
+  path: string,
+): Promise<{ assets: SpoofAsset[]; info: FileScanResult }> {
   const session = useSessionStore.getState();
   session.setScanPhase('scanning');
   useSpooferStore.getState().setParsingFileName(path.split(/[\\/]/).pop() ?? path);
@@ -160,7 +166,7 @@ export async function scanFile(path: string): Promise<{ assets: SpoofAsset[]; in
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     session.setScanPhase('error', message);
-    throw new Error(message);
+    throw new Error(message, { cause: error });
   } finally {
     useSpooferStore.getState().setParsingFileName(null);
   }
@@ -182,9 +188,10 @@ export async function addManualIds(text: string): Promise<SpoofAsset[]> {
   if (ids.length === 0) return [];
   let types: Record<string, string> = {};
   if (isTauriRuntime()) {
-    types = await invoke<Record<string, string>>('resolve_script_references', { assetIds: ids }).catch(
-      () => ({}),
-    );
+    types =
+      (await invoke<Record<string, string> | null>('resolve_script_references', {
+        assetIds: ids,
+      }).catch(() => null)) ?? {};
   }
   const assets: SpoofAsset[] = ids.map((id) => {
     const resolved = (types[id] || '').toLowerCase();
@@ -220,12 +227,18 @@ export function getActiveTarget(): ActiveTarget {
   const isGroup = s.selectedGroup !== 'none';
   const secrets = accountSecrets[s.selectedUser] ?? {};
   const apiKey = isGroup
-    ? s.groupApiKey?.trim() || secrets.groupApiKey?.trim() || s.apiKey?.trim() || secrets.apiKey?.trim() || ''
+    ? s.groupApiKey?.trim() ||
+      secrets.groupApiKey?.trim() ||
+      s.apiKey?.trim() ||
+      secrets.apiKey?.trim() ||
+      ''
     : s.apiKey?.trim() || secrets.apiKey?.trim() || '';
   const account = config.accounts.find((a) => a.id === s.selectedUser);
   const cachedUser = loadCachedUsers().find((u) => String(u.id) === s.selectedUser);
   const group = isGroup
-    ? loadCachedGroups(s.selectedUser).find((g) => normalizeId(g.id) === normalizeId(s.selectedGroup))
+    ? loadCachedGroups(s.selectedUser).find(
+        (g) => normalizeId(g.id) === normalizeId(s.selectedGroup),
+      )
     : undefined;
   return {
     userId: s.selectedUser,
@@ -253,6 +266,18 @@ export async function activateProfile(accountId: string, groupId: string | null 
   });
   useSessionStore.setState({ owners: {} });
   void resolveOwners();
+}
+
+/** Deselect the active profile (e.g. after removing it). */
+export function clearActiveProfile() {
+  useConfigStore.getState().updateCategory('spoofing', {
+    selectedUser: 'none',
+    selectedGroup: 'none',
+    cookie: '',
+    apiKey: '',
+    groupApiKey: '',
+  });
+  useSessionStore.setState({ owners: {} });
 }
 
 export async function setUploadGroup(groupId: string | null) {
@@ -303,7 +328,13 @@ export async function resolveOwners(): Promise<void> {
   session.setOwnersLoading(true);
   try {
     const resolved = await invoke<
-      Array<{ assetId: string; creatorId?: string | null; creatorType?: string | null; creator?: string | null; name?: string | null }>
+      Array<{
+        assetId: string;
+        creatorId?: string | null;
+        creatorType?: string | null;
+        creator?: string | null;
+        name?: string | null;
+      }>
     >('resolve_asset_creators', {
       assets: missing.map((id) => ({ assetId: id })),
       cookie,
@@ -462,9 +493,12 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
     const asset = byId.get(id);
     const override = options.assetTypes?.[id];
     const type =
-      override && ['animation', 'audio', 'image', 'mesh', 'script_ref', 'raw_keyframe_sequence'].includes(override)
+      override &&
+      ['animation', 'audio', 'image', 'mesh', 'script_ref', 'raw_keyframe_sequence'].includes(
+        override,
+      )
         ? override
-        : asset?.type ?? 'animation';
+        : (asset?.type ?? 'animation');
     return { id, type, name: asset?.name ?? `Asset ${id}`, rawValue: `rbxassetid://${id}` };
   });
 
@@ -485,7 +519,9 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
 
   if (!downloadOnly && isTauriRuntime()) {
     try {
-      const owner = await invoke<ApiKeyOwner>('detect_opencloud_api_key_owner', { key: target.apiKey });
+      const owner = await invoke<ApiKeyOwner>('detect_opencloud_api_key_owner', {
+        key: target.apiKey,
+      });
       if (!owner.ok && /invalid|unauthorized/i.test(owner.message || '')) {
         return {
           ok: false,
@@ -535,11 +571,17 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
     };
     const groupInfo =
       target.groupId !== 'none'
-        ? loadCachedGroups(target.userId).find((g) => normalizeId(g.id) === normalizeId(target.groupId))
+        ? loadCachedGroups(target.userId).find(
+            (g) => normalizeId(g.id) === normalizeId(target.groupId),
+          )
         : undefined;
     const group =
       target.groupId !== 'none'
-        ? { id: target.groupId, name: groupInfo?.name ?? 'Grupo', iconUrl: groupInfo?.iconUrl ?? '' }
+        ? {
+            id: target.groupId,
+            name: groupInfo?.name ?? 'Grupo',
+            iconUrl: groupInfo?.iconUrl ?? '',
+          }
         : null;
 
     const placeIdFallback =
@@ -696,10 +738,14 @@ export async function retryFailed(): Promise<RunResult> {
 /* Applying results                                                    */
 /* ------------------------------------------------------------------ */
 
-export async function pushToStudio(mappings?: Record<string, string>) {
+/** Queue replacements for the Studio plugin. Explicit mappings are not saved as job history unless `persist`. */
+export async function pushToStudio(
+  mappings?: Record<string, string>,
+  options: { persist?: boolean } = {},
+) {
   const map = mappings ?? useSpooferStore.getState().lastReplacements;
   if (Object.keys(map).length === 0) throw new Error('Nenhum mapeamento para aplicar ainda.');
-  await applyReplacements(map, !mappings);
+  await applyReplacements(map, !(options.persist ?? false) || !mappings);
   return Object.keys(map).length;
 }
 
@@ -744,7 +790,10 @@ export async function discoverPlaceIds(assetIds?: string[], timeoutSecs = 60) {
   store.setIsDiscoveringPlaceIds(true);
   let found = 0;
   const queue = [...ids];
-  const concurrency = Math.min(useConfigStore.getState().config.advanced.discoveryConcurrency ?? 30, ids.length);
+  const concurrency = Math.min(
+    useConfigStore.getState().config.advanced.discoveryConcurrency ?? 30,
+    ids.length,
+  );
   const worker = async () => {
     while (queue.length > 0) {
       const id = queue.shift();

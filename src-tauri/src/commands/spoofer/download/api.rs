@@ -463,12 +463,21 @@ pub async fn batch_get_download_urls_for_assets(
     let fallback_place_ids: Vec<Option<String>> =
         if place_ids.is_empty() { vec![None] } else { place_ids.into_iter().map(Some).collect() };
 
+    // Chunks are independent; resolve a few concurrently (rate limiting is
+    // still enforced by the shared DownloadResolution bucket).
+    const BATCH_CHUNK_CONCURRENCY: usize = 4;
+    let app = &app;
+    let client = &client;
+    let cookie_header = &cookie_header;
+    let fallback_place_ids = &fallback_place_ids;
+    let mut chunk_futures = Vec::new();
     for chunk in body.chunks(50) {
+        chunk_futures.push(async move {
         let chunk_vec = chunk.to_vec();
 
         let mut resolved_this_chunk: HashMap<String, String> = HashMap::new();
 
-        for current_place_id_opt in &fallback_place_ids {
+        for current_place_id_opt in fallback_place_ids.iter() {
             let pending: Vec<BatchAssetRequest> = chunk_vec
                 .iter()
                 .filter(|item| !resolved_this_chunk.contains_key(&item.request_id))
@@ -503,7 +512,7 @@ pub async fn batch_get_download_urls_for_assets(
 
                 let mut req = client
                     .post("https://assetdelivery.roblox.com/v2/assets/batch")
-                    .header(COOKIE, &cookie_header)
+                    .header(COOKIE, cookie_header)
                     .header(USER_AGENT, ua)
                     .header("Content-Type", "application/json");
                 if let Some(ref pid) = current_place_id_opt {
@@ -517,7 +526,7 @@ pub async fn batch_get_download_urls_for_assets(
                 .await;
 
                 if let Ok(Ok(resp)) = send_result {
-                    crate::utils::check_for_roblosecurity_update(&app, &resp, &cookie_header);
+                    crate::utils::check_for_roblosecurity_update(app, &resp, cookie_header);
                     if resp.status().is_success() {
                         crate::commands::spoofer::record_adaptive_success();
                         if let Ok(data) = resp.json::<serde_json::Value>().await {
@@ -528,7 +537,7 @@ pub async fn batch_get_download_urls_for_assets(
                         }
                         break;
                     } else if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-                        return Err("Your ROBLOSECURITY cookie is missing, invalid, or expired. Please update it in settings.".into());
+                        return Err::<HashMap<String, String>, crate::error::AppError>("Your ROBLOSECURITY cookie is missing, invalid, or expired. Please update it in settings.".into());
                     } else if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
                         let retry_after_ms = crate::utils::extract_retry_after(&resp, None);
                         crate::commands::spoofer::record_adaptive_rate_limit(retry_after_ms);
@@ -541,7 +550,7 @@ pub async fn batch_get_download_urls_for_assets(
                             "batch-asset-resolution",
                         ) {
                             emit_spoofer_log(
-                                &app,
+                                app,
                                 "warn",
                                 &format!(
                                     "Roblox rate limited batch asset resolution; slowing requests for about {:.1}s.",
@@ -569,7 +578,16 @@ pub async fn batch_get_download_urls_for_assets(
             let _ = has_transient;
         }
 
-        urls.extend(resolved_this_chunk);
+        Ok(resolved_this_chunk)
+    });
+    }
+
+    let chunk_results = futures::stream::iter(chunk_futures)
+        .buffer_unordered(BATCH_CHUNK_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    for chunk_result in chunk_results {
+        urls.extend(chunk_result?);
     }
 
     Ok(urls)

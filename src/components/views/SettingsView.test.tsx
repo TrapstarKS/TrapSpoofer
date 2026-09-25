@@ -65,11 +65,18 @@ describe('SettingsView', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(LanguageContext.useLanguage).mockReturnValue({ t: mockT } as any);
+    vi.mocked(LanguageContext.useLanguage).mockReturnValue({
+      t: mockT,
+      tf: mockT,
+      lang: 'pt',
+      setLang: vi.fn(),
+    } as any);
   });
 
   it('renders settings sections correctly', () => {
     render(<SettingsView />);
-    expect(screen.getAllByText('settings.appearance')[0]).toBeInTheDocument();
+    expect(screen.getByText('prefs.title')).toBeInTheDocument();
+    expect(screen.getByText('prefs.appearance.title')).toBeInTheDocument();
+    expect(screen.getByText('prefs.nav.advanced')).toBeInTheDocument();
   });
 });

@@ -1,54 +1,96 @@
-import React from 'react';
+import React, { useId } from 'react';
 
 import { cn } from '../../../lib/utils';
-import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
 import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { Switch } from '../../ui/switch';
 
+type IconLike = React.ComponentType<{ size?: number; className?: string }> | React.ReactNode;
+
+function renderIcon(Icon: IconLike | undefined) {
+  if (!Icon) return null;
+  if (React.isValidElement(Icon)) return Icon;
+  const Comp = Icon as React.ComponentType<{ size?: number; className?: string }>;
+  return <Comp size={16} />;
+}
+
 export function SettingCard({
-  icon: Icon,
+  icon,
   title,
   description,
   badge,
   children,
   className,
+  tone = 'default',
 }: {
-  icon?: React.ComponentType<{ size: number; className?: string }> | React.ReactNode;
+  icon?: IconLike;
   title: string;
   description?: string;
   badge?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  tone?: 'default' | 'danger';
 }) {
-  const renderIcon = () => {
-    if (!Icon) return null;
-    if (React.isValidElement(Icon)) return Icon;
-    const Comp = Icon as React.ComponentType<{ size: number; className?: string }>;
-    return <Comp size={15} className="text-primary shrink-0" />;
-  };
-
   return (
-    <Card
+    <section
       className={cn(
-        'bg-bg-surface/40 border border-border-subtle rounded-xl shadow-xs overflow-hidden',
+        'overflow-hidden rounded-2xl border bg-bg-surface/50',
+        tone === 'danger' ? 'border-red-500/25' : 'border-border-subtle',
         className,
       )}
     >
-      <CardHeader className="px-3.5 py-2.5 border-b border-border-subtle/40 bg-bg-base/20 flex flex-row items-center justify-between">
-        <div className="space-y-0.5 min-w-0 flex-1">
-          <CardTitle className="text-xs font-bold flex items-center gap-2 text-text-primary">
-            {renderIcon()}
-            <span>{title}</span>
-          </CardTitle>
+      <header className="flex items-start gap-3 px-5 pb-3 pt-4">
+        {icon && (
+          <span
+            className={cn(
+              'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg',
+              tone === 'danger' ? 'bg-red-500/10 text-red-500' : 'bg-primary/10 text-primary',
+            )}
+          >
+            {renderIcon(icon)}
+          </span>
+        )}
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
           {description && (
-            <p className="text-[11px] text-text-secondary leading-snug">{description}</p>
+            <p className="text-[12.5px] leading-snug text-text-secondary">{description}</p>
           )}
         </div>
         {badge}
-      </CardHeader>
-      <CardContent className="p-0 divide-y divide-border-subtle/30">{children}</CardContent>
-    </Card>
+      </header>
+      <div className="divide-y divide-border-subtle/60 border-t border-border-subtle/60">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** Generic row: label + description on the left, control on the right. */
+export function SettingRow({
+  label,
+  description,
+  children,
+  htmlFor,
+  className,
+}: {
+  label: string;
+  description?: React.ReactNode;
+  children?: React.ReactNode;
+  htmlFor?: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn('flex items-center justify-between gap-6 px-5 py-3.5', className)}>
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <Label htmlFor={htmlFor} className="block text-[13px] font-medium text-text-primary">
+          {label}
+        </Label>
+        {description && (
+          <p className="text-[12px] leading-snug text-text-secondary">{description}</p>
+        )}
+      </div>
+      {children && <div className="shrink-0">{children}</div>}
+    </div>
   );
 }
 
@@ -65,23 +107,11 @@ export function SettingSwitchRow({
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
 }) {
+  const id = useId();
   return (
-    <div className="px-3.5 py-2.5 flex items-center justify-between gap-4 hover:bg-bg-elevated/20 transition-colors">
-      <div className="space-y-0.5 flex-1 min-w-0">
-        <Label className="text-xs font-semibold text-text-primary block cursor-pointer">
-          {label}
-        </Label>
-        {description && (
-          <p className="text-[11px] text-text-secondary leading-snug">{description}</p>
-        )}
-      </div>
-      <Switch
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-        disabled={disabled}
-        className="shrink-0"
-      />
-    </div>
+    <SettingRow label={label} description={description} htmlFor={id}>
+      <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
+    </SettingRow>
   );
 }
 
@@ -102,23 +132,24 @@ export function SettingFieldRow({
   type?: string;
   className?: string;
 }) {
+  const id = useId();
   return (
-    <div className="px-3.5 py-2.5 flex flex-col gap-1.5 hover:bg-bg-elevated/20 transition-colors">
+    <div className="flex flex-col gap-2 px-5 py-3.5">
       <div className="space-y-0.5">
-        <Label className="text-xs font-semibold text-text-primary block">{label}</Label>
+        <Label htmlFor={id} className="block text-[13px] font-medium text-text-primary">
+          {label}
+        </Label>
         {description && (
-          <p className="text-[11px] text-text-secondary leading-snug">{description}</p>
+          <p className="text-[12px] leading-snug text-text-secondary">{description}</p>
         )}
       </div>
       <Input
+        id={id}
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={cn(
-          'h-8 text-xs bg-bg-base/70 border-border-subtle focus:border-primary w-full mt-0.5',
-          className,
-        )}
+        className={cn('h-9 text-[13px]', className)}
       />
     </div>
   );
@@ -146,64 +177,58 @@ export function SettingSliderItem({
   const pct = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
 
   return (
-    <div className="px-3.5 py-2.5 flex flex-col gap-1.5 hover:bg-bg-elevated/20 transition-colors">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-2 px-5 py-3.5">
+      <div className="flex items-start justify-between gap-4">
         <div className="space-y-0.5">
-          <Label className="text-xs font-semibold text-text-primary block">{label}</Label>
+          <Label className="block text-[13px] font-medium text-text-primary">{label}</Label>
           {description && (
-            <p className="text-[11px] text-text-secondary leading-snug">{description}</p>
+            <p className="text-[12px] leading-snug text-text-secondary">{description}</p>
           )}
         </div>
-        <span className="text-[11px] font-mono font-bold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md shrink-0">
+        <span className="shrink-0 rounded-md bg-primary/10 px-2 py-0.5 font-mono text-[12px] font-semibold text-primary">
           {value}
         </span>
       </div>
 
-      <div className="relative flex items-center w-full py-1">
-        <div className="w-full h-1.5 bg-bg-base border border-border-subtle/70 rounded-full overflow-hidden relative">
-          <div
-            className="h-full bg-primary transition-all duration-75 rounded-full"
-            style={{ width: `${pct}%` }}
-          />
+      <div className="relative flex w-full items-center py-1.5">
+        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-bg-elevated">
+          <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
         </div>
-
         <input
           type="range"
+          aria-label={label}
           min={min}
           max={max}
           step={step}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
         />
-
         <div
-          className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-primary shadow-xs border border-white pointer-events-none transition-all duration-75"
+          className="pointer-events-none absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-bg-base bg-primary shadow"
           style={{ left: `${pct}%` }}
         />
       </div>
 
       {ticks && (
-        <div className="relative w-full h-3 text-[9px] text-text-muted font-mono mt-0.5 select-none">
-          {ticks.map((t, i) => {
-            const numVal = typeof t === 'number' ? t : parseFloat(String(t));
+        <div className="relative h-3 w-full select-none font-mono text-[10px] text-text-muted">
+          {ticks.map((tick, i) => {
+            const numVal = typeof tick === 'number' ? tick : parseFloat(String(tick));
             const tickPct = isNaN(numVal)
               ? (i / Math.max(1, ticks.length - 1)) * 100
               : Math.min(100, Math.max(0, ((numVal - min) / (max - min)) * 100));
-
             const isFirst = i === 0 || tickPct <= 2;
             const isLast = i === ticks.length - 1 || tickPct >= 98;
-
             return (
               <span
                 key={i}
-                className="absolute top-0 pointer-events-none"
+                className="pointer-events-none absolute top-0"
                 style={{
                   left: `${tickPct}%`,
                   transform: isFirst ? 'none' : isLast ? 'translateX(-100%)' : 'translateX(-50%)',
                 }}
               >
-                {t}
+                {tick}
               </span>
             );
           })}

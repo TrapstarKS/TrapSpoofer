@@ -1,16 +1,5 @@
-import {
-  ArrowDownUp,
-  Bug,
-  Gauge,
-  KeyRound,
-  Laptop,
-  Palette,
-  ShieldAlert,
-  ShieldCheck,
-  TriangleAlert,
-  Wrench,
-} from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Info, SlidersHorizontal, UploadCloud, Wrench } from 'lucide-react';
+import { type ReactNode, useState } from 'react';
 
 import { useLanguage } from '../../contexts/LanguageContext';
 import { cn } from '../../lib/utils';
@@ -25,156 +14,108 @@ import DangerCard from './settings/DangerCard';
 import DebugCard from './settings/DebugCard';
 import PermissionsCard from './settings/PermissionsCard';
 
+type SectionId = 'general' | 'uploads' | 'advanced';
+
 export default function SettingsView() {
   const { t } = useLanguage();
-  const [tab, setTab] = useState('credentials');
-  const isManualScroll = useRef(false);
+  const [section, setSection] = useState<SectionId>('general');
 
-  const tabs = [
-    { id: 'credentials', label: t('spoof.options') || 'Credentials', icon: <KeyRound size={15} /> },
-    { id: 'permissions', label: 'Permissions', icon: <ShieldCheck size={15} /> },
-    { id: 'appearance', label: t('settings.appearance'), icon: <Palette size={15} /> },
-    { id: 'behavior', label: t('settings.behavior'), icon: <Laptop size={15} /> },
-    { id: 'upload', label: t('config.assetProcessing'), icon: <ArrowDownUp size={15} /> },
-    { id: 'routing', label: t('config.routingLimits'), icon: <Gauge size={15} /> },
-    { id: 'exclusions', label: t('config.exclusions'), icon: <ShieldAlert size={15} /> },
-    { id: 'features', label: t('settings.advanced'), icon: <Wrench size={15} /> },
-    { id: 'debug', label: t('debug.title'), icon: <Bug size={15} /> },
-    { id: 'danger', label: t('settings.dangerZone'), icon: <TriangleAlert size={15} /> },
+  const sections: { id: SectionId; label: string; desc: string; icon: ReactNode }[] = [
+    {
+      id: 'general',
+      label: t('prefs.nav.general'),
+      desc: t('prefs.nav.generalDesc'),
+      icon: <SlidersHorizontal size={16} />,
+    },
+    {
+      id: 'uploads',
+      label: t('prefs.nav.uploads'),
+      desc: t('prefs.nav.uploadsDesc'),
+      icon: <UploadCloud size={16} />,
+    },
+    {
+      id: 'advanced',
+      label: t('prefs.nav.advanced'),
+      desc: t('prefs.nav.advancedDesc'),
+      icon: <Wrench size={16} />,
+    },
   ];
 
-  const handleTabClick = (id: string) => {
-    setTab(id);
-    isManualScroll.current = true;
-    const el = document.getElementById(`section-${id}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-    setTimeout(() => {
-      isManualScroll.current = false;
-    }, 600);
-  };
-
-  useEffect(() => {
-    const scrollContainer = document.getElementById('settings-scroll-container');
-    if (!scrollContainer) return;
-
-    const handleScroll = () => {
-      if (isManualScroll.current) return;
-      const isAtBottom =
-        scrollContainer.scrollTop + scrollContainer.clientHeight >=
-        scrollContainer.scrollHeight - 40;
-      if (isAtBottom) {
-        setTab('danger');
-      }
-    };
-
-    const observerOptions = {
-      root: scrollContainer,
-      rootMargin: '-5% 0px -40% 0px',
-      threshold: 0,
-    };
-
-    const observerCallback = (entries: IntersectionObserverEntry[]) => {
-      if (isManualScroll.current) return;
-
-      const isAtBottom =
-        scrollContainer.scrollTop + scrollContainer.clientHeight >=
-        scrollContainer.scrollHeight - 40;
-      if (isAtBottom) {
-        setTab('danger');
-        return;
-      }
-
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          const id = entry.target.id.replace('section-', '');
-          setTab(id);
-          break;
-        }
-      }
-    };
-
-    const observer = new IntersectionObserver(observerCallback, observerOptions);
-    tabs.forEach((tb) => {
-      const el = document.getElementById(`section-${tb.id}`);
-      if (el) observer.observe(el);
-    });
-
-    scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
-
-    return () => {
-      observer.disconnect();
-      scrollContainer.removeEventListener('scroll', handleScroll);
-    };
-  }, [t]);
-
   return (
-    <div className="w-full h-full overflow-hidden">
-      <div className="w-full h-full p-4 lg:p-6 flex">
-        <div className="w-52 shrink-0 flex flex-col gap-1 pr-4 border-r border-border-subtle overflow-y-auto scrollbar-hide">
-          {tabs.map((tb) => (
-            <button
-              key={tb.id}
-              type="button"
-              onClick={() => handleTabClick(tb.id)}
-              className={cn(
-                'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-left transition-all',
-                tab === tb.id
-                  ? 'bg-primary/10 text-primary font-semibold'
-                  : 'text-text-secondary hover:bg-bg-surface hover:text-text-primary',
-              )}
-            >
-              <span className={cn(tab === tb.id ? 'text-primary' : 'text-text-muted')}>
-                {tb.icon}
-              </span>
-              {tb.label}
-            </button>
-          ))}
-        </div>
+    <div className="h-full w-full overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-6 pb-16 lg:p-8">
+        <header className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+            {t('prefs.title')}
+          </h1>
+          <p className="text-[13px] text-text-secondary">{t('prefs.subtitle')}</p>
+        </header>
 
-        <div
-          id="settings-scroll-container"
-          className="flex-1 overflow-y-auto pl-6 flex flex-col gap-6 pb-32 scroll-smooth"
-        >
-          <div id="section-credentials" className="scroll-mt-4">
-            <CredentialsCard />
-          </div>
+        <div className="flex flex-col gap-6 md:flex-row md:items-start">
+          <nav
+            aria-label={t('prefs.title')}
+            className="flex shrink-0 gap-1 md:sticky md:top-0 md:w-56 md:flex-col"
+          >
+            {sections.map((s) => {
+              const selected = section === s.id;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-current={selected ? 'page' : undefined}
+                  onClick={() => setSection(s.id)}
+                  className={cn(
+                    'flex flex-1 items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors md:flex-none',
+                    selected
+                      ? 'bg-bg-elevated text-text-primary'
+                      : 'text-text-secondary hover:bg-bg-surface hover:text-text-primary',
+                  )}
+                >
+                  <span
+                    className={cn('mt-0.5 shrink-0', selected ? 'text-primary' : 'text-text-muted')}
+                  >
+                    {s.icon}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-semibold">{s.label}</span>
+                    <span className="hidden text-[11.5px] leading-snug text-text-muted md:block">
+                      {s.desc}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
 
-          <div id="section-permissions" className="scroll-mt-4">
-            <PermissionsCard />
-          </div>
-
-          <div id="section-appearance" className="scroll-mt-4">
-            <AppearanceCard />
-          </div>
-
-          <div id="section-behavior" className="scroll-mt-4">
-            <BehaviorCard />
-          </div>
-
-          <div id="section-upload" className="scroll-mt-4">
-            <UploadSection />
-          </div>
-
-          <div id="section-routing" className="scroll-mt-4">
-            <RoutingSection />
-          </div>
-
-          <div id="section-exclusions" className="scroll-mt-4">
-            <ExclusionsSection />
-          </div>
-
-          <div id="section-features" className="scroll-mt-4">
-            <AdvancedSection />
-          </div>
-
-          <div id="section-debug" className="scroll-mt-4">
-            <DebugCard />
-          </div>
-
-          <div id="section-danger" className="scroll-mt-4">
-            <DangerCard />
+          <div className="flex min-w-0 flex-1 flex-col gap-5">
+            {section === 'general' && (
+              <>
+                <CredentialsCard />
+                <AppearanceCard />
+                <BehaviorCard />
+              </>
+            )}
+            {section === 'uploads' && (
+              <>
+                <UploadSection />
+                <PermissionsCard />
+              </>
+            )}
+            {section === 'advanced' && (
+              <>
+                <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3">
+                  <Info size={15} className="mt-0.5 shrink-0 text-amber-500" />
+                  <p className="text-[12.5px] leading-relaxed text-text-secondary">
+                    {t('prefs.advancedNote')}
+                  </p>
+                </div>
+                <RoutingSection />
+                <ExclusionsSection />
+                <AdvancedSection />
+                <DebugCard />
+                <DangerCard />
+              </>
+            )}
           </div>
         </div>
       </div>

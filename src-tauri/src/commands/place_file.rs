@@ -164,9 +164,7 @@ fn asset_reference_patterns() -> &'static [Regex] {
 fn is_repeating_digits(value: &str) -> bool {
     let mut chars = value.chars();
     match chars.next() {
-        Some(first) if first.is_ascii_digit() => {
-            value.len() > 1 && chars.all(|c| c == first)
-        }
+        Some(first) if first.is_ascii_digit() => value.len() > 1 && chars.all(|c| c == first),
         _ => false,
     }
 }
@@ -368,8 +366,7 @@ impl Scanner<'_> {
         if !view.scanned.insert(dom_name) {
             return;
         }
-        let Some(text) = view.instance.properties.get(&dom_name).and_then(variant_to_string)
-        else {
+        let Some(text) = view.instance.properties.get(&dom_name).and_then(variant_to_string) else {
             return;
         };
         if require_reference && !contains_asset_reference(&text) {
@@ -564,7 +561,10 @@ fn scan_summary(loaded: &LoadedPlace) -> Value {
     })
 }
 
-pub(crate) fn scan_place_file_inner(path: &str, props: &ApiDumpProperties) -> Result<Value, String> {
+pub(crate) fn scan_place_file_inner(
+    path: &str,
+    props: &ApiDumpProperties,
+) -> Result<Value, String> {
     let canonical = canonical_path(path)?;
     let loaded = load_place(&canonical, props)?;
     let summary = scan_summary(&loaded);
@@ -638,12 +638,37 @@ fn json_value_to_text(value: &Value) -> Option<String> {
     }
 }
 
+fn dom_property(aliases: &AliasMap, token: &str, property: &str) -> String {
+    aliases
+        .get(&(token.to_string(), property.to_string()))
+        .map_or_else(|| property.to_string(), |name| name.as_str().to_string())
+}
+
+/// Sets every existing DOM property among `candidates` (deduplicated).
+fn set_first_existing(
+    instance: &mut rbx_dom_weak::Instance,
+    candidates: &[String],
+    value: &str,
+) -> Result<bool, String> {
+    let mut seen = HashSet::new();
+    let mut any = false;
+    for property in candidates {
+        if seen.insert(property.as_str()) && instance.properties.contains_key(&ustr(property)) {
+            set_string_property(instance, property, value)?;
+            any = true;
+        }
+    }
+    Ok(any)
+}
+
 fn apply_single_patch(
     instance: &mut rbx_dom_weak::Instance,
     patch: &Value,
+    aliases: &AliasMap,
     touched_mesh_parts: &mut usize,
 ) -> Result<(), String> {
     let action = patch.get("action").and_then(Value::as_str).unwrap_or_default();
+    let token = patch.get("token").and_then(Value::as_str).unwrap_or_default();
     let text = patch.get("value").and_then(json_value_to_text);
     match action {
         "setProperty" => {
@@ -651,7 +676,8 @@ fn apply_single_patch(
                 .get("property")
                 .and_then(Value::as_str)
                 .ok_or("setProperty without property")?;
-            set_string_property(instance, property, &text.ok_or("setProperty without value")?)
+            let dom_name = dom_property(aliases, token, property);
+            set_string_property(instance, &dom_name, &text.ok_or("setProperty without value")?)
         }
         "replaceScriptSource" => {
             set_string_property(instance, "Source", &text.ok_or("missing script source")?)
@@ -691,21 +717,27 @@ fn apply_single_patch(
         "replaceMeshPart" => {
             let mut changed = false;
             if let Some(mesh_id) = patch.get("meshId").and_then(json_value_to_text) {
-                let uri = format!("rbxassetid://{mesh_id}");
-                let mut any = false;
-                for property in ["MeshId", "MeshContent"] {
-                    if instance.properties.contains_key(&ustr(property)) {
-                        set_string_property(instance, property, &uri)?;
-                        any = true;
-                    }
-                }
-                if !any {
+                let candidates = [
+                    dom_property(aliases, token, "MeshId"),
+                    dom_property(aliases, token, "MeshContent"),
+                    "MeshId".to_string(),
+                    "MeshContent".to_string(),
+                ];
+                if !set_first_existing(instance, &candidates, &format!("rbxassetid://{mesh_id}"))? {
                     return Err("MeshPart has no MeshId property".into());
                 }
                 changed = true;
             }
             if let Some(texture_id) = patch.get("textureId").and_then(json_value_to_text) {
-                set_string_property(instance, "TextureID", &format!("rbxassetid://{texture_id}"))?;
+                let candidates = [
+                    dom_property(aliases, token, "TextureID"),
+                    "TextureID".to_string(),
+                    "TextureContent".to_string(),
+                ];
+                let uri = format!("rbxassetid://{texture_id}");
+                if !set_first_existing(instance, &candidates, &uri)? {
+                    return Err("MeshPart has no TextureID property".into());
+                }
                 changed = true;
             }
             if changed {
@@ -719,7 +751,7 @@ fn apply_single_patch(
     }
 }
 
-fn apply_patches(dom: &mut WeakDom, patches: &[Value]) -> ApplyReport {
+fn apply_patches(dom: &mut WeakDom, patches: &[Value], aliases: &AliasMap) -> ApplyReport {
     let mut report = ApplyReport::default();
     let tokens: HashMap<String, Ref> =
         dom.descendants().map(|inst| (inst.referent().to_string(), inst.referent())).collect();
@@ -733,7 +765,7 @@ fn apply_patches(dom: &mut WeakDom, patches: &[Value]) -> ApplyReport {
             report.fail(format!("{action} on {full_name}: instance not found"));
             continue;
         };
-        match apply_single_patch(instance, patch, &mut touched_mesh_parts) {
+        match apply_single_patch(instance, patch, aliases, &mut touched_mesh_parts) {
             Ok(()) => report.applied += 1,
             Err(error) => report.fail(format!("{action} on {full_name}: {error}")),
         }
@@ -797,6 +829,31 @@ fn write_dom(dom: &WeakDom, format: FileFormat, output: &Path) -> Result<(), Str
     result
 }
 
+/// `plan_patches` re-emits whole-text rewrites (script sources, tags, ...)
+/// whenever the text contains any id-looking number, even if nothing mapped.
+/// Offline we drop those so `patchesApplied` only counts real changes.
+fn drop_noop_patches(records: &[StudioRecord], patches: Vec<Value>) -> Vec<Value> {
+    let originals: HashMap<(&str, &str), &str> = records
+        .iter()
+        .map(|r| ((r.token.as_str(), r.property.as_str()), r.value.as_str()))
+        .collect();
+    patches
+        .into_iter()
+        .filter(|patch| {
+            let property = match patch.get("action").and_then(Value::as_str) {
+                Some("replaceScriptSource") => "Source",
+                Some("replaceTags") => "__Tags__",
+                Some("replaceEmotes") => "__Emotes__",
+                Some("replaceAccessories") => "__Accessories__",
+                _ => return true,
+            };
+            let token = patch.get("token").and_then(Value::as_str).unwrap_or_default();
+            let new_value = patch.get("value").and_then(Value::as_str);
+            originals.get(&(token, property)).copied() != new_value
+        })
+        .collect()
+}
+
 fn take_cached_place(path: &Path) -> Option<LoadedPlace> {
     let mut guard = place_cache().lock().ok()?;
     let cached = guard.as_ref()?;
@@ -840,8 +897,9 @@ pub(crate) fn write_spoofed_place_file_inner(
         }
     }
 
-    let patches = plan_patches(&loaded.records, &parsed_mappings);
-    let report = apply_patches(&mut loaded.dom, &patches);
+    let patches =
+        drop_noop_patches(&loaded.records, plan_patches(&loaded.records, &parsed_mappings));
+    let report = apply_patches(&mut loaded.dom, &patches, &loaded.aliases);
     warnings.extend(report.warnings);
 
     if report.applied == 0 {
@@ -914,6 +972,13 @@ mod tests {
                     .with_name("Rock")
                     .with_property("MeshId", ContentId::from("rbxassetid://4445556667"))
                     .with_property("TextureID", ContentId::from("rbxassetid://7778889990")),
+                InstanceBuilder::new("Decal")
+                    .with_name("Logo")
+                    .with_property("Texture", ContentId::from("rbxassetid://6667778889"))
+                    .with_property("Tags", Tags::from(vec!["rbxassetid://3334445556".to_string()])),
+                InstanceBuilder::new("StringValue")
+                    .with_name("AnimRef")
+                    .with_property("Value", "rbxassetid://1234567890"),
             ]),
         );
         dom.insert(
@@ -953,7 +1018,7 @@ mod tests {
     fn scan_emits_plugin_style_records() {
         let dom = sample_dom();
         let scan = scan_dom(&dom, &ApiDumpProperties::default());
-        assert_eq!(scan.instance_count, 6);
+        assert_eq!(scan.instance_count, 8);
 
         let anim = find(&scan.records, "Workspace.Wave", "AnimationId");
         assert_eq!(anim.class_name, "Animation");
@@ -1004,6 +1069,8 @@ mod tests {
             "2345678901": "8765432109",
             "5550001111": "5550002222",
             "4445556667": "4445556668",
+            "6667778889": "6667778880",
+            "3334445556": "3334445557",
         }));
         let result =
             write_spoofed_place_file_inner(source.to_str().expect("utf8"), None, &mappings, &props)
@@ -1015,7 +1082,7 @@ mod tests {
         assert!(output.file_name().expect("name").to_string_lossy().contains(".spoofed."));
 
         let dom = load_dom(&output, format).expect("reload output");
-        let scan = scan_dom(&dom, &props); for inst in dom.descendants() { eprintln!("DBG {} {} {:?}", inst.class, inst.name, inst.properties); }
+        let scan = scan_dom(&dom, &props);
         assert_eq!(
             find(&scan.records, "Workspace.Wave", "AnimationId").value,
             "rbxassetid://9876543210"
@@ -1032,19 +1099,28 @@ mod tests {
             find(&scan.records, "Workspace.Rock", "MeshId").value,
             "rbxassetid://4445556668"
         );
+        assert_eq!(
+            find(&scan.records, "Workspace.Logo", "Texture").value,
+            "rbxassetid://6667778880"
+        );
+        assert_eq!(
+            find(&scan.records, "Workspace.Logo", "__Tags__").value,
+            r#"["rbxassetid://3334445557"]"#
+        );
+        assert_eq!(
+            find(&scan.records, "Workspace.AnimRef", "Value").value,
+            "rbxassetid://9876543210"
+        );
         let source_text = &find(&scan.records, "ServerScriptService.Main", "Source").value;
         assert!(source_text.contains("rbxassetid://9876543210"));
         assert!(!source_text.contains("1234567890"));
         assert!(source_text.contains("local id = 123"));
 
-        // Types are preserved (ContentId stays ContentId).
-        let wave = dom
-            .descendants()
-            .find(|inst| inst.name == "Wave")
-            .expect("wave instance");
+        // Types are preserved (the loaded DOM stores AnimationContent as Content).
+        let wave = dom.descendants().find(|inst| inst.name == "Wave").expect("wave instance");
         assert!(matches!(
-            wave.properties.get(&ustr("AnimationId")),
-            Some(Variant::ContentId(_))
+            wave.properties.get(&ustr("AnimationContent")),
+            Some(Variant::Content(_))
         ));
         assert!(result["warnings"]
             .as_array()
@@ -1086,7 +1162,7 @@ mod tests {
             &ApiDumpProperties::default(),
         )
         .expect("write");
-        eprintln!("DBG {result}"); assert_eq!(result["patchesApplied"], 1);
+        assert_eq!(result["patchesApplied"], 1, "{result}");
         let dom = load_dom(&out, FileFormat::Binary).expect("reload");
         let scan = scan_dom(&dom, &ApiDumpProperties::default());
         assert_eq!(

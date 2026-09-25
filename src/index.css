@@ -160,8 +160,8 @@ input[type='number'] {
   --success: #16a34a;
   --warning: #c2710c;
   --info: #2563eb;
-  --brand: #6d4aff;
-  --brand-foreground: #ffffff;
+  --brand: var(--primary);
+  --brand-foreground: var(--primary-foreground);
   --border-subtle: #e4e4e7;
   --border-strong: #d4d4d8;
 
@@ -216,8 +216,8 @@ input[type='number'] {
   --success: #3ecf8e;
   --warning: #f5a524;
   --info: #4c9aff;
-  --brand: #8b7bff;
-  --brand-foreground: #0b0b0c;
+  --brand: var(--primary);
+  --brand-foreground: var(--primary-foreground);
 
   --border-subtle: #232327;
   --border-strong: #323238;

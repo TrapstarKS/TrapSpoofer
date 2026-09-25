@@ -1,4 +1,12 @@
-import { AlertTriangle, Building2, CheckCircle2, CircleDashed, Loader2, User2, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  Building2,
+  CheckCircle2,
+  CircleDashed,
+  Loader2,
+  User2,
+  XCircle,
+} from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 
 import { useLanguage } from '../../../contexts/LanguageContext';
@@ -57,7 +65,10 @@ export function ProfileAvatar({
         alt=""
         style={style}
         onError={() => setFailed(true)}
-        className={cn('rounded-full object-cover bg-bg-elevated ring-1 ring-border-subtle shrink-0', className)}
+        className={cn(
+          'rounded-full object-cover bg-bg-elevated ring-1 ring-border-subtle shrink-0',
+          className,
+        )}
       />
     );
   }
@@ -122,7 +133,8 @@ export function UploadTargetSelect({
 }) {
   const { t } = useLanguage();
   const { groups, loading } = useProfileGroups(accountId);
-  const current = value === 'none' ? null : groups.find((g) => normalizeId(g.id) === normalizeId(value));
+  const current =
+    value === 'none' ? null : groups.find((g) => normalizeId(g.id) === normalizeId(value));
 
   const renderOption = (group: RobloxGroup | null, fallbackId?: string) => (
     <span className="flex items-center gap-2 min-w-0">
@@ -150,7 +162,9 @@ export function UploadTargetSelect({
     >
       <SelectTrigger className={cn('h-8 w-full text-xs', className)}>
         <SelectValue>
-          {value === 'none' ? renderOption(null) : renderOption(current ?? null, current ? undefined : value)}
+          {value === 'none'
+            ? renderOption(null)
+            : renderOption(current ?? null, current ? undefined : value)}
         </SelectValue>
         {loading && <Loader2 size={12} className="animate-spin text-text-muted" />}
       </SelectTrigger>
@@ -164,10 +178,14 @@ export function UploadTargetSelect({
           </SelectItem>
         ))}
         {!loading && groups.length === 0 && (
-          <div className="px-2 py-1.5 text-[11px] text-text-muted">{t('profiles.card.noGroups')}</div>
+          <div className="px-2 py-1.5 text-[11px] text-text-muted">
+            {t('profiles.card.noGroups')}
+          </div>
         )}
         {loading && groups.length === 0 && (
-          <div className="px-2 py-1.5 text-[11px] text-text-muted">{t('profiles.card.loadingGroups')}</div>
+          <div className="px-2 py-1.5 text-[11px] text-text-muted">
+            {t('profiles.card.loadingGroups')}
+          </div>
         )}
       </SelectContent>
     </Select>

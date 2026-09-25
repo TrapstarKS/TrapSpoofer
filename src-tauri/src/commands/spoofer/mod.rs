@@ -87,6 +87,9 @@ struct AdaptiveLimiter {
     semaphore: Semaphore,
 }
 
+/// Initial adaptive concurrency before any successes/rate limits are observed.
+const ADAPTIVE_INITIAL_LIMIT: usize = 8;
+
 impl AdaptiveLimiter {
     fn new(max: usize) -> Self {
         Self {
@@ -96,6 +99,48 @@ impl AdaptiveLimiter {
             blocked_until: Mutex::new(None),
             semaphore: Semaphore::new(max),
         }
+    }
+
+    /// Keeps the semaphore's permit budget in lock-step with `current`.
+    /// Every change of `current` must go through here (or add/shrink below).
+    fn grow_permits(&self, diff: usize) {
+        if diff > 0 {
+            self.semaphore.add_permits(diff);
+        }
+    }
+
+    fn shrink_permits(&'static self, diff: usize) {
+        if diff == 0 {
+            return;
+        }
+        let diff = u32::try_from(diff).unwrap_or(u32::MAX);
+        if let Ok(permits) = self.semaphore.try_acquire_many(diff) {
+            permits.forget();
+            return;
+        }
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if let Ok(permits) = self.semaphore.acquire_many(diff).await {
+                    permits.forget();
+                }
+            });
+        }
+    }
+
+    /// Atomically moves `current` from `from` to `to` and resizes the semaphore.
+    fn transition(&'static self, from: usize, to: usize) -> bool {
+        if from == to {
+            return false;
+        }
+        if self.current.compare_exchange(from, to, Ordering::AcqRel, Ordering::Acquire).is_err() {
+            return false;
+        }
+        if to > from {
+            self.grow_permits(to - from);
+        } else {
+            self.shrink_permits(from - to);
+        }
+        true
     }
 }
 
@@ -110,7 +155,7 @@ impl Drop for AdaptivePermit {
 }
 
 fn adaptive_limiter() -> &'static AdaptiveLimiter {
-    ADAPTIVE_LIMITER.get_or_init(|| AdaptiveLimiter::new(5))
+    ADAPTIVE_LIMITER.get_or_init(|| AdaptiveLimiter::new(ADAPTIVE_INITIAL_LIMIT))
 }
 
 pub fn configure_adaptive_concurrency(max_concurrency: usize) {
@@ -118,8 +163,13 @@ pub fn configure_adaptive_concurrency(max_concurrency: usize) {
     let limiter = adaptive_limiter();
     limiter.max.store(max, Ordering::Release);
 
-    let start = max.min(3);
-    limiter.current.store(start, Ordering::Release);
+    let start = max.min(ADAPTIVE_INITIAL_LIMIT);
+    loop {
+        let current = limiter.current.load(Ordering::Acquire);
+        if current == start || limiter.transition(current, start) {
+            break;
+        }
+    }
 
     limiter.success_streak.store(0, Ordering::Release);
     if let Ok(mut guard) = limiter.blocked_until.lock() {
@@ -161,6 +211,10 @@ pub async fn acquire_adaptive_permit() -> AdaptivePermit {
     }
 }
 
+/// Grows the limit after a streak of successes. The streak needed is half the
+/// current limit and the step grows with the limit (~25%), so a healthy job
+/// reaches its configured maximum within a few dozen requests instead of
+/// hundreds.
 pub fn record_adaptive_success() {
     let limiter = adaptive_limiter();
     let limit = limiter.current.load(Ordering::Acquire);
@@ -170,16 +224,10 @@ pub fn record_adaptive_success() {
     }
 
     let streak = limiter.success_streak.fetch_add(1, Ordering::AcqRel) + 1;
-    if streak >= limit.max(1) {
+    if streak >= (limit / 2).max(1) {
         limiter.success_streak.store(0, Ordering::Release);
-        if limiter
-            .current
-            .compare_exchange(limit, (limit + 1).min(max), Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-            && limit < max
-        {
-            limiter.semaphore.add_permits(1);
-        }
+        let step = (limit / 4).max(1);
+        limiter.transition(limit, (limit + step).min(max));
     }
 }
 
@@ -187,17 +235,7 @@ pub fn record_adaptive_rate_limit(retry_after_ms: Option<u64>) {
     let limiter = adaptive_limiter();
     let current = limiter.current.load(Ordering::Acquire).max(1);
     let next = (current / 2).max(1);
-    if limiter.current.compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire).is_ok()
-    {
-        let diff = current - next;
-        if diff > 0 {
-            tokio::spawn(async move {
-                if let Ok(permits) = limiter.semaphore.acquire_many(diff as u32).await {
-                    permits.forget();
-                }
-            });
-        }
-    }
+    limiter.transition(current, next);
 
     limiter.success_streak.store(0, Ordering::Release);
 
@@ -227,17 +265,7 @@ pub fn record_adaptive_server_error() {
     let limiter = adaptive_limiter();
     let current = limiter.current.load(Ordering::Acquire).max(1);
     let next = current.saturating_sub(1).max(1);
-    if limiter.current.compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire).is_ok()
-    {
-        let diff = current - next;
-        if diff > 0 {
-            tokio::spawn(async move {
-                if let Ok(permits) = limiter.semaphore.acquire_many(diff as u32).await {
-                    permits.forget();
-                }
-            });
-        }
-    }
+    limiter.transition(current, next);
     limiter.success_streak.store(0, Ordering::Release);
 }
 
@@ -451,7 +479,10 @@ pub mod place;
 pub mod remote_cache;
 pub mod upload;
 
-pub use download::{batch_get_download_urls_for_assets, download_animation_asset_with_progress};
+pub use download::{
+    batch_get_download_urls_for_assets, download_animation_asset_with_progress,
+    download_asset_with_deferred_places, DeferredPlaceIds,
+};
 pub use memory::{find_studio_process, focus_and_save_studio, scan_and_replace_multiple_strings};
 pub use permissions::{patch_asset_permissions, set_asset_privacy};
 pub use place::{
@@ -461,7 +492,9 @@ pub use place::{
     should_skip_asset_for_spoofing,
 };
 pub use remote_cache::initialize_remote_cache;
-pub use upload::publish_asset_with_progress;
+pub use upload::{
+    publish_asset_with_hooks, publish_asset_with_progress, PermissionSink, PublishHooks,
+};
 
 #[cfg(test)]
 mod tests {
@@ -480,6 +513,24 @@ mod tests {
         ];
         let mut names = HashSet::new();
         assert!(buckets.into_iter().all(|bucket| names.insert(bucket.name())));
+    }
+
+    #[test]
+    fn adaptive_limiter_keeps_semaphore_in_sync_with_limit() {
+        let limiter: &'static super::AdaptiveLimiter =
+            Box::leak(Box::new(super::AdaptiveLimiter::new(8)));
+        assert_eq!(limiter.semaphore.available_permits(), 8);
+
+        assert!(limiter.transition(8, 3));
+        assert_eq!(limiter.semaphore.available_permits(), 3);
+
+        assert!(limiter.transition(3, 20));
+        assert_eq!(limiter.semaphore.available_permits(), 20);
+
+        // Stale `from` values are rejected and leave permits untouched.
+        assert!(!limiter.transition(3, 1));
+        assert_eq!(limiter.semaphore.available_permits(), 20);
+        assert!(!limiter.transition(20, 20));
     }
 
     #[test]

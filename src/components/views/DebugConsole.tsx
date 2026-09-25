@@ -163,16 +163,16 @@ export default function DebugConsole({ isOpen, onClose, fill = false }: DebugCon
   };
 
   const sources = [
-    { value: 'all', label: 'All' },
+    { value: 'all', label: t('debug.all') },
     { value: 'ism', label: 'ISM' },
     { value: 'console', label: 'DEV' },
   ];
 
   const levels = [
-    { value: 'info', label: 'Info' },
-    { value: 'success', label: 'Success' },
-    { value: 'warn', label: 'Warn' },
-    { value: 'error', label: 'Error' },
+    { value: 'info', label: t('debug.info') },
+    { value: 'success', label: t('debug.success') },
+    { value: 'warn', label: t('debug.warn') },
+    { value: 'error', label: t('debug.error') },
   ];
 
   if (!isOpen) return null;
@@ -181,20 +181,18 @@ export default function DebugConsole({ isOpen, onClose, fill = false }: DebugCon
     <div
       key="debug-console"
       className={cn(
-        'w-full bg-background/95 flex flex-col z-40 overflow-hidden',
-        fill
-          ? 'h-full'
-          : 'h-1/3 border-t border-border-subtle shadow-[0_-10px_40px_rgba(0,0,0,0.3)]',
+        'relative w-full bg-bg-base/95 flex flex-col z-40 overflow-hidden border-t border-border-subtle',
+        fill ? 'h-full' : 'h-1/3 shadow-[0_-10px_40px_rgba(0,0,0,0.3)]',
       )}
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle bg-bg-surface/50 shrink-0">
         <div className="flex items-center gap-3">
-          {!fill && (
+          {
             <div className="flex items-center gap-2 text-muted-foreground text-[11px] font-bold uppercase tracking-widest">
               <Terminal size={14} className="text-primary" />
               {t('debug.title')}
             </div>
-          )}
+          }
 
           <div className="flex items-center gap-1 bg-bg-base/60 rounded-md p-0.5">
             {sources.map((src) => (
@@ -242,7 +240,9 @@ export default function DebugConsole({ isOpen, onClose, fill = false }: DebugCon
                     />
                     {lvl.label}
                   </TooltipTrigger>
-                  <TooltipContent>Toggle {lvl.label} logs</TooltipContent>
+                  <TooltipContent>
+                    {t('debug.logLevels')}: {lvl.label}
+                  </TooltipContent>
                 </Tooltip>
               );
             })}
@@ -251,7 +251,7 @@ export default function DebugConsole({ isOpen, onClose, fill = false }: DebugCon
 
         <div className="flex items-center gap-1">
           <span className="text-[10px] text-text-muted font-mono mr-2">
-            {filteredLogs.length} {filteredLogs.length === 1 ? 'entry' : 'entries'}
+            {t('shell.console.entries').replace('{count}', String(filteredLogs.length))}
           </span>
 
           <Tooltip>
@@ -288,7 +288,7 @@ export default function DebugConsole({ isOpen, onClose, fill = false }: DebugCon
             <TooltipContent>{t('debug.clearLogs')}</TooltipContent>
           </Tooltip>
 
-          {!fill && (
+          {
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -305,7 +305,7 @@ export default function DebugConsole({ isOpen, onClose, fill = false }: DebugCon
               />
               <TooltipContent>{t('debug.hideConsole')}</TooltipContent>
             </Tooltip>
-          )}
+          }
         </div>
       </div>
 

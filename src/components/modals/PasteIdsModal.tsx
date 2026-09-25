@@ -1,13 +1,21 @@
-import { ClipboardPaste, Plus, Replace } from 'lucide-react';
-import { useState } from 'react';
+import { ClipboardPaste, Loader2, Plus, Replace } from 'lucide-react';
+import { useMemo, useState } from 'react';
 
+import { useLanguage } from '../../contexts/LanguageContext';
 import { cn } from '../../lib/utils';
+import { parseAssetIds, parseMappings } from '../../services/assets';
 import { useSpooferStore } from '../../stores/spooferStore';
 import { logIsm } from '../../utils/robloxProfiles';
 import { queueStudioReplacements } from '../../utils/studioBridge';
+import { submitManualIds } from '../app/spoof/actions';
 import { Button } from '../ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 
+/**
+ * "Colar IDs" dialog. `add` feeds ids into the current session (service
+ * `addManualIds`); `replace` sends ready-made old -> new pairs straight to
+ * the Studio plugin.
+ */
 export default function PasteIdsModal({
   open,
   onOpenChange,
@@ -17,254 +25,120 @@ export default function PasteIdsModal({
   onOpenChange: (open: boolean) => void;
   initialMode?: 'add' | 'replace';
 }) {
+  const { t } = useLanguage();
   const [mode, setMode] = useState<'add' | 'replace'>(initialMode);
   const [rawInput, setRawInput] = useState('');
-  const [isApplying, setIsApplying] = useState(false);
-
-  const rootInstances = useSpooferStore((s) => s.rootInstances);
-  const setSelectedAssetIds = useSpooferStore((s) => s.setSelectedAssetIds);
-  const setSelectedAssetKeys = useSpooferStore((s) => s.setSelectedAssetKeys);
-  const addGhostAssets = useSpooferStore((s) => s.addGhostAssets);
+  const [busy, setBusy] = useState(false);
   const showToast = useSpooferStore((s) => s.showToast);
 
-  const parsePairsInput = (text: string): { pairs: Record<string, string>; badLines: number } => {
-    const pairs: Record<string, string> = {};
-    let badLines = 0;
-    for (const rawLine of text.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith('#') || line.startsWith('//')) continue;
-
-      const parts = line
-        .split(/->|=>|[=,\t\s]+/)
-        .map((p) => p.trim())
-        .filter(Boolean);
-      if (parts.length < 2) {
-        badLines++;
-        continue;
-      }
-      const [oldId, newId] = parts;
-      if (!/^\d+$/.test(oldId) || !/^\d+$/.test(newId)) {
-        badLines++;
-        continue;
-      }
-      pairs[oldId] = newId;
-    }
-    return { pairs, badLines };
-  };
-
-  const parseSingleIdsInput = (text: string): string[] => {
-    const ids = new Set<string>();
-    const tokens = text.split(/[\s,;\n\r\t]+/);
-    for (const token of tokens) {
-      const cleaned = token.replace(/\D/g, '');
-      if (cleaned.length >= 4 && cleaned.length <= 20) {
-        ids.add(cleaned);
-      }
-    }
-    return Array.from(ids);
-  };
-
-  const { pairs, badLines: badReplaceLines } = parsePairsInput(rawInput);
-  const replacePairCount = Object.keys(pairs).length;
-  const singleIds = parseSingleIdsInput(rawInput);
+  const ids = useMemo(() => parseAssetIds(rawInput), [rawInput]);
+  const pairs = useMemo(() => parseMappings(rawInput), [rawInput]);
+  const pairCount = Object.keys(pairs).length;
+  const count = mode === 'add' ? ids.length : pairCount;
 
   const handleApply = async () => {
-    if (mode === 'replace') {
-      if (replacePairCount === 0) return;
-      setIsApplying(true);
-      try {
+    if (count === 0) return;
+    setBusy(true);
+    try {
+      if (mode === 'add') {
+        const added = await submitManualIds(rawInput);
+        if (added === 0) return;
+      } else {
         await queueStudioReplacements(pairs);
-        logIsm(
-          'success',
-          `Sent ${replacePairCount} replacement${replacePairCount === 1 ? '' : 's'} to the Studio plugin.`,
-          true,
-        );
-        showToast('success', `Sent ${replacePairCount} replacement pair(s) to Studio!`);
-        import('@tauri-apps/plugin-notification')
-          .then(({ sendNotification }) => {
-            sendNotification({
-              title: 'TrapSpoofer',
-              body: `Dispatched ${replacePairCount} manual replacement(s) to Studio.`,
-            });
-          })
-          .catch(() => {});
-        setRawInput('');
-        onOpenChange(false);
-      } catch (e: unknown) {
-        logIsm(
-          'error',
-          `Could not send replacements to Studio: ${e instanceof Error ? e.message : String(e)}. Make sure Roblox Studio is open and the TrapSpoofer plugin is running.`,
-          true,
-        );
-      } finally {
-        setIsApplying(false);
+        logIsm('success', t('flow.paste.sent').replace('{count}', String(pairCount)), false);
+        showToast('success', t('flow.paste.sent').replace('{count}', String(pairCount)));
       }
-    } else {
-      if (singleIds.length === 0) return;
-
-      const existingStudioIds = new Set<string>();
-      const collectStudioIds = (nodes: typeof rootInstances) => {
-        for (const node of nodes) {
-          for (const asset of node.assets) {
-            const id = asset.assetId || (asset as any).id;
-            if (id) existingStudioIds.add(String(id));
-          }
-          if (node.children) collectStudioIds(node.children);
-        }
-      };
-      collectStudioIds(rootInstances);
-
-      const matchedIds: string[] = [];
-      const ghostIds: string[] = [];
-
-      for (const id of singleIds) {
-        if (existingStudioIds.has(id)) {
-          matchedIds.push(id);
-        } else {
-          ghostIds.push(id);
-        }
-      }
-
-      if (ghostIds.length > 0) {
-        addGhostAssets(ghostIds);
-      }
-
-      setSelectedAssetIds((prev) => {
-        const next = new Set(prev);
-        for (const id of singleIds) next.add(id);
-        return next;
-      });
-      setSelectedAssetKeys((prev) => {
-        const next = new Set(prev);
-        for (const id of singleIds) next.add(id);
-        return next;
-      });
-
-      const message = `Added ${singleIds.length} ID(s) to Explorer (${matchedIds.length} matched in Studio, ${ghostIds.length} created as Ghost IDs).`;
-      logIsm('info', message, true);
-      showToast('info', message);
-
       setRawInput('');
       onOpenChange(false);
+    } catch (e) {
+      showToast(
+        'error',
+        `${t('flow.paste.sendFailed')} ${e instanceof Error ? e.message : String(e)}`,
+        7000,
+      );
+    } finally {
+      setBusy(false);
     }
   };
+
+  const tabClass = (active: boolean) =>
+    cn(
+      'flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-md py-1.5 text-[12.5px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/40',
+      active
+        ? 'bg-bg-elevated text-text-primary shadow-[inset_0_0_0_1px_var(--border-strong)]'
+        : 'text-text-muted hover:text-text-primary',
+    );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="border border-border-subtle bg-bg-surface sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base font-bold">
-            <ClipboardPaste size={18} className="text-primary" />
-            Manual Replace & Add IDs
+          <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+            <ClipboardPaste size={17} className="text-brand" />
+            {t('flow.paste.title')}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex rounded-lg overflow-hidden border border-border-subtle bg-bg-base p-1 gap-1">
+        <div
+          className="flex gap-1 rounded-lg border border-border-subtle bg-bg-base/60 p-1"
+          role="tablist"
+        >
           <button
             type="button"
+            role="tab"
+            aria-selected={mode === 'add'}
             onClick={() => setMode('add')}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-2 py-1.5 rounded-md text-xs font-semibold transition-all',
-              mode === 'add'
-                ? 'bg-primary/15 text-primary border border-primary/30 shadow-sm'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-elevated',
-            )}
+            className={tabClass(mode === 'add')}
           >
             <Plus size={14} />
-            Add IDs (Ghost IDs)
+            {t('flow.paste.addTab')}
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={mode === 'replace'}
             onClick={() => setMode('replace')}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-2 py-1.5 rounded-md text-xs font-semibold transition-all',
-              mode === 'replace'
-                ? 'bg-primary/15 text-primary border border-primary/30 shadow-sm'
-                : 'text-text-muted hover:text-text-primary hover:bg-bg-elevated',
-            )}
+            className={tabClass(mode === 'replace')}
           >
             <Replace size={14} />
-            Replace IDs (Pairs)
+            {t('flow.paste.replaceTab')}
           </button>
         </div>
 
-        <div className="flex flex-col gap-3">
-          {mode === 'add' ? (
-            <p className="text-xs text-text-secondary leading-relaxed">
-              Paste a list of asset IDs (one per line, spaces, or commas). IDs that exist in Studio
-              scan will be selected. IDs not in Studio will be added as{' '}
-              <strong className="text-primary font-semibold">Ghost IDs</strong> allowed to be
-              discovered, spoofed, or saved to Studio.
-            </p>
-          ) : (
-            <p className="text-xs text-text-secondary leading-relaxed">
-              Paste a list of ID pairs, one per line. Any of these separators work:{' '}
-              <code className="text-[11px] bg-bg-muted px-1 rounded">-{'>'}</code>{' '}
-              <code className="text-[11px] bg-bg-muted px-1 rounded">=</code>{' '}
-              <code className="text-[11px] bg-bg-muted px-1 rounded">,</code> or spaces. Lines
-              starting with <code className="text-[11px] bg-bg-muted px-1 rounded">#</code> or{' '}
-              <code className="text-[11px] bg-bg-muted px-1 rounded">//</code> are ignored.
-            </p>
-          )}
+        <p className="text-[13px] leading-relaxed text-text-muted">
+          {mode === 'add' ? t('flow.paste.addHelp') : t('flow.paste.replaceHelp')}
+        </p>
 
-          <textarea
-            value={rawInput}
-            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setRawInput(e.target.value)}
-            placeholder={
-              mode === 'add'
-                ? '123456789\n987654321\n1122334455'
-                : '12345 67890\n11111 -> 22222\n33333, 44444'
-            }
-            className="w-full h-48 p-2.5 rounded-md font-mono text-[12px] bg-bg-surface border border-border-strong text-text-primary focus:border-primary focus:outline-none resize-none"
-            spellCheck={false}
-          />
+        <textarea
+          value={rawInput}
+          onChange={(e) => setRawInput(e.target.value)}
+          placeholder={
+            mode === 'add'
+              ? '123456789\nrbxassetid://987654321'
+              : '12345678 -> 87654321\n11111111 = 22222222'
+          }
+          aria-label={t('flow.paste.title')}
+          spellCheck={false}
+          className="h-48 w-full resize-none rounded-xl border border-border-strong bg-bg-base/50 p-3 font-mono text-[12.5px] text-text-primary outline-none placeholder:text-text-muted/60 focus:border-brand/50 focus:ring-2 focus:ring-brand/15"
+        />
 
-          <div className="flex items-center justify-between text-xs">
-            <div className="text-text-secondary">
-              {mode === 'add' ? (
-                singleIds.length > 0 && (
-                  <span className="text-primary font-medium">
-                    {singleIds.length} ID{singleIds.length === 1 ? '' : 's'} ready
-                  </span>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-[12.5px] text-text-muted">
+            {count > 0
+              ? (mode === 'add' ? t('flow.paste.idsReady') : t('flow.paste.pairsReady')).replace(
+                  '{count}',
+                  String(count),
                 )
-              ) : (
-                <>
-                  {replacePairCount > 0 && (
-                    <span className="text-primary font-medium">
-                      {replacePairCount} valid pair{replacePairCount === 1 ? '' : 's'}
-                    </span>
-                  )}
-                  {replacePairCount > 0 && badReplaceLines > 0 && (
-                    <span className="text-text-muted"> · </span>
-                  )}
-                  {badReplaceLines > 0 && (
-                    <span className="text-yellow-500">
-                      {badReplaceLines} line{badReplaceLines === 1 ? '' : 's'} skipped (need two IDs
-                      per line)
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => void handleApply()}
-                disabled={
-                  (mode === 'add' ? singleIds.length === 0 : replacePairCount === 0) || isApplying
-                }
-              >
-                {isApplying
-                  ? 'Processing...'
-                  : mode === 'add'
-                    ? 'Add to Explorer'
-                    : 'Send to Studio'}
-              </Button>
-            </div>
+              : t('flow.paste.nothingYet')}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              {t('flow.common.cancel')}
+            </Button>
+            <Button onClick={() => void handleApply()} disabled={count === 0 || busy}>
+              {busy && <Loader2 className="animate-spin" />}
+              {mode === 'add' ? t('flow.paste.addAction') : t('flow.paste.replaceAction')}
+            </Button>
           </div>
         </div>
       </DialogContent>

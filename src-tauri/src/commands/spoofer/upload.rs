@@ -250,6 +250,21 @@ async fn upload_path_allowed(
     Err("For security, asset uploads must originate from within the downloads folder.".into())
 }
 
+/// Callback receiving `(asset_id, universe_id)` for a post-upload universe
+/// permission grant.
+pub type PermissionSink = std::sync::Arc<dyn Fn(String, String) + Send + Sync>;
+
+/// Optional behaviour tweaks used by the spoofer job pipeline.
+#[derive(Default)]
+pub struct PublishHooks {
+    /// Concurrency permit held only while the upload request is in flight; it
+    /// is released before Open Cloud operation polling starts.
+    pub upload_permit: Option<crate::commands::spoofer::AdaptivePermit>,
+    /// When set, universe permission grants are handed to the sink (so the
+    /// caller can run them concurrently) instead of being awaited inline.
+    pub permission_sink: Option<PermissionSink>,
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn publish_asset_with_progress(
@@ -271,6 +286,48 @@ pub async fn publish_asset_with_progress(
     proxy_url: Option<String>,
     operation_poll_interval_ms: Option<u32>,
 ) -> crate::error::Result<PublishResult> {
+    publish_asset_with_hooks(
+        app,
+        file_path,
+        name,
+        description,
+        cookie,
+        csrf_token,
+        group_id,
+        transfer_id,
+        asset_type_name,
+        api_key,
+        user_id,
+        original_asset_id,
+        universe_id,
+        downloads_root,
+        proxy_url,
+        operation_poll_interval_ms,
+        PublishHooks::default(),
+    )
+    .await
+}
+
+pub async fn publish_asset_with_hooks(
+    app: AppHandle,
+    file_path: String,
+    name: String,
+    description: String,
+    cookie: String,
+    csrf_token: String,
+    group_id: Option<String>,
+    transfer_id: String,
+    asset_type_name: Option<String>,
+    api_key: Option<String>,
+    user_id: Option<String>,
+    original_asset_id: Option<String>,
+    universe_id: Option<String>,
+    downloads_root: Option<String>,
+    proxy_url: Option<String>,
+    operation_poll_interval_ms: Option<u32>,
+    hooks: PublishHooks,
+) -> crate::error::Result<PublishResult> {
+    let mut hooks = hooks;
     for id in [group_id.as_deref(), user_id.as_deref(), original_asset_id.as_deref()]
         .into_iter()
         .flatten()
@@ -640,7 +697,8 @@ pub async fn publish_asset_with_progress(
                         {
                             let mut random_bytes = [0u8; 4];
                             random_bytes.copy_from_slice(&rand::random::<[u8; 4]>());
-                            let hex_str = format!("<!-- trapspoofer{} -->", hex::encode(random_bytes));
+                            let hex_str =
+                                format!("<!-- trapspoofer{} -->", hex::encode(random_bytes));
                             if let Some(idx) =
                                 mutable_buffer.windows(9).rposition(|w| w == b"</roblox>")
                             {
@@ -755,6 +813,10 @@ pub async fn publish_asset_with_progress(
             break;
         }
 
+        // The upload request is done; operation polling and permission grants
+        // don't need the heavy concurrency slot.
+        drop(hooks.upload_permit.take());
+
         if !upload_success {
             let msg =
                 upload_error.unwrap_or_else(|| "Upload failed due to an unexpected error.".into());
@@ -826,7 +888,12 @@ pub async fn publish_asset_with_progress(
     if let Some(id) = final_asset_id {
         if upload_kind.needs_universe_permissions {
             if let Some(uid) = universe_id.filter(|value| !value.trim().is_empty()) {
-                let _ = patch_asset_permissions(id.clone(), uid.clone(), cookie, csrf_token).await;
+                if let Some(sink) = hooks.permission_sink.as_ref() {
+                    sink(id.clone(), uid);
+                } else {
+                    let _ =
+                        patch_asset_permissions(id.clone(), uid.clone(), cookie, csrf_token).await;
+                }
             }
         }
 

@@ -12,7 +12,7 @@ export const AppConfigSchema = z.object({
     mcpEnabled: z.boolean().default(true),
   }),
   advanced: z.object({
-    autoCookieStudio: z.boolean().default(true),
+    autoCookieStudio: z.boolean().default(false),
     autoCookieBrowser: z.boolean().default(false),
     skipOwned: z.boolean().default(false),
     enablePluginSpoofing: z.boolean().default(false),
@@ -101,7 +101,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     mcpEnabled: true,
   },
   advanced: {
-    autoCookieStudio: true,
+    autoCookieStudio: false,
     autoCookieBrowser: false,
     skipOwned: false,
     enablePluginSpoofing: false,
@@ -312,9 +312,23 @@ export const useConfigStore = create<ConfigState>((set, get) => {
       }
     },
     resetConfig: () =>
-      set(() => {
-        saveToStorage(DEFAULT_APP_CONFIG);
-        return { config: DEFAULT_APP_CONFIG };
+      set((state) => {
+        // Profiles live in their own page; a settings reset must not drop them.
+        const next: AppConfig = {
+          ...DEFAULT_APP_CONFIG,
+          accounts: state.config.accounts,
+          spoofing: {
+            ...DEFAULT_APP_CONFIG.spoofing,
+            selectedUser: state.config.spoofing.selectedUser,
+            selectedGroup: state.config.spoofing.selectedGroup,
+            cookie: state.config.spoofing.cookie,
+            apiKey: state.config.spoofing.apiKey,
+            groupApiKey: state.config.spoofing.groupApiKey,
+          },
+          ui: { ...DEFAULT_APP_CONFIG.ui, tutorialCompleted: state.config.ui.tutorialCompleted },
+        };
+        saveToStorage(next);
+        return { config: next };
       }),
     loadSecrets: async () => {
       if (!isTauriRuntime()) {

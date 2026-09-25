@@ -70,11 +70,11 @@ O app conversa direto com uma sessão do Roblox Studio através de um plugin Lua
 
 Baixe a última versão na [página de releases](https://github.com/TrapstarKS/TrapSpoofer/releases/latest).
 
-| Plataforma | Pacote                              |
-| ---------- | ----------------------------------- |
-| Windows    | `TrapSpoofer_x.x.x_x64-setup.exe`   |
-| macOS      | `TrapSpoofer_x.x.x_x64.dmg`         |
-| Linux      | `TrapSpoofer_x.x.x_amd64.AppImage`  |
+| Plataforma | Pacote                             |
+| ---------- | ---------------------------------- |
+| Windows    | `TrapSpoofer_x.x.x_x64-setup.exe`  |
+| macOS      | `TrapSpoofer_x.x.x_x64.dmg`        |
+| Linux      | `TrapSpoofer_x.x.x_amd64.AppImage` |
 
 O plugin do Roblox Studio (`TrapSpoofer.rbxmx`) acompanha cada release. O app instala e sincroniza esse plugin automaticamente nas pastas de plugins locais do Studio quando é aberto.
 
@@ -85,10 +85,10 @@ O plugin do Roblox Studio (`TrapSpoofer.rbxmx`) acompanha cada release. O app in
 
 ## Como usar (resumo)
 
-1. **Contas** — adicione uma conta Roblox: o cookie `.ROBLOSECURITY` (conta que **baixa**) e uma **Open Cloud API Key** com escopo *Assets: read + write* (credencial que **envia**). O app pode detectar o cookie do Studio/navegador automaticamente.
+1. **Contas** — adicione uma conta Roblox: o cookie `.ROBLOSECURITY` (conta que **baixa**) e uma **Open Cloud API Key** com escopo _Assets: read + write_ (credencial que **envia**). O app pode detectar o cookie do Studio/navegador automaticamente.
 2. **Fonte** — escaneie o Studio, abra um arquivo `.rbxl`/`.rbxm` ou cole IDs.
 3. **Revisar** — selecione os assets que precisam ser spoofados (o app marca quais já são seus).
-4. **Enviar** — clique em *Iniciar spoof*. Ele baixa e re-sobe cada asset.
+4. **Enviar** — clique em _Iniciar spoof_. Ele baixa e re-sobe cada asset.
 5. **Aplicar** — os novos IDs vão para o Studio (ou para um arquivo `.rbxm` novo, no modo arquivo). Salve o place.
 
 ---
@@ -115,13 +115,13 @@ O servidor só aceita conexões locais e pode ser desligado nas configurações.
 
 ### Requisitos
 
-| Requisito     | Versão        |
-| ------------- | ------------- |
-| Rust          | Stable atual  |
-| Bun           | 1.x ou maior  |
-| Node.js       | 20 ou maior   |
-| Tauri         | 2.x           |
-| Roblox Studio | Atual         |
+| Requisito     | Versão       |
+| ------------- | ------------ |
+| Rust          | Stable atual |
+| Bun           | 1.x ou maior |
+| Node.js       | 20 ou maior  |
+| Tauri         | 2.x          |
+| Roblox Studio | Atual        |
 
 No Linux, o Tauri também exige: `libwebkit2gtk-4.1-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`.
 
@@ -140,14 +140,14 @@ bun run tauri:dev
 
 <br>
 
-| Comando                | Descrição                                          |
-| ---------------------- | -------------------------------------------------- |
-| `bun run tauri:dev`    | Inicia o app desktop em modo de desenvolvimento    |
-| `bun run check`        | Roda toda a suíte de validação                     |
-| `bun run build:plugin` | Compila o plugin do Studio em `dist-plugin/`       |
-| `bun run format`       | Formata TypeScript, Rust e Luau                    |
-| `bun run test`         | Roda os testes de frontend (Vitest)                |
-| `bun run rust:test`    | Roda os testes de Rust                             |
+| Comando                | Descrição                                       |
+| ---------------------- | ----------------------------------------------- |
+| `bun run tauri:dev`    | Inicia o app desktop em modo de desenvolvimento |
+| `bun run check`        | Roda toda a suíte de validação                  |
+| `bun run build:plugin` | Compila o plugin do Studio em `dist-plugin/`    |
+| `bun run format`       | Formata TypeScript, Rust e Luau                 |
+| `bun run test`         | Roda os testes de frontend (Vitest)             |
+| `bun run rust:test`    | Roda os testes de Rust                          |
 
 </details>
 

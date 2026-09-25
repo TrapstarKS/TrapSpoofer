@@ -5,17 +5,20 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
-import { activateProfile } from '../../../services/spoofer';
+import { activateProfile, clearActiveProfile } from '../../../services/spoofer';
 import { type AppConfig, useConfigStore } from '../../../stores/configStore';
-import { isTauriRuntime } from '../../../utils/tauriRuntime';
 import {
   detectCookie,
   normalizeId,
   type RobloxUserInfo,
   validateCookieProfile,
 } from '../../../utils/robloxProfiles';
+import { isTauriRuntime } from '../../../utils/tauriRuntime';
 
 export type Profile = AppConfig['accounts'][number];
+
+/** Any screen can open the add-profile dialog on the Contas page with this event. */
+export const ADD_PROFILE_EVENT = 'ts-add-profile';
 
 export const API_KEY_DASHBOARD_URL = 'https://create.roblox.com/dashboard/credentials';
 
@@ -202,7 +205,8 @@ export async function revalidateProfile(accountId: string): Promise<boolean> {
 
   if (secrets.apiKey?.trim()) {
     const check = await checkApiKey(secrets.apiKey);
-    patch.apiKeyValidated = check.state === 'ok' ? true : check.state === 'invalid' ? false : undefined;
+    patch.apiKeyValidated =
+      check.state === 'ok' ? true : check.state === 'invalid' ? false : undefined;
     if (check.state === 'invalid') ok = false;
   } else {
     patch.apiKeyValidated = undefined;
@@ -225,13 +229,7 @@ export async function removeProfile(accountId: string) {
     if (next) {
       await activateProfile(next.id, null);
     } else {
-      useConfigStore.getState().updateCategory('spoofing', {
-        selectedUser: 'none',
-        selectedGroup: 'none',
-        cookie: '',
-        apiKey: '',
-        groupApiKey: '',
-      });
+      clearActiveProfile();
     }
   }
 }

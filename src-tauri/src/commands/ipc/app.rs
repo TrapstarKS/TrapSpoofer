@@ -90,6 +90,18 @@ pub fn open_external(app: AppHandle, url: String) -> crate::error::Result<bool> 
     Ok(false)
 }
 
+/// Show a file produced by the app (e.g. a spoofed .rbxl) in the OS file manager.
+#[tauri::command]
+#[specta::specta]
+pub fn reveal_in_folder(path: String) -> crate::error::Result<bool> {
+    let target = std::path::PathBuf::from(&path);
+    if !target.exists() {
+        return Ok(false);
+    }
+    tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|err| err.to_string())?;
+    Ok(true)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn select_folder(app: AppHandle) -> crate::error::Result<Option<String>> {

@@ -1,14 +1,14 @@
-/** Profiles (Contas) page, add-profile flow and sidebar profile popup. */
+/** Profiles (Contas) page, add-profile flow and sidebar profile popup — `profiles` namespace. */
 export const en = {
   profiles: {
     title: 'Profiles',
     subtitle:
-      'A profile is the Roblox account that receives the re-uploaded assets. You need a session (your login) and an Open Cloud API key.',
+      'A profile is the Roblox account that receives the re-uploaded assets. It needs a session (your login) and an Open Cloud API key.',
     add: 'Add profile',
     revalidateAll: 'Check all',
     empty: {
       title: 'No profiles yet',
-      body: 'Add your Roblox account to start. It takes about a minute: we use your Roblox Studio login and you paste an API key.',
+      body: 'Add your Roblox account to start. It takes about a minute: we reuse your Roblox Studio login and you paste an API key.',
     },
     legacy: {
       title: 'Session in use: {name}',
@@ -16,13 +16,12 @@ export const en = {
       save: 'Save as profile',
     },
     howItWorks: {
-      title: 'How does it work?',
       session: 'Session',
       sessionDesc: 'Lets the app download the original assets on your behalf.',
       apiKey: 'API key',
       apiKeyDesc: 'Authorizes uploading the new copies to your account or group.',
       target: 'Upload to',
-      targetDesc: 'Choose your personal account or a group you manage.',
+      targetDesc: 'Your personal account or a group you manage.',
     },
     card: {
       active: 'Active',
@@ -37,9 +36,8 @@ export const en = {
       remove: 'Remove',
       removeConfirm: 'Remove {name}? Its saved session and keys will be erased from this computer.',
       removeYes: 'Yes, remove',
-      keys: 'Keys',
       editKeys: 'Edit keys',
-      hideKeys: 'Hide',
+      hideKeys: 'Hide keys',
       groupKeyHint:
         'Uploading to a group? Create a key owned by the group and paste it here (optional).',
       id: 'ID {id}',
@@ -58,13 +56,12 @@ export const en = {
     dialog: {
       title: 'Add profile',
       reconnectTitle: 'Reconnect profile',
-      stepOf: 'Step {step} of {total}',
       stepSession: 'Sign in',
       stepKey: 'API key',
       stepDone: 'Done',
       sessionTitle: 'Connect your Roblox account',
       sessionBody:
-        'The easiest way is to reuse the login from Roblox Studio on this computer. Open Studio and make sure you are signed in.',
+        'The easiest way is to reuse the Roblox Studio login on this computer. Open Studio and make sure you are signed in.',
       useStudio: 'Use my Roblox Studio login',
       detecting: 'Looking for your Studio login…',
       notFound:
@@ -81,26 +78,27 @@ export const en = {
       found: 'Signed in as',
       continue: 'Continue',
       keyTitle: 'Create an Open Cloud API key',
-      keyBody: 'The key allows the app to upload the new copies of the assets. Create one in 3 steps:',
-      keyStep1: 'Open the Creator Hub credentials page and click "Create API key".',
+      keyBody: 'The key lets the app upload the new copies of the assets. Create one in 3 steps:',
+      keyStep1: 'Open the Creator Hub credentials page and click "Create API Key".',
       keyStep2:
-        'Under "Access permissions", add the "Assets" API with the Read and Write permissions. If you will upload to a group, create the key while the group is selected.',
+        'Under "Access Permissions", add the "Assets" API with Read and Write. Pick yourself as the owner (or the group, if you will upload to a group).',
       keyStep3:
-        'In "Security", add the IP 0.0.0.0/0, save and copy the key (it is shown only once).',
+        'Under "Security", add the IP 0.0.0.0/0, save and copy the key (it is shown only once).',
       openDashboard: 'Open credentials page',
       keyLabel: 'API key',
       keyPlaceholder: 'Paste the key here',
       verifyKey: 'Verify and save',
       keyInvalid: 'Roblox rejected this key. Check the "Assets" permission and the IP 0.0.0.0/0.',
       keyOtherOwner:
-        'This key belongs to another account ({owner}). It still works if that account can upload for this profile, but double check.',
+        'This key belongs to another account ({owner}). It only works if that account can upload for this profile — double check.',
       keyUnverified: 'Could not confirm the key right now ({message}). It was saved anyway.',
       groupKeyToggle: 'I also want to upload to a group',
       groupKeyLabel: 'Group API key (optional)',
       skip: 'Skip for now',
       skipHint: 'Without a key the profile can only download assets.',
       doneTitle: 'Profile ready!',
-      doneBody: '{name} was saved. You can change the upload target on the profile card at any time.',
+      doneBody:
+        '{name} was saved. You can change where uploads go on the profile card at any time.',
       doneNoKey: 'Remember to add the API key before spoofing: it is required to upload.',
       useNow: 'Use this profile now',
       finish: 'Finish',
@@ -117,7 +115,7 @@ export const en = {
       label: 'Active profile',
       none: 'No profile',
       noneHint: 'Add a profile to start',
-      switchTo: 'Switch profile',
+      switchTo: 'Your profiles',
       manage: 'Manage profiles',
       add: 'Add profile',
       uploadTo: 'Upload to',
@@ -130,12 +128,12 @@ export const pt = {
   profiles: {
     title: 'Perfis',
     subtitle:
-      'Um perfil é a conta Roblox que recebe os assets reenviados. Você precisa de uma sessão (seu login) e de uma API Key do Open Cloud.',
+      'Um perfil é a conta Roblox que recebe os assets reenviados. Ele precisa de uma sessão (seu login) e de uma API Key do Open Cloud.',
     add: 'Adicionar perfil',
     revalidateAll: 'Verificar todos',
     empty: {
       title: 'Nenhum perfil ainda',
-      body: 'Adicione sua conta Roblox para começar. Leva cerca de um minuto: usamos o login do seu Roblox Studio e você cola uma API Key.',
+      body: 'Adicione sua conta Roblox para começar. Leva cerca de um minuto: reaproveitamos o login do seu Roblox Studio e você cola uma API Key.',
     },
     legacy: {
       title: 'Sessão em uso: {name}',
@@ -143,13 +141,12 @@ export const pt = {
       save: 'Salvar como perfil',
     },
     howItWorks: {
-      title: 'Como funciona?',
       session: 'Sessão',
       sessionDesc: 'Permite que o app baixe os assets originais em seu nome.',
       apiKey: 'API Key',
       apiKeyDesc: 'Autoriza o envio das novas cópias para sua conta ou grupo.',
       target: 'Enviar para',
-      targetDesc: 'Escolha sua conta pessoal ou um grupo que você gerencia.',
+      targetDesc: 'Sua conta pessoal ou um grupo que você gerencia.',
     },
     card: {
       active: 'Ativo',
@@ -162,12 +159,10 @@ export const pt = {
       revalidate: 'Verificar de novo',
       reconnect: 'Reconectar',
       remove: 'Remover',
-      removeConfirm:
-        'Remover {name}? A sessão e as chaves salvas serão apagadas deste computador.',
+      removeConfirm: 'Remover {name}? A sessão e as chaves salvas serão apagadas deste computador.',
       removeYes: 'Sim, remover',
-      keys: 'Chaves',
       editKeys: 'Editar chaves',
-      hideKeys: 'Ocultar',
+      hideKeys: 'Ocultar chaves',
       groupKeyHint:
         'Vai enviar para um grupo? Crie uma chave pertencente ao grupo e cole aqui (opcional).',
       id: 'ID {id}',
@@ -186,7 +181,6 @@ export const pt = {
     dialog: {
       title: 'Adicionar perfil',
       reconnectTitle: 'Reconectar perfil',
-      stepOf: 'Passo {step} de {total}',
       stepSession: 'Login',
       stepKey: 'API Key',
       stepDone: 'Pronto',
@@ -209,20 +203,20 @@ export const pt = {
       found: 'Conectado como',
       continue: 'Continuar',
       keyTitle: 'Crie uma API Key do Open Cloud',
-      keyBody: 'A chave permite que o app envie as novas cópias dos assets. Crie a sua em 3 passos:',
+      keyBody:
+        'A chave permite que o app envie as novas cópias dos assets. Crie a sua em 3 passos:',
       keyStep1: 'Abra a página de credenciais do Creator Hub e clique em "Create API Key".',
       keyStep2:
-        'Em "Access Permissions", adicione a API "Assets" com as permissões Read e Write. Se for enviar para um grupo, crie a chave com o grupo selecionado.',
+        'Em "Access Permissions", adicione a API "Assets" com Read e Write. Escolha você como dono (ou o grupo, se for enviar para um grupo).',
       keyStep3:
         'Em "Security", adicione o IP 0.0.0.0/0, salve e copie a chave (ela só aparece uma vez).',
       openDashboard: 'Abrir página de credenciais',
       keyLabel: 'API Key',
       keyPlaceholder: 'Cole a chave aqui',
       verifyKey: 'Verificar e salvar',
-      keyInvalid:
-        'O Roblox recusou esta chave. Confira a permissão "Assets" e o IP 0.0.0.0/0.',
+      keyInvalid: 'O Roblox recusou esta chave. Confira a permissão "Assets" e o IP 0.0.0.0/0.',
       keyOtherOwner:
-        'Esta chave pertence a outra conta ({owner}). Ela funciona se essa conta puder enviar para este perfil, mas vale conferir.',
+        'Esta chave pertence a outra conta ({owner}). Ela só funciona se essa conta puder enviar para este perfil — vale conferir.',
       keyUnverified:
         'Não foi possível confirmar a chave agora ({message}). Ela foi salva mesmo assim.',
       groupKeyToggle: 'Também quero enviar para um grupo',
@@ -231,8 +225,9 @@ export const pt = {
       skipHint: 'Sem a chave, o perfil só consegue baixar assets.',
       doneTitle: 'Perfil pronto!',
       doneBody:
-        '{name} foi salvo. Você pode trocar o destino dos envios no cartão do perfil quando quiser.',
-      doneNoKey: 'Lembre-se de adicionar a API Key antes de fazer o spoof: ela é necessária para enviar.',
+        '{name} foi salvo. Você pode trocar para onde os envios vão no cartão do perfil quando quiser.',
+      doneNoKey:
+        'Lembre-se de adicionar a API Key antes de fazer o spoof: ela é necessária para enviar.',
       useNow: 'Usar este perfil agora',
       finish: 'Concluir',
       back: 'Voltar',
@@ -248,7 +243,7 @@ export const pt = {
       label: 'Perfil ativo',
       none: 'Nenhum perfil',
       noneHint: 'Adicione um perfil para começar',
-      switchTo: 'Trocar perfil',
+      switchTo: 'Seus perfis',
       manage: 'Gerenciar perfis',
       add: 'Adicionar perfil',
       uploadTo: 'Enviar para',

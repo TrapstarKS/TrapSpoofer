@@ -124,12 +124,15 @@ export function buildAssetList(
   for (const a of stores.meshes?.assets ?? []) add(a, 'mesh', false);
   for (const a of stores.videos?.assets ?? []) add(a, 'video', false);
   for (const a of stores.scriptRefs?.assets ?? []) {
-    const resolved = a.assetId ? RESOLVED_TYPE[scriptRefTypes[a.assetId]?.toLowerCase()] : undefined;
+    const resolved = a.assetId
+      ? RESOLVED_TYPE[scriptRefTypes[a.assetId]?.toLowerCase()]
+      : undefined;
     if (resolved) add(a, resolved, true);
   }
 
   return Array.from(byId.values()).sort(
-    (a, b) => ASSET_TYPES.indexOf(a.type) - ASSET_TYPES.indexOf(b.type) || a.name.localeCompare(b.name),
+    (a, b) =>
+      ASSET_TYPES.indexOf(a.type) - ASSET_TYPES.indexOf(b.type) || a.name.localeCompare(b.name),
   );
 }
 
@@ -214,7 +217,9 @@ export function buildExplorerTree(assets: SpoofAsset[], rootName: string): RbxIn
         propertyName: usage.property,
         path: usage.path,
       };
-      if (!node.assets.some((a) => a.assetId === ref.assetId && a.propertyName === ref.propertyName)) {
+      if (
+        !node.assets.some((a) => a.assetId === ref.assetId && a.propertyName === ref.propertyName)
+      ) {
         node.assets.push(ref);
       }
     }

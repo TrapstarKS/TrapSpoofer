@@ -1,10 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import * as ConfigContext from '../../contexts/ConfigContext';
 import * as LanguageContext from '../../contexts/LanguageContext';
-import * as ConfigStore from '../../stores/configStore';
 import ActivityView from './ActivityView';
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -15,53 +13,51 @@ vi.mock('../../contexts/LanguageContext', () => ({
   useLanguage: vi.fn(),
 }));
 
-vi.mock('../../contexts/ConfigContext', () => ({
-  useConfig: vi.fn(),
-}));
-
 vi.mock('../../stores/spooferStore', () => ({
-  useSpooferStore: vi.fn(),
+  useSpooferStore: (selector: (s: { spoofCompletionVersion: number }) => unknown) =>
+    selector({ spoofCompletionVersion: 0 }),
 }));
 
-vi.mock('../../stores/configStore', () => ({
-  useConfigStore: vi.fn(),
-}));
-
-globalThis.ResizeObserver = class ResizeObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+const job = {
+  id: '1',
+  status: 'partially_finished',
+  startTime: '2026-09-20T12:00:00Z',
+  endTime: '2026-09-20T12:01:00Z',
+  durationMs: 60000,
+  account: { id: '1', name: 'TestUser', avatarUrl: '' },
+  assetResults: [
+    { id: '123456', name: 'Walk', success: true, newId: '999999' },
+    { id: '654321', name: 'Run', success: false, errorReason: 'Private asset' },
+  ],
+  config: { assets: '[]', spoofSounds: false, downloadOnly: false },
+  logFilePath: '',
 };
 
 describe('ActivityView', () => {
-  const mockT = vi.fn((key) => key);
-
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(LanguageContext.useLanguage).mockReturnValue({ t: mockT } as any);
-    vi.mocked(ConfigContext.useConfig).mockReturnValue({
-      config: { ui: { transparency: true } },
+    vi.mocked(LanguageContext.useLanguage).mockReturnValue({
+      t: (key: string) => key,
+      lang: 'en',
     } as any);
-    vi.mocked(ConfigStore.useConfigStore).mockReturnValue({} as any);
   });
 
-  it('renders history correctly', async () => {
-    vi.mocked(invoke).mockResolvedValue([
-      {
-        id: '1',
-        status: 'successful',
-        startTime: '12:00:00',
-        endTime: '12:01:00',
-        durationMs: 60000,
-        account: { id: '1', name: 'TestUser', avatarUrl: '' },
-        assetResults: [{ id: '123', name: 'TestFile.rbxlx', success: true }],
-        config: { assets: '[]', spoofSounds: false, downloadOnly: false },
-        logFilePath: '',
-      },
-    ]);
-
+  it('renders the job list and expands a job', async () => {
+    vi.mocked(invoke).mockResolvedValue([job]);
     render(<ActivityView />);
 
-    expect(await screen.findByText('activity.spoofedTo')).toBeInTheDocument();
+    const header = await screen.findByText('history.to');
+    fireEvent.click(header);
+
+    expect(await screen.findByText('Walk')).toBeInTheDocument();
+    expect(screen.getByText('Private asset')).toBeInTheDocument();
+    expect(screen.getByText('history.redo')).toBeInTheDocument();
+    expect(screen.getByText('history.retryFailed')).toBeInTheDocument();
+  });
+
+  it('shows the empty state', async () => {
+    vi.mocked(invoke).mockResolvedValue([]);
+    render(<ActivityView />);
+    expect(await screen.findByText('history.empty')).toBeInTheDocument();
   });
 });

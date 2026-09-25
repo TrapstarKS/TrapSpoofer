@@ -1,278 +1,429 @@
 import { invoke } from '@tauri-apps/api/core';
 import {
+  ArrowRight,
   CheckCircle2,
+  ChevronDown,
   Clock,
   FileText,
+  History,
   Play,
   RotateCcw,
+  Search,
+  SkipForward,
   Trash2,
   User2,
   XCircle,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { useConfig } from '../../contexts/ConfigContext';
 import { useLanguage } from '../../contexts/LanguageContext';
-import { queueSpoofRetry, type SpoofJob } from '../../utils/jobTypes';
+import { cn } from '../../lib/utils';
+import { buildExplorerTree, type SpoofAsset, type SpoofAssetType } from '../../services/assets';
+import { activateProfile, setUploadGroup } from '../../services/spoofer';
+import { useConfigStore } from '../../stores/configStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useSpooferStore } from '../../stores/spooferStore';
+import type { SpoofJob } from '../../utils/jobTypes';
 import { logIsm } from '../../utils/robloxProfiles';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../ui/accordion';
+import { goTo } from '../app/nav';
+import { useFlowStore } from '../app/spoof/flowStore';
+import {
+  Badge,
+  EmptyState,
+  formatDuration,
+  formatRelative,
+  PageShell,
+  Panel,
+  Skeleton,
+} from '../app/ui';
+import { VirtualList } from '../app/VirtualList';
+import { Button } from '../ui/button';
 
-export default function ActivityView() {
-  const { t } = useLanguage();
+type JobFilter = 'all' | 'failed';
 
-  const { updateConfig } = useConfig();
-  const [jobs, setJobs] = useState<SpoofJob[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+const TYPE_ALIASES: Record<string, SpoofAssetType> = {
+  animation: 'animation',
+  audio: 'audio',
+  sound: 'audio',
+  image: 'image',
+  decal: 'image',
+  mesh: 'mesh',
+  video: 'video',
+};
 
-  const fetchJobs = async () => {
+/** Loads a past job's assets into the Spoofar flow (step "Enviar") so the user can confirm. */
+async function loadJobIntoFlow(job: SpoofJob, onlyFailed: boolean, label: string) {
+  const results = (job.assetResults ?? []).filter((r) =>
+    onlyFailed ? !r.success && !r.skipped : true,
+  );
+  const assets: SpoofAsset[] = [];
+  const seen = new Set<string>();
+  for (const r of results) {
+    const id = String(r.id ?? '').replace(/\D/g, '');
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const type = TYPE_ALIASES[String(r.type || r.assetType || '').toLowerCase()] ?? 'animation';
+    assets.push({ id, type, name: r.name || `Asset ${id}`, usages: [], fromScript: false });
+  }
+  if (assets.length === 0) return;
+
+  // Switch to the profile / group the job used, when we still have it.
+  const { config } = useConfigStore.getState();
+  const accountId = job.account?.id;
+  const groupId = job.group?.id ?? job.config?.groupId ?? null;
+  try {
+    if (accountId && config.accounts.some((a) => a.id === accountId)) {
+      if (config.spoofing.selectedUser !== accountId) await activateProfile(accountId, groupId);
+      else if ((config.spoofing.selectedGroup || 'none') !== (groupId || 'none'))
+        await setUploadGroup(groupId);
+    }
+  } catch (e) {
+    logIsm('warn', String(e), false);
+  }
+
+  const session = useSessionStore.getState();
+  session.setSource({ kind: 'manual', label, scannedAt: Date.now() }, assets);
+  const spoofer = useSpooferStore.getState();
+  spoofer.setRootInstances([buildExplorerTree(assets, label)]);
+  spoofer.setLoadedFileName(label);
+  spoofer.setLoadedFilePath(null);
+  spoofer.setSelectedAssetIds(new Set(assets.map((a) => a.id)));
+  spoofer.clearAssetStatuses();
+
+  goTo('spoof');
+  useFlowStore.getState().setStep(2);
+}
+
+function JobCard({
+  job,
+  open,
+  onToggle,
+  onDelete,
+}: {
+  job: SpoofJob;
+  open: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const { t, lang } = useLanguage();
+  const results = job.assetResults ?? [];
+  const ok = results.filter((r) => r.success).length;
+  const skipped = results.filter((r) => r.skipped).length;
+  const failed = results.filter((r) => !r.success && !r.skipped).length;
+  const locale = lang === 'pt' ? 'pt-BR' : lang;
+  const date = new Date(job.startTime);
+  const dateText = Number.isFinite(date.getTime())
+    ? date.toLocaleString(locale, {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : job.startTime;
+
+  const openLog = async () => {
+    if (!job.logFilePath) return;
     try {
-      const data = await invoke<SpoofJob[]>('get_jobs');
-      const finalJobs = data ? [...data] : [];
-
-      setJobs(finalJobs);
-    } catch (e) {
-      logIsm('error', `Failed to load job history: ${e}`, true);
-    } finally {
-      setIsLoading(false);
+      await invoke('open_job_log', { logPath: job.logFilePath });
+    } catch (error) {
+      logIsm('error', `${t('history.logFailed')} ${String(error)}`, true);
     }
   };
 
-  useEffect(() => {
-    fetchJobs();
-  }, []);
+  const name = job.group?.name || job.account?.name || t('history.unknown');
 
-  const handleDelete = async (jobId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  return (
+    <Panel className={cn('overflow-hidden transition-colors', open && 'border-border-strong')}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center gap-4 px-4 py-3.5 text-left outline-none hover:bg-bg-elevated/30 focus-visible:ring-2 focus-visible:ring-ring/40"
+      >
+        <div className="relative size-10 shrink-0">
+          {job.account?.avatarUrl ? (
+            <img
+              src={job.account.avatarUrl}
+              alt=""
+              className="size-10 rounded-full border border-border-subtle bg-bg-base object-cover"
+            />
+          ) : (
+            <div className="flex size-10 items-center justify-center rounded-full border border-border-subtle bg-bg-base">
+              <User2 size={16} className="text-text-muted" />
+            </div>
+          )}
+          {job.group?.iconUrl && (
+            <img
+              src={job.group.iconUrl}
+              alt=""
+              className="absolute -right-1 -bottom-1 size-5 rounded-full border-2 border-bg-surface bg-bg-base object-cover"
+            />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13.5px] font-semibold text-text-primary">
+            {t('history.to').replace('{name}', name)}
+          </p>
+          <p className="flex flex-wrap items-center gap-x-2 text-[12px] text-text-muted">
+            <span>{dateText}</span>
+            <span aria-hidden>·</span>
+            <span>{formatRelative(job.startTime, lang)}</span>
+            {job.durationMs > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="flex items-center gap-1">
+                  <Clock size={11} />
+                  {formatDuration(job.durationMs)}
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+        <div className="hidden items-center gap-1.5 sm:flex">
+          <Badge tone="ok">
+            <CheckCircle2 size={11} />
+            {ok}
+          </Badge>
+          {skipped > 0 && (
+            <Badge tone="warn">
+              <SkipForward size={11} />
+              {skipped}
+            </Badge>
+          )}
+          {failed > 0 && (
+            <Badge tone="error">
+              <XCircle size={11} />
+              {failed}
+            </Badge>
+          )}
+        </div>
+        <ChevronDown
+          size={16}
+          className={cn('shrink-0 text-text-muted transition-transform', !open && '-rotate-90')}
+        />
+      </button>
+
+      {open && (
+        <div className="border-t border-border-subtle/70 bg-bg-base/30 px-4 pt-3 pb-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => void loadJobIntoFlow(job, false, t('history.redoLabel'))}
+            >
+              <Play />
+              {t('history.redo')}
+            </Button>
+            {failed > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void loadJobIntoFlow(job, true, t('history.retryLabel'))}
+              >
+                <RotateCcw />
+                {t('history.retryFailed').replace('{count}', String(failed))}
+              </Button>
+            )}
+            {job.logFilePath && (
+              <Button size="sm" variant="outline" onClick={() => void openLog()}>
+                <FileText />
+                {t('history.viewLog')}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto text-danger hover:text-danger"
+              onClick={onDelete}
+            >
+              <Trash2 />
+              {t('history.delete')}
+            </Button>
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-border-subtle/70 bg-bg-base/40">
+            <VirtualList
+              className={cn('py-1', results.length > 7 ? 'h-[288px]' : '')}
+              items={results}
+              rowHeight={40}
+              getKey={(r, i) => `${r.id}-${i}`}
+              renderRow={(res) => (
+                <div className="mx-1 flex h-[40px] items-center gap-3 rounded-md px-2.5 text-[12px] hover:bg-bg-elevated/40">
+                  {res.success ? (
+                    <CheckCircle2 size={14} className="shrink-0 text-success" />
+                  ) : res.skipped ? (
+                    <SkipForward size={14} className="shrink-0 text-warning" />
+                  ) : (
+                    <XCircle size={14} className="shrink-0 text-danger" />
+                  )}
+                  <span className="w-[120px] shrink-0 font-mono text-text-muted">{res.id}</span>
+                  <span className="min-w-0 flex-1 truncate text-text-primary">
+                    {res.name || t('history.unknownAsset')}
+                  </span>
+                  {res.newId && (
+                    <span className="flex shrink-0 items-center gap-1 font-mono text-success">
+                      <ArrowRight size={12} />
+                      {res.newId}
+                    </span>
+                  )}
+                  {!res.success && (res.errorReason || res.reason) && (
+                    <span
+                      className={cn(
+                        'max-w-[40%] shrink truncate',
+                        res.skipped ? 'text-warning' : 'text-danger',
+                      )}
+                    >
+                      {res.errorReason || res.reason}
+                    </span>
+                  )}
+                </div>
+              )}
+              empty={
+                <p className="px-4 py-6 text-center text-[12.5px] text-text-muted">
+                  {t('history.noAssets')}
+                </p>
+              }
+            />
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+export default function ActivityView() {
+  const { t } = useLanguage();
+  const [jobs, setJobs] = useState<SpoofJob[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<JobFilter>('all');
+  const completion = useSpooferStore((s) => s.spoofCompletionVersion);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<SpoofJob[]>('get_jobs')
+      .then((data) => {
+        if (cancelled) return;
+        const list = Array.isArray(data) ? [...data] : [];
+        list.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
+        setJobs(list);
+      })
+      .catch((e) => logIsm('error', `${t('history.loadFailed')} ${String(e)}`, true))
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [completion]);
+
+  const handleDelete = async (jobId: string) => {
     try {
       await invoke('delete_job', { jobId });
       setJobs((prev) => prev.filter((j) => j.id !== jobId));
     } catch (error) {
-      logIsm('error', `Could not delete job: ${error}`, true);
+      logIsm('error', `${t('history.deleteFailed')} ${String(error)}`, true);
     }
   };
 
-  const handleOpenLog = async (logPath: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      await invoke('open_job_log', { logPath });
-    } catch (error) {
-      logIsm('error', `Could not open log: ${error}`, true);
-    }
-  };
-
-  const handleRedoJob = (job: SpoofJob, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const assetIds = job.assetResults.map((r) => r.id);
-    queueSpoofRetry({
-      jobId: job.id,
-      assetIds,
-      selectedUserId: job.account?.id,
-      selectedGroupId: job.config?.groupId ?? undefined,
-      spoofSounds: job.config?.spoofSounds,
-      uploadTypes: job.config?.uploadTypes,
-      account: job.account,
-      group: job.group,
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return jobs.filter((job) => {
+      const results = job.assetResults ?? [];
+      if (filter === 'failed' && !results.some((r) => !r.success && !r.skipped)) return false;
+      if (!q) return true;
+      return (
+        (job.account?.name ?? '').toLowerCase().includes(q) ||
+        (job.group?.name ?? '').toLowerCase().includes(q) ||
+        results.some(
+          (r) =>
+            String(r.id ?? '').includes(q) ||
+            String(r.newId ?? '').includes(q) ||
+            (r.name ?? '').toLowerCase().includes(q),
+        )
+      );
     });
-    updateConfig('ui', 'activeTab', 'spoofing');
-  };
-
-  const handleRetryFailed = (job: SpoofJob, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const failedIds = job.assetResults.filter((r) => !r.success && !r.skipped).map((r) => r.id);
-    if (failedIds.length === 0) return;
-    queueSpoofRetry({
-      jobId: job.id,
-      assetIds: failedIds,
-      selectedUserId: job.account?.id,
-      selectedGroupId: job.config?.groupId ?? undefined,
-      spoofSounds: job.config?.spoofSounds,
-      uploadTypes: job.config?.uploadTypes,
-      account: job.account,
-      group: job.group,
-    });
-    updateConfig('ui', 'activeTab', 'spoofing');
-  };
+  }, [jobs, query, filter]);
 
   return (
-    <div className="w-full h-full">
-      <div className="w-full h-full flex flex-col">
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-full">
-              <span className="text-muted-foreground">{t('misc.loadingHistory')}</span>
-            </div>
-          ) : jobs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground space-y-3">
-              <Clock size={48} className="opacity-20" />
-              <p>{t('misc.noJobHistory')}</p>
-              <p className="text-[13px] opacity-70">{t('misc.jobsWillAppear')}</p>
-            </div>
-          ) : (
-            <Accordion className="space-y-4 pb-8 w-full">
-              {jobs.map((job) => {
-                const totalAssets = job.assetResults?.length || 0;
-                const failedAssets =
-                  job.assetResults?.filter((r) => !r.success && !r.skipped).length || 0;
-
-                const dateStr = new Date(job.startTime).toLocaleDateString(undefined, {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                });
-
-                return (
-                  <AccordionItem
-                    key={job.id}
-                    value={job.id}
-                    className="bg-bg-surface/40 border border-border-subtle shadow-xs rounded-xl overflow-hidden mb-3"
-                  >
-                    <AccordionTrigger className="hover:no-underline py-2.5 pr-3 pl-2 data-[state=open]:border-b data-[state=open]:border-border-subtle/30">
-                      <div className="flex items-center justify-between w-full">
-                        <div className="flex items-center gap-3">
-                          <div className="relative w-9 h-9 shrink-0">
-                            {job.account?.avatarUrl ? (
-                              <img
-                                src={job.account.avatarUrl}
-                                alt=""
-                                className="w-9 h-9 rounded-full border border-border-subtle object-cover bg-bg-base shadow-xs"
-                              />
-                            ) : (
-                              <div className="w-9 h-9 rounded-full border border-border-subtle bg-bg-base flex items-center justify-center shadow-xs">
-                                <User2 size={16} className="text-muted-foreground" />
-                              </div>
-                            )}
-                            {job.group?.iconUrl && (
-                              <img
-                                src={job.group.iconUrl}
-                                alt=""
-                                className="w-4.5 h-4.5 rounded-full border-[2px] border-bg-surface absolute -bottom-0.5 -right-0.5 object-cover bg-bg-base shadow-xs"
-                              />
-                            )}
-                          </div>
-                          <div className="flex flex-col items-start gap-0.5">
-                            <span className="text-xs font-bold text-text-primary tracking-tight text-left">
-                              {job.group
-                                ? t('activity.spoofedTo').replace('{name}', job.group.name)
-                                : t('activity.spoofedTo').replace(
-                                    '{name}',
-                                    job.account?.name || t('common.unknown'),
-                                  )}
-                            </span>
-                            <span className="text-[11px] text-text-muted flex items-center gap-2">
-                              {dateStr}
-                              <span className="w-1 h-1 rounded-full bg-border" />
-                              <span className="font-medium">
-                                {t('activity.assetCount').replace(
-                                  '{count}',
-                                  totalAssets.toString(),
-                                )}
-                              </span>
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </AccordionTrigger>
-
-                    <AccordionContent className="p-0">
-                      <div className="px-4 pb-3.5 pt-2.5 bg-bg-base/20">
-                        <div className="flex flex-wrap items-center gap-4 mb-3 px-1">
-                          <button
-                            type="button"
-                            onClick={(e) => handleRedoJob(job, e)}
-                            className="flex items-center text-xs font-semibold text-text-muted hover:text-primary transition-colors cursor-pointer"
-                          >
-                            <Play size={12} className="mr-1.5" />
-                            {t('activity.redoJob')}
-                          </button>
-                          {failedAssets > 0 && (
-                            <button
-                              type="button"
-                              onClick={(e) => handleRetryFailed(job, e)}
-                              className="flex items-center text-xs font-semibold text-text-muted hover:text-yellow-500 transition-colors cursor-pointer"
-                            >
-                              <RotateCcw size={12} className="mr-1.5" />
-                              {t('activity.retryFailed').replace(
-                                '{count}',
-                                failedAssets.toString(),
-                              )}
-                            </button>
-                          )}
-                          {job.logFilePath && (
-                            <button
-                              type="button"
-                              onClick={(e) => handleOpenLog(job.logFilePath!, e)}
-                              className="flex items-center text-xs font-semibold text-text-muted hover:text-text-primary transition-colors cursor-pointer"
-                            >
-                              <FileText size={12} className="mr-1.5" />
-                              {t('activity.viewLog')}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={(e) => handleDelete(job.id, e)}
-                            className="flex items-center text-xs font-semibold text-text-muted hover:text-destructive transition-colors ml-auto cursor-pointer"
-                          >
-                            <Trash2 size={12} className="mr-1.5" />
-                            {t('common.delete')}
-                          </button>
-                        </div>
-
-                        <div className="space-y-1 max-h-72 overflow-y-auto pr-1 rounded-lg border border-border-subtle/50 p-2 bg-bg-base/50">
-                          {job.assetResults?.map((res, i) => (
-                            <div
-                              key={i}
-                              className="flex items-center justify-between p-1.5 rounded-md hover:bg-bg-elevated/40 text-[11px] transition-colors"
-                            >
-                              <div className="flex items-center gap-3 overflow-hidden">
-                                {res.success ? (
-                                  <CheckCircle2 size={14} className="text-green-500 shrink-0" />
-                                ) : res.skipped ? (
-                                  <div className="w-3.5 h-3.5 rounded-full border border-yellow-500/50 flex items-center justify-center shrink-0">
-                                    <div className="w-1.5 h-0.5 bg-yellow-500/50 rounded-full" />
-                                  </div>
-                                ) : (
-                                  <XCircle size={14} className="text-destructive shrink-0" />
-                                )}
-                                <span className="font-mono text-muted-foreground min-w-[120px] shrink-0">
-                                  {res.id}
-                                </span>
-                                <span className="truncate text-foreground max-w-50">
-                                  {res.name || t('activity.unknownAsset')}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                {res.newId && (
-                                  <span className="font-mono text-green-500">
-                                    &rarr; {res.newId}
-                                  </span>
-                                )}
-                                {res.errorReason && (
-                                  <span
-                                    className="text-destructive max-w-50 truncate"
-                                    title={res.errorReason}
-                                  >
-                                    {res.errorReason}
-                                  </span>
-                                )}
-                                {res.reason && res.skipped && (
-                                  <span className="text-yellow-500/80 max-w-50 truncate">
-                                    {res.reason}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                );
-              })}
-            </Accordion>
-          )}
+    <PageShell title={t('history.title')} description={t('history.subtitle')}>
+      {!isLoading && jobs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] flex-1">
+            <Search
+              size={14}
+              className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-text-muted"
+            />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('history.search')}
+              aria-label={t('history.search')}
+              className="h-9 w-full rounded-lg border border-border-strong bg-bg-base/50 pr-3 pl-8 text-[13px] text-text-primary outline-none placeholder:text-text-muted/70 focus:border-brand/50 focus:ring-2 focus:ring-brand/15"
+            />
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border border-border-subtle bg-bg-surface/60 p-0.5">
+            {(['all', 'failed'] as JobFilter[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                aria-pressed={filter === f}
+                onClick={() => setFilter(f)}
+                className={cn(
+                  'h-8 cursor-pointer rounded-md px-3 text-[12.5px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                  filter === f
+                    ? 'bg-bg-elevated text-text-primary'
+                    : 'text-text-muted hover:text-text-primary',
+                )}
+              >
+                {t(`history.filter.${f}`)}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-[68px] rounded-xl" />
+          ))}
+        </div>
+      ) : jobs.length === 0 ? (
+        <Panel>
+          <EmptyState
+            icon={<History size={20} />}
+            title={t('history.empty')}
+            description={t('history.emptyHelp')}
+            action={
+              <Button onClick={() => goTo('spoof')}>
+                {t('history.startFirst')}
+                <ArrowRight />
+              </Button>
+            }
+          />
+        </Panel>
+      ) : visible.length === 0 ? (
+        <Panel>
+          <EmptyState
+            icon={<Search size={20} />}
+            title={t('history.noMatch')}
+            description={t('history.noMatchHelp')}
+          />
+        </Panel>
+      ) : (
+        <div className="flex flex-col gap-2.5 pb-6">
+          {visible.map((job) => (
+            <JobCard
+              key={job.id}
+              job={job}
+              open={openId === job.id}
+              onToggle={() => setOpenId((cur) => (cur === job.id ? null : job.id))}
+              onDelete={() => void handleDelete(job.id)}
+            />
+          ))}
+        </div>
+      )}
+    </PageShell>
   );
 }

@@ -1,58 +1,209 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import {
-  Activity,
-  Box,
-  Check,
-  Eye,
-  EyeOff,
-  Film,
-  Filter,
-  FolderOpen,
-  Image as ImageIcon,
+  ChevronRight,
+  Loader2,
   Minus,
+  MonitorPlay,
+  Pause,
   Pin,
   PinOff,
-  Search,
-  Settings,
-  SlidersHorizontal,
   Terminal,
-  Users,
-  Volume2,
+  UserRound,
+  UsersRound,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
 
 import { useConfig } from '../../contexts/ConfigContext';
 import { useLanguage } from '../../contexts/LanguageContext';
+import { useStudioConnectionState } from '../../contexts/StudioConnectionContext';
 import { cn } from '../../lib/utils';
 import { useSpooferStore } from '../../stores/spooferStore';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
+import { useActiveTarget } from '../app/hooks';
+import { goTo, normalizeTab, setConsoleOpen } from '../app/nav';
+import { PluginActions } from '../app/StudioHelp';
+import { ProgressBar, StatusDot } from '../app/ui';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 
-export const ASSET_TYPE_OPTIONS = [
-  { value: 'audio', label: 'Audio', icon: Volume2 },
-  { value: 'image', label: 'Images', icon: ImageIcon },
-  { value: 'animation', label: 'Animations', icon: Film },
-  { value: 'mesh', label: 'Meshes', icon: Box },
-];
+const pill =
+  'flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-2 rounded-lg border border-border-subtle bg-bg-base/40 px-2.5 text-[12px] text-text-secondary outline-none transition-colors hover:border-border-strong hover:bg-bg-elevated/70 hover:text-text-primary focus-visible:ring-2 focus-visible:ring-ring/40';
+
+function StudioPill() {
+  const { t } = useLanguage();
+  const { studioConnected, studioPlaceName, scanStatus } = useStudioConnectionState();
+  const scanning = Boolean(scanStatus?.scanning);
+  const label = studioConnected
+    ? studioPlaceName?.trim() || t('shell.studio.connected')
+    : t('shell.studio.disconnected');
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button type="button" className={pill} aria-label={t('shell.studio.title')}>
+            <StatusDot tone={studioConnected ? 'ok' : 'error'} pulse={scanning} />
+            <MonitorPlay size={13} className="shrink-0 opacity-70" />
+            <span className="truncate">{label}</span>
+          </button>
+        }
+      />
+      <PopoverContent
+        align="end"
+        className="w-80 gap-3 border border-border-subtle bg-bg-surface p-4"
+      >
+        <div className="flex items-center gap-2">
+          <StatusDot tone={studioConnected ? 'ok' : 'error'} />
+          <p className="text-sm font-semibold text-text-primary">
+            {studioConnected
+              ? t('shell.studio.connectedTitle')
+              : t('shell.studio.disconnectedTitle')}
+          </p>
+        </div>
+        <p className="text-[13px] leading-relaxed text-text-muted">
+          {studioConnected
+            ? studioPlaceName
+              ? t('shell.studio.connectedTo').replace('{place}', studioPlaceName)
+              : t('shell.studio.connectedHelp')
+            : t('shell.studio.disconnectedHelp')}
+        </p>
+        {!studioConnected && <PluginActions />}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ProfilePill() {
+  const { t } = useLanguage();
+  const target = useActiveTarget();
+  const hasProfile = target.userId !== 'none' && target.cookie.length > 0;
+  const isGroup = target.groupId !== 'none';
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className={pill}
+            onClick={() => goTo('accounts')}
+            aria-label={t('shell.profile.title')}
+          >
+            <StatusDot tone={hasProfile ? 'ok' : 'warn'} />
+            {isGroup ? (
+              <UsersRound size={13} className="shrink-0 opacity-70" />
+            ) : (
+              <UserRound size={13} className="shrink-0 opacity-70" />
+            )}
+            <span className="truncate">
+              {hasProfile
+                ? isGroup
+                  ? (target.groupName ?? target.accountName)
+                  : target.accountName
+                : t('shell.profile.none')}
+            </span>
+          </button>
+        }
+      />
+      <TooltipContent side="bottom" className="max-w-64 text-xs">
+        {hasProfile
+          ? isGroup
+            ? t('shell.profile.uploadGroup')
+                .replace('{group}', target.groupName ?? '')
+                .replace('{account}', target.accountName)
+            : t('shell.profile.uploadUser').replace('{account}', target.accountName)
+          : t('shell.profile.noneHelp')}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function JobPill() {
+  const { t } = useLanguage();
+  const isSpoofing = useSpooferStore((s) => s.isSpoofing);
+  const paused = useSpooferStore((s) => s.isJobPaused);
+  const progress = useSpooferStore((s) => Math.round(s.spoofProgress));
+  const current = useSpooferStore((s) => s.spoofCurrentCount);
+  const total = useSpooferStore((s) => s.spoofTotalCount);
+  const isReplacing = useSpooferStore((s) => s.isReplacing);
+  const replaceCurrent = useSpooferStore((s) => s.replaceCurrentCount);
+  const replaceTotal = useSpooferStore((s) => s.replaceTotalCount);
+
+  if (!isSpoofing && !isReplacing) return null;
+
+  const label = isSpoofing
+    ? paused
+      ? t('shell.job.paused')
+      : total > 0
+        ? `${t('shell.job.running')} ${current}/${total}`
+        : t('shell.job.running')
+    : `${t('shell.job.applying')} ${replaceCurrent}/${replaceTotal}`;
+  const pct = isSpoofing
+    ? progress
+    : replaceTotal > 0
+      ? Math.round((replaceCurrent / replaceTotal) * 100)
+      : 0;
+
+  return (
+    <button
+      type="button"
+      onClick={() => goTo('spoof')}
+      className={cn(pill, 'max-w-[240px] border-brand/30 bg-brand/10 text-text-primary')}
+      aria-label={t('shell.job.open')}
+    >
+      {paused ? (
+        <Pause size={13} className="shrink-0 text-warning" />
+      ) : (
+        <Loader2 size={13} className="shrink-0 animate-spin text-brand" />
+      )}
+      <span className="truncate tabular-nums">{label}</span>
+      <span className="w-12 shrink-0">
+        <ProgressBar value={pct} tone={paused ? 'warn' : 'brand'} />
+      </span>
+      <ChevronRight size={13} className="shrink-0 opacity-60" />
+    </button>
+  );
+}
+
+function WindowButton({
+  label,
+  onClick,
+  children,
+  className,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={onClick}
+            aria-label={label}
+            className={cn(
+              'flex size-8 cursor-pointer items-center justify-center rounded-md text-text-muted outline-none hover:bg-bg-elevated hover:text-text-primary focus-visible:ring-2 focus-visible:ring-ring/40',
+              className,
+            )}
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 export default function Titlebar() {
   const { t } = useLanguage();
   const { config } = useConfig();
-  const activeTab = config.ui.activeTab;
-
-  const loadedFileName = useSpooferStore((s) => s.loadedFileName);
-  const searchQuery = useSpooferStore((s) => s.searchQuery) ?? '';
-  const setSearchQuery = useSpooferStore((s) => s.setSearchQuery) ?? (() => {});
-  const activeAssetFilters = useSpooferStore((s) => s.activeAssetFilters) ?? [];
-  const setActiveAssetFilters = useSpooferStore((s) => s.setActiveAssetFilters) ?? (() => {});
-  const isInspectorOpen = useSpooferStore((s) => s.isInspectorOpen) ?? true;
-  const setIsInspectorOpen = useSpooferStore((s) => s.setIsInspectorOpen) ?? (() => {});
-  const isPropertiesOpen = useSpooferStore((s) => s.isPropertiesOpen) ?? true;
-  const setIsPropertiesOpen = useSpooferStore((s) => s.setIsPropertiesOpen) ?? (() => {});
+  const tab = normalizeTab(config.ui.activeTab);
+  const consoleOpen = Boolean(config.debug?.debugMode);
   const [isPinned, setIsPinned] = useState(false);
 
   const togglePin = async () => {
@@ -66,7 +217,7 @@ export default function Titlebar() {
   };
 
   const handleMinimize = () => {
-    getCurrentWindow().minimize();
+    void getCurrentWindow().minimize();
   };
 
   const handleClose = async () => {
@@ -82,342 +233,65 @@ export default function Titlebar() {
     await invoke('quit_app');
   };
 
-  const toggleFilter = (val: string) => {
-    setActiveAssetFilters(
-      activeAssetFilters.includes(val)
-        ? activeAssetFilters.filter((v) => v !== val)
-        : [...activeAssetFilters, val],
-    );
-  };
-
-  const hasAssets = !!loadedFileName;
-
-  const renderContextContent = () => {
-    if (activeTab === 'spoofing') {
-      return (
-        <>
-          {hasAssets && (
-            <div
-              className="flex items-center gap-2 text-xs font-semibold text-text-primary shrink-0 min-w-0 max-w-[200px]"
-              data-tauri-drag-region
-            >
-              <FolderOpen size={14} className="text-primary shrink-0" />
-              <span className="truncate">{loadedFileName}</span>
-            </div>
-          )}
-
-          {hasAssets && (
-            <div className="flex-1 min-w-0 mx-3 relative flex items-center" data-tauri-drag-region>
-              <Search
-                size={13}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
-              />
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search assets by name or ID..."
-                className="h-8 w-full text-xs pl-8 pr-16 bg-bg-base/50 border-border-subtle focus:border-primary"
-              />
-              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                {searchQuery.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"
-                    aria-label="Clear search"
-                  >
-                    <X size={11} />
-                  </button>
-                )}
-
-                <Popover>
-                  <PopoverTrigger
-                    render={
-                      <button
-                        type="button"
-                        className={cn(
-                          'h-6 px-1.5 rounded flex items-center justify-center relative transition-colors cursor-pointer',
-                          activeAssetFilters.length > 0
-                            ? 'text-primary bg-primary/15'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-bg-surface',
-                        )}
-                        title={t('explorer.allAssetTypes') ?? 'Filter asset types'}
-                      />
-                    }
-                  >
-                    <Filter size={12} />
-                    {activeAssetFilters.length > 0 && (
-                      <span className="absolute -top-1 -right-1 min-w-[12px] h-[12px] px-0.5 rounded-full bg-primary text-primary-foreground text-[8px] font-bold flex items-center justify-center">
-                        {activeAssetFilters.length}
-                      </span>
-                    )}
-                  </PopoverTrigger>
-                  <PopoverContent
-                    className="w-44 p-1 bg-bg-surface border border-border shadow-xl z-[250] rounded-lg"
-                    align="end"
-                  >
-                    <div className="flex flex-col divide-y divide-border-subtle/20 overflow-hidden rounded-md">
-                      {ASSET_TYPE_OPTIONS.map((opt) => {
-                        const label =
-                          t(
-                            'explorer.' +
-                              (opt.value === 'image'
-                                ? 'images'
-                                : opt.value === 'animation'
-                                  ? 'animations'
-                                  : opt.value === 'mesh'
-                                    ? 'meshes'
-                                    : opt.value),
-                          ) || opt.label;
-                        const active = activeAssetFilters.includes(opt.value);
-                        const Icon = opt.icon;
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            onClick={() => toggleFilter(opt.value)}
-                            className={cn(
-                              'flex items-center gap-2 h-8 px-2.5 text-xs text-left transition-colors cursor-pointer',
-                              active
-                                ? 'text-primary bg-primary/10 font-semibold'
-                                : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated',
-                            )}
-                          >
-                            <Icon
-                              size={13}
-                              className={active ? 'text-primary' : 'text-muted-foreground'}
-                            />
-                            <span className="flex-1">{label}</span>
-                            {active && <Check size={13} className="text-primary" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {activeAssetFilters.length > 0 ? (
-                      <>
-                        <div className="h-px bg-border my-1" />
-                        <button
-                          type="button"
-                          onClick={() => setActiveAssetFilters([])}
-                          className="flex items-center gap-2 h-7 px-2 rounded text-xs text-left text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-colors cursor-pointer w-full"
-                        >
-                          <X size={12} className="text-muted-foreground" />
-                          <span>Clear filters ({activeAssetFilters.length})</span>
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <div className="h-px bg-border my-1" />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setActiveAssetFilters(ASSET_TYPE_OPTIONS.map((o) => o.value))
-                          }
-                          className="flex items-center gap-2 h-7 px-2 rounded text-xs text-left text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-colors cursor-pointer w-full"
-                        >
-                          <Check size={12} className="text-muted-foreground" />
-                          <span>Select all</span>
-                        </button>
-                      </>
-                    )}
-                  </PopoverContent>
-                </Popover>
-              </div>
-            </div>
-          )}
-
-          {!hasAssets && <div className="flex-1" data-tauri-drag-region />}
-
-          {hasAssets && (
-            <div className="flex items-center gap-1.5 shrink-0" data-tauri-drag-region>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className={cn(
-                        'h-8 w-8 shrink-0 transition-colors',
-                        isInspectorOpen
-                          ? 'text-primary border-primary/30 bg-primary/10'
-                          : 'text-muted-foreground border-border-subtle',
-                      )}
-                      onClick={() => setIsInspectorOpen(!isInspectorOpen)}
-                    >
-                      {isInspectorOpen ? <Eye size={13} /> : <EyeOff size={13} />}
-                    </Button>
-                  }
-                />
-                <TooltipContent>
-                  {isInspectorOpen ? 'Hide Visual Preview' : 'Show Visual Preview'}
-                </TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className={cn(
-                        'h-8 w-8 shrink-0 transition-colors',
-                        isPropertiesOpen
-                          ? 'text-primary border-primary/30 bg-primary/10'
-                          : 'text-muted-foreground border-border-subtle',
-                      )}
-                      onClick={() => setIsPropertiesOpen(!isPropertiesOpen)}
-                    >
-                      <SlidersHorizontal size={13} />
-                    </Button>
-                  }
-                />
-                <TooltipContent>
-                  {isPropertiesOpen ? 'Hide Properties Panel' : 'Show Properties Panel'}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          )}
-        </>
-      );
-    }
-
-    if (activeTab === 'activity') {
-      return (
-        <>
-          <div className="flex items-center gap-2 text-xs font-semibold text-text-primary shrink-0">
-            <Activity size={14} className="text-primary" />
-            <span>{t('nav.activity') ?? 'Activity Logs'}</span>
-          </div>
-
-          <div className="flex-1 min-w-0 mx-4 relative" data-tauri-drag-region={false}>
-            <Search
-              size={13}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
-            />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search logs by ID, status, or asset..."
-              className="h-8 w-full text-xs pl-8 pr-7 bg-bg-base/50 border-border-subtle focus:border-primary"
-            />
-            {searchQuery.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
-              >
-                <X size={12} />
-              </button>
-            )}
-          </div>
-        </>
-      );
-    }
-
-    if (activeTab === 'settings') {
-      return (
-        <>
-          <div className="flex items-center gap-2 text-xs font-semibold text-text-primary shrink-0">
-            <Settings size={14} className="text-primary" />
-            <span>{t('nav.settings') ?? 'Settings'}</span>
-          </div>
-          <div className="flex-1" data-tauri-drag-region />
-        </>
-      );
-    }
-
-    if (activeTab === 'accounts') {
-      return (
-        <>
-          <div className="flex items-center gap-2 text-xs font-semibold text-text-primary shrink-0">
-            <Users size={14} className="text-primary" />
-            <span>{t('nav.accounts') ?? 'Accounts'}</span>
-          </div>
-          <div className="flex-1" data-tauri-drag-region />
-        </>
-      );
-    }
-
-    if (activeTab === 'console') {
-      return (
-        <>
-          <div className="flex items-center gap-2 text-xs font-semibold text-text-primary shrink-0">
-            <Terminal size={14} className="text-primary" />
-            <span>{t('nav.console') ?? 'Console'}</span>
-          </div>
-          <div className="flex-1" data-tauri-drag-region />
-        </>
-      );
-    }
-
-    return <div className="flex-1" data-tauri-drag-region />;
-  };
-
   return (
     <div
       data-tauri-drag-region
-      className="h-12 w-full flex items-center justify-between px-3 bg-bg-surface/90 border-b border-border select-none shrink-0 z-50 relative"
+      className="relative z-50 flex h-12 w-full shrink-0 items-center gap-2 border-b border-border-subtle bg-bg-surface/60 pr-2 pl-5 select-none"
     >
-      {renderContextContent()}
+      <span
+        data-tauri-drag-region
+        className="truncate text-[13px] font-semibold tracking-tight text-text-primary"
+      >
+        {t(`shell.nav.${tab}`)}
+      </span>
 
-      <div className="flex items-center gap-2 shrink-0 ml-2" data-tauri-drag-region={false}>
-        <div className="h-4 w-px bg-border mx-0.5" />
+      <div className="min-w-4 flex-1 self-stretch" data-tauri-drag-region />
 
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleMinimize}
-                className="h-8 w-8 text-muted-foreground hover:text-foreground"
-              />
-            }
-          >
-            <Minus size={14} />
-          </TooltipTrigger>
-          <TooltipContent>{t('debug.minimize')}</TooltipContent>
-        </Tooltip>
+      <div className="flex min-w-0 items-center gap-1.5" data-tauri-drag-region={false}>
+        <JobPill />
+        <StudioPill />
+        <ProfilePill />
 
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={togglePin}
+              <button
+                type="button"
+                onClick={() => setConsoleOpen(!consoleOpen)}
+                aria-pressed={consoleOpen}
+                aria-label={t('shell.console.toggle')}
                 className={cn(
-                  'h-8 w-8 transition-colors',
-                  isPinned
-                    ? 'text-primary bg-primary/15 font-bold'
-                    : 'text-muted-foreground hover:text-foreground',
+                  pill,
+                  'w-8 justify-center px-0',
+                  consoleOpen && 'border-brand/40 bg-brand/10 text-brand hover:text-brand',
                 )}
               />
             }
           >
-            {isPinned ? <Pin size={13} /> : <PinOff size={13} />}
+            <Terminal size={14} />
           </TooltipTrigger>
-          <TooltipContent>
-            {isPinned ? 'Unpin Window' : 'Pin Window (Always on Top)'}
-          </TooltipContent>
+          <TooltipContent side="bottom">{t('shell.console.toggle')}</TooltipContent>
         </Tooltip>
 
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleClose}
-                className="h-8 w-8 text-muted-foreground hover:bg-destructive hover:text-destructive-foreground"
-              />
-            }
-          >
-            <X size={14} />
-          </TooltipTrigger>
-          <TooltipContent>{t('common.close')}</TooltipContent>
-        </Tooltip>
+        <div className="mx-1 h-5 w-px bg-border-subtle" />
+
+        <WindowButton label={t('shell.window.minimize')} onClick={handleMinimize}>
+          <Minus size={15} />
+        </WindowButton>
+        <WindowButton
+          label={isPinned ? t('shell.window.unpin') : t('shell.window.pin')}
+          onClick={() => void togglePin()}
+          className={cn(isPinned && 'bg-brand/10 text-brand hover:text-brand')}
+        >
+          {isPinned ? <Pin size={14} /> : <PinOff size={14} />}
+        </WindowButton>
+        <WindowButton
+          label={t('shell.window.close')}
+          onClick={() => void handleClose()}
+          className="hover:bg-danger hover:text-white"
+        >
+          <X size={15} />
+        </WindowButton>
       </div>
     </div>
   );

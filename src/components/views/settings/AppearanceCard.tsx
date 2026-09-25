@@ -1,190 +1,153 @@
-import { Palette } from 'lucide-react';
+import { Moon, Palette, Sun } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { HexAlphaColorPicker } from 'react-colorful';
-import { createPortal } from 'react-dom';
 
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { useThemeAccent } from '../../../contexts/ThemeContext';
 import { cn } from '../../../lib/utils';
-import { Label } from '../../ui/label';
+import { SUPPORTED_LANGUAGES } from '../../../utils/i18n';
+import { Popover, PopoverContent, PopoverTrigger } from '../../ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select';
-import { SettingCard } from './SettingComponents';
+import { SettingCard, SettingRow } from './SettingComponents';
+
+const PRESETS = ['#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#ef4444', '#06b6d4'];
+const DEFAULT_ACCENT = '#10b981';
 
 export default function AppearanceCard() {
   const { t, lang, setLang } = useLanguage();
   const { accentColor, setAccentColor, themeMode, setThemeMode } = useThemeAccent();
-  const [localAccent, setLocalAccent] = useState(accentColor);
-  const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
-  const [pickerCoords, setPickerCoords] = useState({ top: 0, left: 0 });
+  const [localAccent, setLocalAccent] = useState(accentColor || DEFAULT_ACCENT);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const langOptions = {
-    en: '🇬🇧 English',
-    es: '🇪🇸 Español',
-    ru: '🇷🇺 Русский',
-    fr: '🇫🇷 Français',
-  };
-
   useEffect(() => {
-    setLocalAccent(accentColor);
+    setLocalAccent(accentColor || DEFAULT_ACCENT);
   }, [accentColor]);
 
-  useEffect(() => {
-    if (!isColorPickerOpen) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setIsColorPickerOpen(false);
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isColorPickerOpen]);
+  useEffect(
+    () => () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    },
+    [],
+  );
 
   const handleColorChange = useCallback(
     (hex: string) => {
-      setLocalAccent((prev) => {
-        if (prev === hex) return prev;
-        return hex;
-      });
+      setLocalAccent(hex);
       document.documentElement.style.setProperty('--primary', hex);
-
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-
-      timeoutRef.current = setTimeout(() => {
-        setAccentColor(hex);
-      }, 50);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => setAccentColor(hex), 60);
     },
     [setAccentColor],
   );
 
+  const currentLang = SUPPORTED_LANGUAGES.find((l) => l.code === lang) ?? SUPPORTED_LANGUAGES[0];
+
   return (
     <SettingCard
       icon={Palette}
-      title={t('settings.appearance') || 'Appearance & Localization'}
-      description="Customize color themes, accent colors, and display language."
+      title={t('prefs.appearance.title')}
+      description={t('prefs.appearance.desc')}
     >
-      <div className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-bg-elevated/20 transition-colors">
-        <div className="space-y-0.5 min-w-0 flex-1">
-          <Label className="text-xs font-semibold text-text-primary block">
-            {t('settings.theme')}
-          </Label>
-          <p className="text-[11px] text-text-secondary leading-relaxed">
-            Switch between light and dark UI themes.
-          </p>
-        </div>
-        <div className="flex bg-bg-base border border-border rounded-lg p-0.5 overflow-hidden w-40 shrink-0 shadow-xs">
-          {(['light', 'dark'] as const).map((tMode) => (
-            <button
-              key={tMode}
-              type="button"
-              onClick={() => setThemeMode(tMode)}
-              className={cn(
-                'flex-1 py-1 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-1.5 cursor-pointer',
-                themeMode === tMode
-                  ? 'bg-primary text-primary-foreground font-semibold shadow-xs'
-                  : 'text-text-muted hover:text-text-primary hover:bg-bg-elevated',
-              )}
-            >
-              <span>{tMode === 'light' ? '☀️' : '🌙'}</span>
-              <span>{t(`settings.theme${tMode.charAt(0).toUpperCase() + tMode.slice(1)}`)}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-bg-elevated/20 transition-colors relative">
-        <div className="space-y-0.5 min-w-0 flex-1">
-          <Label className="text-xs font-semibold text-text-primary block">
-            {t('settings.accentColor')}
-          </Label>
-          <p className="text-[11px] text-text-secondary leading-relaxed">
-            Choose the primary brand accent color across UI and buttons.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs font-mono text-text-muted">
-            {(accentColor || '#3B82F6').toUpperCase()}
-          </span>
-          <div
-            className="w-7 h-7 rounded-full border border-border cursor-pointer shadow-xs shrink-0"
-            style={{ backgroundColor: accentColor || '#3B82F6' }}
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              const rect = e.currentTarget.getBoundingClientRect();
-              setPickerCoords({
-                top: rect.bottom + 8,
-                left: rect.right - 200,
-              });
-              setIsColorPickerOpen((prev) => !prev);
-            }}
-          />
-        </div>
-
-        {createPortal(
-          isColorPickerOpen && (
-            <div className="fixed inset-0 z-9999 pointer-events-none">
-              <div
-                className="absolute inset-0 z-490 pointer-events-auto"
-                onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  setIsColorPickerOpen(false);
-                }}
-              />
-
-              <div
-                className="absolute z-500 p-0 border border-border rounded-xl overflow-hidden shadow-2xl bg-bg-surface flex flex-col pointer-events-auto"
-                onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
-                onClick={(e: React.MouseEvent) => e.stopPropagation()}
-                style={{
-                  top: pickerCoords.top,
-                  left: pickerCoords.left,
-                }}
-              >
-                <HexAlphaColorPicker color={localAccent} onChange={handleColorChange} />
-                <div className="p-3 border-t border-border flex items-center justify-between bg-bg-elevated/50">
-                  <span className="text-xs font-bold text-text-muted">{t('common.hex')}</span>
-                  <input
-                    type="text"
-                    value={localAccent.toUpperCase()}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                      handleColorChange(e.target.value)
-                    }
-                    className="bg-bg-base text-text-primary text-xs font-mono px-2 py-1 rounded w-24 text-center border border-border-subtle outline-none focus:border-primary transition-colors"
-                  />
-                </div>
-              </div>
-            </div>
-          ),
-          document.body,
-        )}
-      </div>
-
-      <div className="px-4 py-3 flex items-center justify-between gap-4 hover:bg-bg-elevated/20 transition-colors">
-        <div className="space-y-0.5 min-w-0 flex-1">
-          <Label className="text-xs font-semibold text-text-primary block">
-            {t('settings.language')}
-          </Label>
-          <p className="text-[11px] text-text-secondary leading-relaxed">
-            Select your preferred display language for UI labels.
-          </p>
-        </div>
-        <Select value={lang} onValueChange={(val) => setLang(val as any)}>
-          <SelectTrigger className="w-40 h-8 text-xs bg-bg-base/70">
-            <SelectValue placeholder="Language" />
+      <SettingRow
+        label={t('prefs.appearance.language')}
+        description={t('prefs.appearance.languageDesc')}
+      >
+        <Select
+          value={lang}
+          onValueChange={(val) => {
+            if (typeof val === 'string') setLang(val);
+          }}
+        >
+          <SelectTrigger className="h-9 w-48 text-[13px]">
+            <SelectValue>{currentLang.label}</SelectValue>
           </SelectTrigger>
-          <SelectContent className="z-50 bg-bg-surface border border-border shadow-xl rounded-md p-1">
-            {Object.entries(langOptions).map(([value, label]) => (
-              <SelectItem key={value} value={value} className="text-xs">
-                {label}
+          <SelectContent className="p-1">
+            {SUPPORTED_LANGUAGES.map((l) => (
+              <SelectItem key={l.code} value={l.code} className="text-[13px]">
+                {l.label}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-      </div>
+      </SettingRow>
+
+      <SettingRow label={t('prefs.appearance.theme')} description={t('prefs.appearance.themeDesc')}>
+        <div className="flex w-48 rounded-lg border border-border-subtle bg-bg-base p-0.5">
+          {(['light', 'dark'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              aria-pressed={themeMode === mode}
+              onClick={() => setThemeMode(mode)}
+              className={cn(
+                'flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-[12.5px] font-medium transition-colors',
+                themeMode === mode
+                  ? 'bg-bg-elevated text-text-primary shadow-sm'
+                  : 'text-text-muted hover:text-text-primary',
+              )}
+            >
+              {mode === 'light' ? <Sun size={13} /> : <Moon size={13} />}
+              {t(`prefs.appearance.${mode}`)}
+            </button>
+          ))}
+        </div>
+      </SettingRow>
+
+      <SettingRow
+        label={t('prefs.appearance.accent')}
+        description={t('prefs.appearance.accentDesc')}
+      >
+        <div className="flex items-center gap-1.5">
+          {PRESETS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              aria-label={color}
+              onClick={() => handleColorChange(color)}
+              className={cn(
+                'size-6 rounded-full ring-1 ring-border-strong transition-transform hover:scale-110',
+                localAccent.toLowerCase() === color &&
+                  'ring-2 ring-offset-2 ring-offset-bg-surface ring-text-primary',
+              )}
+              style={{ backgroundColor: color }}
+            />
+          ))}
+          <Popover>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={t('prefs.appearance.accent')}
+                  className="ml-1 size-6 rounded-full ring-1 ring-border-strong"
+                  style={{
+                    background:
+                      'conic-gradient(#ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6, #ec4899, #ef4444)',
+                  }}
+                />
+              }
+            />
+            <PopoverContent align="end" className="w-auto gap-0 overflow-hidden p-0">
+              <HexAlphaColorPicker color={localAccent} onChange={handleColorChange} />
+              <div className="flex items-center justify-between gap-2 border-t border-border-subtle p-2.5">
+                <span className="text-[11px] font-semibold text-text-muted">{t('common.hex')}</span>
+                <input
+                  type="text"
+                  value={localAccent.toUpperCase()}
+                  onChange={(e) => handleColorChange(e.target.value)}
+                  className="w-24 rounded border border-border-subtle bg-bg-base px-2 py-1 text-center font-mono text-xs text-text-primary outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleColorChange(DEFAULT_ACCENT)}
+                  className="text-[11px] font-medium text-text-secondary hover:text-text-primary"
+                >
+                  {t('prefs.appearance.reset')}
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </SettingRow>
     </SettingCard>
   );
 }

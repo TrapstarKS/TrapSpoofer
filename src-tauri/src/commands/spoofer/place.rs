@@ -780,6 +780,15 @@ pub async fn get_universe_id_from_place_id(
     place_id: String,
     cookie: String,
 ) -> crate::error::Result<String> {
+    // A place's universe never changes, so successful lookups are cached for
+    // the process lifetime (the download path asks for this once per asset).
+    static PLACE_TO_UNIVERSE_CACHE: std::sync::OnceLock<dashmap::DashMap<String, String>> =
+        std::sync::OnceLock::new();
+    let cache = PLACE_TO_UNIVERSE_CACHE.get_or_init(dashmap::DashMap::new);
+    if let Some(cached) = cache.get(place_id.trim()) {
+        return Ok(cached.value().clone());
+    }
+
     let cookie_header = build_roblox_cookie_header(&cookie);
     let client = crate::utils::get_http_client();
     let url =
@@ -799,7 +808,9 @@ pub async fn get_universe_id_from_place_id(
             },
         );
 
-    universe_id.ok_or_else(|| "Universe ID not found".into())
+    let universe_id = universe_id.ok_or("Universe ID not found")?;
+    cache.insert(place_id.trim().to_string(), universe_id.clone());
+    Ok(universe_id)
 }
 
 #[tauri::command]

@@ -50,18 +50,13 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "resources": [
-      "../dist-plugin/TrapSpoofer.rbxmx"
-    ],
+    "resources": ["../dist-plugin/TrapSpoofer.rbxmx"],
     "windows": {
       "nsis": {
         "installerIcon": "assets/app_icon.ico",
         "uninstallerIcon": "assets/app_icon.ico",
         "installMode": "currentUser",
-        "languages": [
-          "PortugueseBR",
-          "English"
-        ],
+        "languages": ["PortugueseBR", "English"],
         "displayLanguageSelector": true
       }
     },
@@ -79,9 +74,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": [
-          "trapspoofer"
-        ]
+        "schemes": ["trapspoofer"]
       }
     },
     "updater": {

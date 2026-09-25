@@ -41,6 +41,7 @@ macro_rules! specta_commands {
             crate::commands::ipc::app::get_runtime_info,
             crate::commands::ipc::app::open_external,
             crate::commands::ipc::app::select_folder,
+            crate::commands::ipc::app::reveal_in_folder,
             crate::commands::ipc::app::uninstall_app,
             crate::commands::ipc::app::clear_plugin_cache,
             crate::commands::ipc::app::open_frontend_devtools,
