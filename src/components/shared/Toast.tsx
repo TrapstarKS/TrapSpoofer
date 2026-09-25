@@ -31,11 +31,11 @@ export const Toast = () => {
     <div
       role={level === 'error' ? 'alert' : 'status'}
       aria-live={level === 'error' ? 'assertive' : 'polite'}
-      className="pointer-events-auto fixed right-4 bottom-4 z-[100]"
+      className="pointer-events-auto fixed right-4 top-14 z-[100]"
     >
       <div
         key={toast.id}
-        className="relative flex max-w-sm items-start gap-3 overflow-hidden rounded-xl border border-border-strong bg-bg-surface py-3 pr-3 pl-4 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.45)] animate-in fade-in slide-in-from-bottom-2"
+        className="relative flex max-w-sm items-start gap-3 overflow-hidden rounded-xl border border-border-strong bg-bg-surface py-3 pr-3 pl-4 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.45)] animate-in fade-in slide-in-from-top-2"
       >
         <span className={cn('absolute inset-y-0 left-0 w-1', bar)} aria-hidden />
         <Icon size={17} className={cn('mt-0.5 shrink-0', accent)} />

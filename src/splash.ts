@@ -15,7 +15,7 @@ async function runSplashFlow() {
     update = await Promise.race([
       check(),
       new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error('Updater check timed out')), 10000),
+        setTimeout(() => reject(new Error('Updater check timed out')), 4000),
       ),
     ]);
   } catch (err) {

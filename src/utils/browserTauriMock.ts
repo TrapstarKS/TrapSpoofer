@@ -1,5 +1,15 @@
 const MOCK_COMMANDS: Record<string, unknown> = {
   get_app_version: 'browser-preview',
+  mcp_get_info: {
+    enabled: true,
+    port: 14380,
+    url: 'http://127.0.0.1:14380/mcp',
+    executable: 'C:/Program Files/TrapSpoofer/TrapSpoofer.exe',
+    tools: ['get_status', 'scan_studio', 'list_assets', 'spoof_assets', 'get_job'],
+  },
+  mcp_set_enabled: null,
+  mcp_set_frontend_ready: null,
+  mcp_respond: true,
   get_runtime_info: { platform: 'windows' },
   check_roblox_api_status: true,
   save_profile_secrets: null,

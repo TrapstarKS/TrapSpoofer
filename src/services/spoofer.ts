@@ -148,6 +148,9 @@ export interface FileScanResult {
   stores: AssetStores;
 }
 
+/** Drop the Windows extended-length prefix (\\?\) the backend returns. */
+export const displayPath = (path: string) => path.replace(/^\\\\\?\\/, '');
+
 export async function scanFile(
   path: string,
 ): Promise<{ assets: SpoofAsset[]; info: FileScanResult }> {
@@ -159,7 +162,7 @@ export async function scanFile(
     const assets = await adoptStores(info.stores, {
       kind: 'file',
       label: info.fileName,
-      filePath: info.filePath || path,
+      filePath: displayPath(info.filePath || path),
     });
     log(`[SUCCESS] Loaded ${info.fileName}: ${assets.length} unique asset(s).`);
     return { assets, info };
@@ -771,6 +774,7 @@ export async function writeSpoofedFile(options: {
     outputPath: options.outputPath ?? null,
     mappings,
   });
+  result.outputPath = displayPath(result.outputPath);
   useSessionStore.getState().setLastFileWrite(result);
   log(`[SUCCESS] Arquivo salvo: ${result.outputPath} (${result.patchesApplied} substituições).`);
   return result;

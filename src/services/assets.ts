@@ -118,17 +118,24 @@ export function buildAssetList(
     });
   };
 
-  for (const a of stores.anims?.assets ?? []) add(a, 'animation', false);
-  for (const a of stores.sounds?.assets ?? []) add(a, 'audio', false);
-  for (const a of stores.images?.assets ?? []) add(a, 'image', false);
-  for (const a of stores.meshes?.assets ?? []) add(a, 'mesh', false);
-  for (const a of stores.videos?.assets ?? []) add(a, 'video', false);
+  // Real properties (SoundId, AnimationId...) decide the type; ids that only
+  // appear inside script source are guesses, so they are added last.
+  const typed: Array<[PluginAsset, SpoofAssetType, boolean]> = [];
+  for (const a of stores.anims?.assets ?? []) typed.push([a, 'animation', false]);
+  for (const a of stores.sounds?.assets ?? []) typed.push([a, 'audio', false]);
+  for (const a of stores.images?.assets ?? []) typed.push([a, 'image', false]);
+  for (const a of stores.meshes?.assets ?? []) typed.push([a, 'mesh', false]);
+  for (const a of stores.videos?.assets ?? []) typed.push([a, 'video', false]);
   for (const a of stores.scriptRefs?.assets ?? []) {
     const resolved = a.assetId
       ? RESOLVED_TYPE[scriptRefTypes[a.assetId]?.toLowerCase()]
       : undefined;
-    if (resolved) add(a, resolved, true);
+    if (resolved) typed.push([a, resolved, true]);
   }
+  const isSourceUsage = ([a]: [PluginAsset, SpoofAssetType, boolean]) =>
+    usageOf(a).property === 'Source' || Boolean(a.callType);
+  for (const entry of typed) if (!isSourceUsage(entry)) add(...entry);
+  for (const entry of typed) if (isSourceUsage(entry)) add(...entry);
 
   return Array.from(byId.values()).sort(
     (a, b) =>
