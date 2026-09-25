@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Updater</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preload" as="image" href="/src-tauri/icons/128x128.png" fetchpriority="high" />
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&display=swap"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/src/index.css" />
+    <style>
+      body {
+        font-family: 'Geist', sans-serif;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      .drag-region {
+        -webkit-app-region: drag;
+      }
+
+      .spinner {
+        border: 3px solid rgba(255, 255, 255, 0.1);
+        border-radius: 50%;
+        border-top: 3px solid #ffffff;
+        width: 24px;
+        height: 24px;
+        animation: custom-spin 1s linear infinite !important;
+      }
+
+      @keyframes custom-spin {
+        0% {
+          transform: rotate(0deg);
+        }
+
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+
+  <body
+    class="bg-transparent text-[#fafafa] h-screen w-screen overflow-hidden m-0 p-4 box-border flex"
+  >
+    <div
+      style="border-color: #232327"
+      class="w-full h-full bg-[#111113] rounded-2xl border shadow-2xl flex flex-col items-center justify-center drag-region overflow-hidden box-border"
+    >
+      <div class="flex flex-col items-center justify-center space-y-4">
+        <img
+          src="/src-tauri/icons/128x128.png"
+          alt="TrapSpoofer"
+          class="w-24 h-24 drop-shadow-xl"
+          fetchpriority="high"
+        />
+        <h1 class="text-xl font-bold tracking-tight text-[#fafafa]">TrapSpoofer</h1>
+        <div class="flex items-center space-x-3 text-sm text-[#8d8d94]">
+          <div class="spinner" id="spinner"></div>
+          <span id="status-text">Checking for updates...</span>
+        </div>
+        <div id="update-actions" class="hidden items-center space-x-3 mt-4">
+          <button
+            id="btn-skip"
+            class="px-4 py-2 text-sm font-medium text-[#c7c7cc] hover:text-[#fafafa] transition-colors bg-[#18181b] hover:bg-[#202024] border border-[#232327] rounded-md outline-none cursor-pointer"
+            style="-webkit-app-region: no-drag"
+          >
+            Skip
+          </button>
+          <button
+            id="btn-download"
+            class="px-4 py-2 text-sm font-medium text-[#0b0b0c] bg-[#ffffff] hover:bg-gray-200 transition-colors rounded-md shadow-[0_0_15px_rgba(255,255,255,0.15)] outline-none cursor-pointer"
+            style="-webkit-app-region: no-drag"
+          >
+            Download
+          </button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/splash.ts"></script>
+  </body>
+</html>

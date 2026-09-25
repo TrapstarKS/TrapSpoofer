@@ -1,0 +1,87 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "TrapSpoofer",
+  "version": "3.0.0",
+  "identifier": "com.trapstar.trapspoofer",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "title": "TrapSpoofer",
+        "label": "splashscreen",
+        "url": "splash.html",
+        "width": 432,
+        "height": 332,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "center": true,
+        "visible": true,
+        "skipTaskbar": false
+      }
+    ],
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "$APPDATA/**",
+          "$RESOURCE/**",
+          "$PICTURE/**",
+          "$VIDEO/**",
+          "$DESKTOP/**",
+          "$DOWNLOAD/**",
+          "$DOCUMENT/**",
+          "$TEMP/**"
+        ]
+      },
+      "csp": "default-src 'self' ipc: ipc://localhost http://ipc.localhost; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src * 'self' asset: https: http: blob: data:; connect-src * 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https: ipc: ipc://localhost http://ipc.localhost tauri: asset:; media-src * 'self' asset: https: blob: data:; font-src 'self' data: https://fonts.gstatic.com"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "resources": ["../dist-plugin/TrapSpoofer.rbxmx"],
+    "windows": {
+      "nsis": {
+        "installerIcon": "assets/app_icon.ico",
+        "uninstallerIcon": "assets/app_icon.ico",
+        "installMode": "currentUser",
+        "languages": ["PortugueseBR", "English"],
+        "displayLanguageSelector": true
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "Trapstar",
+    "copyright": "GPL-3.0-or-later. Based on ISpooferMotion V2 by IncredibroXP.",
+    "shortDescription": "Roblox asset spoofer"
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["trapspoofer"]
+      }
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/TrapstarKS/TrapSpoofer/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEwQTg0QjVCRjE5RDUwRApSV1FOMVJtL3RZUUtBUkdGTUQ0UFU2alNtWUx1Tm0rV04rTW4vRWd4Q1FRVEZRNEl1Q2ViSllOZAo="
+    }
+  }
+}

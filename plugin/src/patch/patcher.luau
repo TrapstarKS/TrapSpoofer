@@ -1,0 +1,743 @@
+--!nolint UnknownGlobal
+--!nocheck
+--!nolint
+
+-- luacheck: ignore
+---@diagnostic disable: undefined-global, unused-local, unused-function, lowercase-global
+
+local BLOCKED_SET_PROPERTIES: { [string]: boolean } = {
+	Parent = true,
+	ClassName = true,
+	Source = true,
+}
+
+local VALID_PATCH_ACTIONS: { [string]: boolean } = {
+	setProperty = true,
+	replaceEmotes = true,
+	replaceAccessories = true,
+	replaceTags = true,
+	replaceAttribute = true,
+	replaceScriptSource = true,
+	replaceMeshPart = true,
+}
+
+local function normalizeAssetId(value: any): string?
+	if value == nil then
+		return nil
+	end
+
+	local str = string.lower(tostring(value))
+	if str == "" then
+		return nil
+	end
+
+	local assetId = string.match(str, "^rbxassetid://(%d+)$")
+		or string.match(str, "^rbxasset://(%d+)$")
+		or string.match(str, "^id=(%d+)$")
+		or string.match(str, "[?&]id=(%d+)$")
+		or string.match(str, "roblox%.com/asset/%?id=(%d+)$")
+		or string.match(str, "roblox%.com/library/(%d+)$")
+		or string.match(str, "roblox%.com/catalog/(%d+)$")
+		or string.match(str, "create%.roblox%.com/marketplace/asset/(%d+)$")
+		or string.match(str, "^%d+$")
+
+	if not assetId or #assetId > 20 then
+		return nil
+	end
+
+	return assetId
+end
+
+local function toAssetUri(value: any): string?
+	local assetId = normalizeAssetId(value)
+	return if assetId then "rbxassetid://" .. assetId else nil
+end
+
+local CONTENT_PROPERTIES: { [string]: boolean } = {
+	AnimationId = true,
+	AnimationContent = true,
+	SoundId = true,
+	AudioContent = true,
+	MeshId = true,
+	MeshContent = true,
+	TextureId = true,
+	["TextureID"] = true,
+	Texture = true,
+	Image = true,
+	HoverImage = true,
+	PressedImage = true,
+	Graphic = true,
+	ShirtTemplate = true,
+	PantsTemplate = true,
+	Video = true,
+	Asset = true,
+	SkyboxBk = true,
+	SkyboxDn = true,
+	SkyboxFt = true,
+	SkyboxLf = true,
+	SkyboxRt = true,
+	SkyboxUp = true,
+	SunTextureId = true,
+	MoonTextureId = true,
+	ReferenceMeshId = true,
+	CageMeshId = true,
+	ColorMap = true,
+	MetalnessMap = true,
+	NormalMap = true,
+	RoughnessMap = true,
+	BaseTextureId = true,
+	OverlayTextureId = true,
+	ClimbAnimation = true,
+	FallAnimation = true,
+	IdleAnimation = true,
+	JumpAnimation = true,
+	RunAnimation = true,
+	SwimAnimation = true,
+	WalkAnimation = true,
+	MoodAnimation = true,
+}
+
+local NUMBER_ASSET_PROPERTIES: { [string]: boolean } = {
+	Face = true,
+	Head = true,
+	LeftArm = true,
+	LeftLeg = true,
+	RightArm = true,
+	RightLeg = true,
+	Torso = true,
+	GraphicTShirt = true,
+	Pants = true,
+	Shirt = true,
+	PackageId = true,
+	AssetId = true,
+}
+
+local function buildContentValue(value: any): any
+	local uri = toAssetUri(value) or tostring(value)
+	local ok, contentObj = pcall(function()
+		-- luacheck: ignore
+		return (Content :: any).fromUri(uri)
+	end)
+	if ok and contentObj then
+		return contentObj
+	end
+	local ok2, contentObj2 = pcall(function()
+		-- luacheck: ignore
+		return (Content :: any).new(uri)
+	end)
+	if ok2 and contentObj2 then
+		return contentObj2
+	end
+	return nil
+end
+
+local function coercePropertyValue(obj: Instance, property: string, value: any): any
+	local readOk, currentValue = pcall(function()
+		return (obj :: any)[property]
+	end)
+
+	if readOk then
+		if type(currentValue) == "number" then
+			local assetId = normalizeAssetId(value)
+			return if assetId then tonumber(assetId) else tonumber(value) or value
+		elseif typeof(currentValue) == "ContentId" or typeof(currentValue) == "string" then
+			return toAssetUri(value) or tostring(value)
+		elseif typeof(currentValue) == "Content" then
+			local contentObj = buildContentValue(value)
+			if contentObj ~= nil then
+				return contentObj
+			end
+			return toAssetUri(value) or tostring(value)
+		end
+	end
+
+	if CONTENT_PROPERTIES[property] then
+		return toAssetUri(value) or tostring(value)
+	end
+
+	if NUMBER_ASSET_PROPERTIES[property] then
+		local assetId = normalizeAssetId(value)
+		return if assetId then tonumber(assetId) else tonumber(value) or value
+	end
+
+	return value
+end
+
+local function validatePropertyName(property: any): (boolean, string?)
+	if type(property) ~= "string" or property == "" or #property > 200 then
+		return false, "Invalid patch property"
+	end
+	if string.find(property, "%z") then
+		return false, "Invalid patch property"
+	end
+	return true, nil
+end
+
+local function normalizePatch(rawPatch: any): (Patch?, string?)
+	if type(rawPatch) ~= "table" then
+		return nil, "Patch must be a table"
+	end
+	if rawPatch.token == nil or tostring(rawPatch.token) == "" then
+		return nil, "Patch is missing token"
+	end
+	if type(rawPatch.action) ~= "string" or rawPatch.action == "" then
+		return nil, "Patch is missing action"
+	end
+	if not VALID_PATCH_ACTIONS[rawPatch.action] then
+		return nil, "Unsupported patch action: " .. tostring(rawPatch.action)
+	end
+
+	local property = ""
+	if rawPatch.property ~= nil then
+		local okProperty, propertyErr = validatePropertyName(rawPatch.property)
+		if not okProperty then
+			return nil, propertyErr
+		end
+		property = rawPatch.property
+	elseif rawPatch.action == "setProperty" or rawPatch.action == "replaceAttribute" then
+		return nil, "Patch action '" .. rawPatch.action .. "' requires a property name"
+	end
+
+	return {
+		token = tostring(rawPatch.token),
+		fullName = if rawPatch.fullName ~= nil then tostring(rawPatch.fullName) else nil,
+		action = rawPatch.action :: PatchAction,
+		property = property,
+		value = rawPatch.value,
+		meshId = if rawPatch.meshId ~= nil then tostring(rawPatch.meshId) else nil,
+		textureId = if rawPatch.textureId ~= nil then tostring(rawPatch.textureId) else nil,
+	},
+		nil
+end
+
+local function decodeJsonTable(value: any, label: string): (any?, string?)
+	if type(value) ~= "string" then
+		return nil, label .. " must be a JSON string"
+	end
+
+	local ok, decoded = pcall(function()
+		return HttpService:JSONDecode(value)
+	end)
+	if not ok or type(decoded) ~= "table" then
+		return nil, "Invalid JSON " .. string.lower(label)
+	end
+
+	return decoded, nil
+end
+
+local function validateTags(decoded: any): (boolean, string?)
+	if type(decoded) ~= "table" then
+		return false, "Invalid JSON tags"
+	end
+	if #decoded > MAX_TAGS_PER_OBJECT then
+		return false, "Too many tags"
+	end
+
+	local count = 0
+	for key in pairs(decoded) do
+		if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
+			return false, "Tags must be an array"
+		end
+		count += 1
+	end
+	if count ~= #decoded then
+		return false, "Tags must be an array"
+	end
+
+	for _, tag in ipairs(decoded) do
+		if type(tag) ~= "string" or tag == "" or #tag > MAX_TAG_BYTES then
+			return false, "Invalid tag"
+		end
+	end
+
+	return true, nil
+end
+
+local function applyPatch(patch: Patch): (boolean, string?)
+	local obj = getRegisteredObject(patch.token)
+	if not obj then
+		return false, "Studio object no longer exists; scan again"
+	end
+
+	local initialParentValid = pcall(function()
+		return obj.Parent
+	end)
+	if not initialParentValid or obj.Parent == nil then
+		return false, "Studio object was destroyed or deparented before patching"
+	end
+
+	if patch.action == "setProperty" then
+		if string.sub(patch.property, 1, 14) == "__Attribute__:" then
+			local attr = string.sub(patch.property, 15)
+			local okProperty, propertyErr = validatePropertyName(attr)
+			if not okProperty then
+				return false, propertyErr
+			end
+			local ok, err = pcall(function()
+				obj:SetAttribute(attr, tonumber(patch.value) or patch.value)
+			end)
+			if ok then
+				logToPlugin(
+					string.format(
+						"[TrapSpoofer] Replaced attribute '%s' on %s -> '%s'",
+						attr,
+						pcall(function()
+							return obj:GetFullName()
+						end)
+								and obj:GetFullName()
+							or obj.Name,
+						tostring(patch.value)
+					)
+				)
+			end
+			return ok, err
+		end
+
+		if BLOCKED_SET_PROPERTIES[patch.property] then
+			return false, "Property cannot be set with setProperty"
+		end
+
+		local coerced = coercePropertyValue(obj, patch.property, patch.value)
+		local ok, err = pcall(function()
+			(obj :: any)[patch.property] = coerced
+		end)
+		if ok then
+			local objFullName = "?"
+			pcall(function()
+				objFullName = obj:GetFullName()
+			end)
+			logToPlugin(
+				string.format(
+					"[TrapSpoofer] Replaced property '%s' on %s -> '%s'",
+					patch.property,
+					objFullName,
+					tostring(patch.value)
+				)
+			)
+		end
+		return ok, err
+	elseif patch.action == "replaceEmotes" then
+		if not obj:IsA("HumanoidDescription") then
+			return false, "replaceEmotes target is not a HumanoidDescription"
+		end
+		local decoded, decodeErr = decodeJsonTable(patch.value, "Emotes")
+		if not decoded then
+			return false, decodeErr
+		end
+		local ok, err = pcall(function()
+			(obj :: any):SetEmotes(decoded)
+		end)
+		if ok then
+			local objFullName = "?"
+			pcall(function()
+				objFullName = obj:GetFullName()
+			end)
+			logToPlugin("[TrapSpoofer] Replaced emotes on " .. objFullName)
+		end
+		return ok, err
+	elseif patch.action == "replaceAccessories" then
+		if not obj:IsA("HumanoidDescription") then
+			return false, "replaceAccessories target is not a HumanoidDescription"
+		end
+		local decoded, decodeErr = decodeJsonTable(patch.value, "Accessories")
+		if not decoded then
+			return false, decodeErr
+		end
+		local ok, err = pcall(function()
+			(obj :: any):SetAccessories(decoded)
+		end)
+		if ok then
+			local objFullName = "?"
+			pcall(function()
+				objFullName = obj:GetFullName()
+			end)
+			logToPlugin("[TrapSpoofer] Replaced accessories on " .. objFullName)
+		end
+		return ok, err
+	elseif patch.action == "replaceTags" then
+		local decoded, decodeErr = decodeJsonTable(patch.value, "Tags")
+		if not decoded then
+			return false, decodeErr
+		end
+		local validTags, tagErr = validateTags(decoded)
+		if not validTags then
+			return false, tagErr
+		end
+		local ok, err = pcall(function()
+			local newTagSet: { [string]: boolean } = {}
+			for _, newTag in ipairs(decoded) do
+				newTagSet[newTag] = true
+			end
+			for _, oldTag in ipairs(CollectionService:GetTags(obj)) do
+				if
+					not newTagSet[oldTag]
+					and (isAssetFormat(oldTag) or stringContainsAssetReference(oldTag))
+				then
+					CollectionService:RemoveTag(obj, oldTag)
+				end
+			end
+			for _, newTag in ipairs(decoded) do
+				CollectionService:AddTag(obj, newTag)
+			end
+		end)
+		if ok then
+			local objFullName = "?"
+			pcall(function()
+				objFullName = obj:GetFullName()
+			end)
+			logToPlugin(
+				string.format("[TrapSpoofer] Replaced %d tag(s) on %s", #decoded, objFullName)
+			)
+		end
+		return ok, err
+	elseif patch.action == "replaceAttribute" then
+		local okProperty, propertyErr = validatePropertyName(patch.property)
+		if not okProperty then
+			return false, propertyErr
+		end
+		local ok, err = pcall(function()
+			obj:SetAttribute(patch.property, patch.value)
+		end)
+		if ok then
+			local objFullName = "?"
+			pcall(function()
+				objFullName = obj:GetFullName()
+			end)
+			logToPlugin(
+				string.format(
+					"[TrapSpoofer] Replaced attribute '%s' on %s -> '%s'",
+					patch.property,
+					objFullName,
+					tostring(patch.value)
+				)
+			)
+		end
+		return ok, err
+	elseif patch.action == "replaceScriptSource" then
+		if not obj:IsA("LuaSourceContainer") or obj.ClassName == "CoreScript" then
+			return false, "Target is not a script"
+		end
+
+		local source
+		if type(patch.value) == "table" then
+			local readOk, current = pcall(function()
+				return (obj :: any).Source
+			end)
+			if not readOk or not current or current == "" then
+				return false, "Could not read source to apply ID mapping"
+			end
+			source = current
+			for oldId, newId in pairs(patch.value) do
+				local oId, nId = tostring(oldId), tostring(newId)
+				local safePattern = "([=:{,]%s*)" .. oId .. "(%f[%D])"
+				source = string.gsub(source, safePattern, "%1" .. nId .. "%2")
+				source = string.gsub(source, "rbxassetid://" .. oId, "rbxassetid://" .. nId)
+				source =
+					string.gsub(source, "(roblox%.com/[Aa]sset/%?[Ii][Dd]=)" .. oId, "%1" .. nId)
+			end
+		elseif type(patch.value) == "string" then
+			source = patch.value
+		else
+			source = tostring(patch.value or "")
+		end
+
+		local ok, err
+		if #source >= 200000 then
+			ok, err = pcall(function()
+				ScriptEditorService:UpdateSourceAsync(obj :: any, function()
+					return source
+				end)
+			end)
+		else
+			ok, err = pcall(function()
+				(obj :: any).Source = source
+			end)
+		end
+		if ok then
+			local objFullName = "?"
+			pcall(function()
+				objFullName = obj:GetFullName()
+			end)
+			logToPlugin("[TrapSpoofer] Replaced script source in " .. objFullName)
+		end
+		return ok, err
+	elseif patch.action == "replaceMeshPart" then
+		if not obj:IsA("MeshPart") then
+			return false, "replaceMeshPart target is not a MeshPart"
+		end
+
+		local meshObj = obj :: MeshPart
+		local targetMeshUri = if patch.meshId then toAssetUri(patch.meshId) else nil
+		local targetTextureUri = if patch.textureId then toAssetUri(patch.textureId) else nil
+
+		if patch.meshId and not targetMeshUri then
+			return false, "Invalid meshId"
+		end
+		if patch.textureId and not targetTextureUri then
+			return false, "Invalid textureId"
+		end
+		if not targetMeshUri and not targetTextureUri then
+			return false, "replaceMeshPart requires meshId or textureId"
+		end
+
+		if not targetMeshUri then
+			local ok, err = pcall(function()
+				meshObj.TextureID = targetTextureUri :: string
+			end)
+			return ok, err
+		end
+
+		local replaceOk, replaceErr = applyMeshPartInPlace(meshObj, targetMeshUri, targetTextureUri)
+		if not replaceOk then
+			return false, replaceErr
+		end
+
+		local objFullName = "?"
+		pcall(function()
+			objFullName = meshObj:GetFullName()
+		end)
+		logToPlugin(
+			string.format(
+				"[TrapSpoofer] Replaced MeshPart '%s' in place: mesh=%s texture=%s",
+				objFullName,
+				targetMeshUri,
+				targetTextureUri or "(preserved)"
+			)
+		)
+		return true, nil
+	end
+
+	return false, "Unsupported patch action: " .. tostring(patch.action)
+end
+
+local function applyPatches(patches: any)
+	if patchRunning then
+		logToPlugin("[Warning] Patch batch already running")
+		return
+	end
+	if type(patches) ~= "table" then
+		logToPlugin("[Warning] Invalid patch batch")
+		return
+	end
+	if #patches > MAX_PATCHES_PER_BATCH then
+		logToPlugin(
+			"[Warning] Large patch batch: "
+				.. tostring(#patches)
+				.. " patches - processing will yield frequently"
+		)
+	end
+	if scanRunning then
+		logToPlugin("[Warning] Scan already running; skipping patch batch")
+		return
+	end
+	if manualReplaceRunning then
+		logToPlugin("[Warning] Manual replacement is running; skipping patch batch")
+		return
+	end
+
+	patchRunning = true
+	setPluginGuiStatus(string.format("Applying %d replacement(s)...", #patches))
+	local recording: any = nil
+	local succeeded = 0
+	local failed = 0
+	local failedPatchesList = {}
+
+	pcall(function()
+		recording = ChangeHistoryService:TryBeginRecording("TrapSpoofer Pre-Patch")
+	end)
+
+	local function finishPatch()
+		if recording then
+			pcall(function()
+				ChangeHistoryService:FinishRecording(
+					recording,
+					Enum.FinishRecordingOperation.Commit
+				)
+			end)
+			recording = nil
+		end
+		patchRunning = false
+	end
+
+	local currentBatchSize = math.clamp(manualBatchSize, 10, 500)
+	local yieldInterval = math.clamp(math.floor(currentBatchSize / 5), 2, 50)
+	local yieldDelay = currentBatchSize >= 150 and 0.01 or 0.02
+
+	local frameStart = os.clock()
+	local lastProgressPost = 0
+
+	local function isRateLimitError(err: any): boolean
+		local errStr = string.lower(tostring(err))
+		return (
+			string.find(errStr, "limit")
+			or string.find(errStr, "rate")
+			or string.find(errStr, "429")
+			or string.find(errStr, "exceed")
+			or string.find(errStr, "too many")
+			or string.find(errStr, "throttle")
+			or string.find(errStr, "timeout")
+			or string.find(errStr, "timed out")
+		) ~= nil
+	end
+
+	local function runPatchWithRetry(patch: Patch): (boolean, any)
+		local maxAttempts = 5
+		local attempt = 0
+		local ok, patchOk, patchErr
+
+		while attempt < maxAttempts do
+			attempt += 1
+			ok, patchOk, patchErr = pcall(function()
+				return applyPatch(patch)
+			end)
+
+			if ok and patchOk then
+				return true, nil
+			end
+
+			local err = if ok then patchErr else patchOk
+			if isRateLimitError(err) and attempt < maxAttempts then
+				local patchName = patch.fullName or patch.token or "unknown"
+				logToPlugin(
+					string.format(
+						"[Warning] [TrapSpoofer] Rate limit hit applying patch to '%s'. Waiting 5s before retry (%d/%d)...",
+						tostring(patchName),
+						attempt,
+						maxAttempts
+					)
+				)
+				task.wait(5)
+			else
+				return false, err
+			end
+		end
+
+		return false, if ok then patchErr else patchOk
+	end
+
+	local function recordPatchOutcome(patch: Patch, patchOk: boolean, err: any)
+		if patchOk then
+			succeeded += 1
+			return
+		end
+		failed += 1
+		local patchName = patch.fullName or patch.token or "unknown patch"
+		local failedId = patch.token or patch.id or patchName
+		table.insert(failedPatchesList, failedId)
+
+		logToPlugin(
+			"[Warning] "
+				.. "[TrapSpoofer] Patch failed for "
+				.. tostring(patchName)
+				.. ": "
+				.. tostring(err)
+		)
+	end
+
+	-- MeshPart replacements go through CreateMeshPartAsync, which is slow and
+	-- network bound, so they run in a small bounded pool while the cheap
+	-- property patches continue on the main loop.
+	local MESH_PATCH_CONCURRENCY = 5
+	local meshInFlight = 0
+
+	local function waitForMeshSlot(limit: number)
+		while meshInFlight > limit do
+			task.wait()
+		end
+	end
+
+	local batchOk, batchErr = pcall(function()
+		for index, rawPatch in ipairs(patches) do
+			local patch, validationErr = normalizePatch(rawPatch)
+			if not patch then
+				failed += 1
+				local failedId = if type(rawPatch) == "table"
+					then rawPatch.token or rawPatch.id or rawPatch.fullName or "unknown"
+					else "unknown"
+				table.insert(failedPatchesList, failedId)
+				logToPlugin("[Warning] [TrapSpoofer] Invalid patch: " .. tostring(validationErr))
+			elseif patch.action == "replaceMeshPart" and patch.meshId ~= nil then
+				waitForMeshSlot(MESH_PATCH_CONCURRENCY - 1)
+				meshInFlight += 1
+				task.spawn(function()
+					local runOk, patchOk, err = pcall(runPatchWithRetry, patch)
+					if runOk then
+						recordPatchOutcome(patch, patchOk, err)
+					else
+						recordPatchOutcome(patch, false, patchOk)
+					end
+					meshInFlight -= 1
+				end)
+			else
+				local patchOk, err = runPatchWithRetry(patch)
+				recordPatchOutcome(patch, patchOk, err)
+			end
+
+			local now = os.clock()
+			if (now - lastProgressPost) >= 0.5 or index == #patches then
+				lastProgressPost = now
+				pcall(function()
+					postJson("/patch-progress", {
+						current = index,
+						total = #patches,
+					})
+				end)
+			end
+
+			if (index % yieldInterval == 0 or (now - frameStart) > 0.02) and index < #patches then
+				setPluginGuiStatus(
+					string.format("Applying replacements (%d/%d)...", index, #patches),
+					true
+				)
+				frameStart = os.clock()
+				task.wait(yieldDelay)
+			end
+		end
+	end)
+
+	-- Always wait for in-flight MeshPart replacements before committing the
+	-- ChangeHistory recording, even if the loop itself errored.
+	if meshInFlight > 0 then
+		setPluginGuiStatus(
+			string.format("Finishing %d MeshPart replacement(s)...", meshInFlight),
+			true
+		)
+		waitForMeshSlot(0)
+		pcall(function()
+			postJson("/patch-progress", {
+				current = #patches,
+				total = #patches,
+			})
+		end)
+	end
+
+	if not batchOk then
+		failed += 1
+		logToPlugin("[Warning] " .. "[TrapSpoofer] Patch batch failed: " .. tostring(batchErr))
+	end
+
+	finishPatch()
+
+	logToPlugin(
+		string.format(
+			"[TrapSpoofer] Targeted replacement complete: %d patches applied, %d failed",
+			succeeded,
+			failed
+		)
+	)
+
+	pcall(function()
+		postJson("/patch-results", {
+			failedPatches = failedPatchesList,
+			succeeded = succeeded,
+			failed = failed,
+			total = succeeded + failed,
+		})
+	end)
+
+	if succeeded > 0 then
+		setPluginGuiStatus("Replacements complete. Waiting for new scan or replacements...")
+	else
+		setPluginGuiStatus("Waiting for new scan or replacements...")
+	end
+end

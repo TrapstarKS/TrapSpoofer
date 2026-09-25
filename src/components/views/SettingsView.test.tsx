@@ -1,0 +1,82 @@
+import { render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import * as LanguageContext from '../../contexts/LanguageContext';
+import SettingsView from './SettingsView';
+
+vi.mock('../../contexts/LanguageContext', () => ({
+  useLanguage: vi.fn(),
+}));
+
+vi.mock('../../contexts/ThemeContext', () => ({
+  useThemeAccent: vi.fn(() => ({
+    accent: 'blue',
+    setAccent: vi.fn(),
+  })),
+}));
+
+vi.mock('../../contexts/ConfigContext', () => ({
+  useConfig: vi.fn(() => ({
+    config: {
+      ui: { theme: 'dark', language: 'en' },
+      advanced: {
+        autoCookieStudio: false,
+        autoCookieBrowser: false,
+        maxConcurrency: 10,
+        maxDownloadConcurrency: 5,
+        excludedUserIds: '',
+        excludedGroupIds: '',
+        concurrentSpoofing: true,
+        concurrentDownloading: true,
+        enableArchiveRecovery: false,
+        proxyUrl: '',
+      },
+      general: { desktopNotifications: false },
+      debug: { debugMode: false, enableCache: true },
+      spoofing: {
+        preserveMetadata: true,
+        downloadOnly: false,
+        uploadTypes: ['animation', 'audio', 'image', 'mesh', 'script_ref'],
+      },
+    },
+    updateConfig: vi.fn(),
+  })),
+}));
+
+vi.mock('../../stores/configStore', () => ({
+  useConfigStore: vi.fn(() => ({})),
+}));
+
+globalThis.ResizeObserver = class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
+globalThis.IntersectionObserver = class IntersectionObserver {
+  constructor() {}
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as any;
+
+describe('SettingsView', () => {
+  const mockT = vi.fn((key) => key);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(LanguageContext.useLanguage).mockReturnValue({
+      t: mockT,
+      tf: mockT,
+      lang: 'pt',
+      setLang: vi.fn(),
+    } as any);
+  });
+
+  it('renders settings sections correctly', () => {
+    render(<SettingsView />);
+    expect(screen.getByText('prefs.title')).toBeInTheDocument();
+    expect(screen.getByText('prefs.appearance.title')).toBeInTheDocument();
+    expect(screen.getByText('prefs.nav.advanced')).toBeInTheDocument();
+  });
+});

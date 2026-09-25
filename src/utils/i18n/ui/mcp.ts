@@ -1,0 +1,118 @@
+/** IA / MCP page. */
+export const en = {
+  mcp: {
+    title: 'AI / MCP',
+    subtitle: 'Let AI assistants use TrapSpoofer for you.',
+    what: {
+      title: 'What is MCP?',
+      body: 'MCP (Model Context Protocol) is a standard way for AI assistants — like Claude Code, Claude Desktop or Cursor — to use apps on your PC. With it on, you can simply ask: “scan my game in Studio, spoof the animations to my group and apply the new IDs”, and the assistant drives TrapSpoofer step by step.',
+      one: 'Scan Studio or a .rbxl file',
+      two: 'Spoof to your account or group',
+      three: 'Apply the new IDs in Studio',
+      safety:
+        'The server only listens on your own computer (127.0.0.1). Everything the AI does shows up in the activity feed below and in the app.',
+    },
+    toggle: 'Enable MCP server',
+    status: {
+      running: 'Running',
+      starting: 'Starting…',
+      error: 'Could not read the server status',
+      off: 'Off',
+    },
+    connect: {
+      title: 'Connect your assistant',
+      help: 'Copy the snippet for your tool and paste it where indicated.',
+      helpOff: 'Turn on the MCP server above to get the address.',
+      claudeCode: 'Claude Code (terminal)',
+      claudeCodeHint: 'Run this command once in a terminal.',
+      desktop: 'Claude Desktop / Cursor',
+      desktopHint:
+        'Add to claude_desktop_config.json (Claude Desktop) or .cursor/mcp.json (Cursor).',
+      http: 'Other clients (HTTP)',
+      httpHint: 'Any MCP client that supports the “Streamable HTTP” transport.',
+    },
+    toolsTitle: 'Available tools',
+    toolsHelp: 'What the assistant can do in TrapSpoofer.',
+    tools: {
+      fallback: 'TrapSpoofer tool.',
+      get_status: 'Shows Studio connection, active account and current job.',
+      scan_studio: 'Scans the place open in Roblox Studio.',
+      scan_file: 'Reads a .rbxl/.rbxm file from your PC.',
+      list_assets: 'Lists the assets found, with owner and where they are used.',
+      spoof_assets: 'Starts a spoof job with the chosen assets.',
+      get_job: 'Follows the progress and results of the job.',
+      cancel_job: 'Cancels the running job.',
+      push_to_studio: 'Applies the new IDs in Studio.',
+      write_spoofed_file: 'Saves a spoofed copy of the opened file.',
+      replace_ids: 'Sends ready-made old → new pairs to Studio.',
+      list_profiles: 'Lists your accounts and groups.',
+      select_profile: 'Chooses the account/group that receives the uploads.',
+      get_history: 'Reads the history of past jobs.',
+    },
+    activity: {
+      title: 'AI activity',
+      help: 'Every request made by an assistant, live.',
+      empty: 'No AI activity yet',
+      emptyHelp: 'When an assistant uses TrapSpoofer, each action shows up here.',
+    },
+  },
+};
+
+export const pt = {
+  mcp: {
+    title: 'IA / MCP',
+    subtitle: 'Deixe assistentes de IA usarem o TrapSpoofer por você.',
+    what: {
+      title: 'O que é MCP?',
+      body: 'MCP (Model Context Protocol) é um jeito padrão de assistentes de IA — como Claude Code, Claude Desktop ou Cursor — usarem apps do seu PC. Com ele ligado, você pode simplesmente pedir: “escaneia meu jogo no Studio, spoofa as animações para o meu grupo e aplica os novos IDs”, e o assistente conduz o TrapSpoofer passo a passo.',
+      one: 'Escanear o Studio ou um .rbxl',
+      two: 'Spoofar para a sua conta ou grupo',
+      three: 'Aplicar os novos IDs no Studio',
+      safety:
+        'O servidor só escuta no seu próprio computador (127.0.0.1). Tudo o que a IA faz aparece no feed de atividade abaixo e no app.',
+    },
+    toggle: 'Ativar servidor MCP',
+    status: {
+      running: 'Rodando',
+      starting: 'Iniciando…',
+      error: 'Não foi possível ler o status do servidor',
+      off: 'Desligado',
+    },
+    connect: {
+      title: 'Conecte o seu assistente',
+      help: 'Copie o trecho da sua ferramenta e cole no lugar indicado.',
+      helpOff: 'Ligue o servidor MCP acima para obter o endereço.',
+      claudeCode: 'Claude Code (terminal)',
+      claudeCodeHint: 'Rode este comando uma vez no terminal.',
+      desktop: 'Claude Desktop / Cursor',
+      desktopHint:
+        'Adicione ao claude_desktop_config.json (Claude Desktop) ou ao .cursor/mcp.json (Cursor).',
+      http: 'Outros clientes (HTTP)',
+      httpHint: 'Qualquer cliente MCP com suporte ao transporte “Streamable HTTP”.',
+    },
+    toolsTitle: 'Ferramentas disponíveis',
+    toolsHelp: 'O que o assistente consegue fazer no TrapSpoofer.',
+    tools: {
+      fallback: 'Ferramenta do TrapSpoofer.',
+      get_status: 'Mostra a conexão com o Studio, a conta ativa e o job atual.',
+      scan_studio: 'Escaneia o place aberto no Roblox Studio.',
+      scan_file: 'Lê um arquivo .rbxl/.rbxm do seu PC.',
+      list_assets: 'Lista os assets encontrados, com dono e onde são usados.',
+      spoof_assets: 'Inicia um job de spoof com os assets escolhidos.',
+      get_job: 'Acompanha o progresso e os resultados do job.',
+      cancel_job: 'Cancela o job em andamento.',
+      push_to_studio: 'Aplica os novos IDs no Studio.',
+      write_spoofed_file: 'Salva uma cópia spoofada do arquivo aberto.',
+      replace_ids: 'Envia pares prontos antigo → novo para o Studio.',
+      list_profiles: 'Lista as suas contas e grupos.',
+      select_profile: 'Escolhe a conta/grupo que recebe os uploads.',
+      get_history: 'Lê o histórico de jobs anteriores.',
+    },
+    activity: {
+      title: 'Atividade da IA',
+      help: 'Cada pedido feito por um assistente, ao vivo.',
+      empty: 'Nenhuma atividade da IA ainda',
+      emptyHelp: 'Quando um assistente usar o TrapSpoofer, cada ação aparece aqui.',
+    },
+  },
+};

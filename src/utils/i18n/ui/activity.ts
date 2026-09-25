@@ -1,0 +1,61 @@
+/** Histórico page (namespace `history`). */
+export const en = {
+  history: {
+    title: 'History',
+    subtitle: 'Every spoof you ran, with its results. Redo a job or retry only what failed.',
+    search: 'Search by account, group, name or asset ID…',
+    filter: {
+      all: 'All',
+      failed: 'With failures',
+    },
+    to: 'Sent to {name}',
+    unknown: 'Unknown',
+    unknownAsset: 'Unknown asset',
+    redo: 'Redo job',
+    retryFailed: 'Retry {count} failed',
+    redoLabel: 'Redo from history',
+    retryLabel: 'Retry from history',
+    viewLog: 'Open log',
+    delete: 'Delete',
+    noAssets: 'No assets in this job.',
+    empty: 'No jobs yet',
+    emptyHelp: 'When you spoof something, the result is saved here.',
+    startFirst: 'Make your first spoof',
+    noMatch: 'No job matches',
+    noMatchHelp: 'Try another search or filter.',
+    loadFailed: 'Could not load the history:',
+    deleteFailed: 'Could not delete the job:',
+    logFailed: 'Could not open the log:',
+  },
+};
+
+export const pt = {
+  history: {
+    title: 'Histórico',
+    subtitle:
+      'Todos os spoofs que você fez, com os resultados. Refaça um job ou tente de novo só o que falhou.',
+    search: 'Buscar por conta, grupo, nome ou ID do asset…',
+    filter: {
+      all: 'Todos',
+      failed: 'Com falhas',
+    },
+    to: 'Enviado para {name}',
+    unknown: 'Desconhecido',
+    unknownAsset: 'Asset desconhecido',
+    redo: 'Refazer job',
+    retryFailed: 'Tentar de novo ({count} falhas)',
+    redoLabel: 'Refazer do histórico',
+    retryLabel: 'Tentar de novo do histórico',
+    viewLog: 'Abrir log',
+    delete: 'Excluir',
+    noAssets: 'Nenhum asset neste job.',
+    empty: 'Nenhum job ainda',
+    emptyHelp: 'Quando você spoofar algo, o resultado fica salvo aqui.',
+    startFirst: 'Fazer o primeiro spoof',
+    noMatch: 'Nenhum job encontrado',
+    noMatchHelp: 'Tente outra busca ou filtro.',
+    loadFailed: 'Não foi possível carregar o histórico:',
+    deleteFailed: 'Não foi possível excluir o job:',
+    logFailed: 'Não foi possível abrir o log:',
+  },
+};

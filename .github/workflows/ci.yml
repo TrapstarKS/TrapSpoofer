@@ -1,0 +1,200 @@
+name: CI & Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (default: v<package.json version>)'
+        required: false
+        type: string
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: Lint, types & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run format:prettier:check
+      - run: bun run format:stylua:check
+      - run: bun run build:plugin
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test
+
+  rust-check:
+    name: Rust clippy & tests
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: windows-dev
+      - run: bun install --frozen-lockfile
+      - run: bun run build:plugin
+      - run: bun run format:rust:check
+      - run: bun run rust:lint
+      - run: bun run rust:test
+
+  prepare:
+    name: Prepare release
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      skip: ${{ steps.tag.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Resolve tag and create the release
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then TAG="${{ inputs.tag }}";
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then TAG="${{ github.ref_name }}";
+          else TAG="v$(node -p "require('./package.json').version")"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+              echo "Release $TAG already exists; bump package.json version to publish a new one."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            NOTES="$(git log -1 --format=%B)"
+            printf '%s\n\n### Download\n\n| Platform | File |\n| --- | --- |\n| Windows | `TrapSpoofer_*_x64-setup.exe` |\n| macOS (Apple Silicon) | `TrapSpoofer_*_aarch64.dmg` |\n| Linux | `TrapSpoofer_*_amd64.AppImage` |\n\nThe Studio plugin is installed automatically by the app (`TrapSpoofer.rbxmx` is also attached for manual install).\n' "$NOTES" > notes.md
+            gh release create "$TAG" --title "TrapSpoofer $TAG" --notes-file notes.md --draft
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            platform: windows-latest
+            bundles: nsis
+            target: x86_64-pc-windows-msvc
+          - name: macos
+            platform: macos-latest
+            bundles: app,dmg
+            target: aarch64-apple-darwin
+          - name: linux
+            platform: ubuntu-22.04
+            bundles: appimage
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: release-${{ matrix.name }}
+          cache-on-failure: true
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Linux system deps
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libwebkit2gtk-4.1-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build & upload
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        with:
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseDraft: true
+          # latest.json is assembled once in `publish` to avoid parallel overwrite races.
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: true
+
+      - name: Attach Studio plugin
+        if: matrix.name == 'windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" dist-plugin/TrapSpoofer.rbxmx --clobber
+
+  publish:
+    name: Publish release
+    needs: [prepare, build]
+    if: always() && needs.prepare.outputs.skip == 'false' && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assemble latest.json and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          mkdir -p sigs
+          gh release download "$TAG" --dir sigs --pattern '*.sig' || true
+          node scripts/updater-manifest.mjs "$TAG" sigs > latest.json
+          cat latest.json
+          gh release upload "$TAG" latest.json --clobber
+          gh release edit "$TAG" --draft=false --latest
