@@ -1,6 +1,9 @@
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
+
+const PLUGIN_SYNC_DEADLINE: Duration = Duration::from_secs(6);
 
 #[tauri::command]
 #[specta::specta]
@@ -82,10 +85,44 @@ fn is_owned_plugin_file_name(file_name: &str) -> bool {
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_roblox_plugin(app: AppHandle) -> crate::error::Result<bool> {
-    static SYNC_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    let sync_lock = SYNC_LOCK.get_or_init(|| tokio::sync::Mutex::new(()));
-    let _guard = sync_lock.lock().await;
+    static SYNC_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+    let sync_lock = Arc::clone(SYNC_LOCK.get_or_init(|| Arc::new(tokio::sync::Mutex::new(()))));
+    run_bounded_sync(sync_lock, PLUGIN_SYNC_DEADLINE, move || sync_roblox_plugin_inner(app)).await
+}
 
+async fn run_bounded_sync<T, F, Fut>(
+    sync_lock: Arc<tokio::sync::Mutex<()>>,
+    deadline: Duration,
+    operation: F,
+) -> crate::error::Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = crate::error::Result<T>> + Send + 'static,
+{
+    let guard = sync_lock.try_lock_owned().map_err(|_| {
+        crate::error::AppError::Custom(
+            "Roblox plugin synchronization is already running. Wait for it to finish before retrying."
+                .to_string(),
+        )
+    })?;
+    let mut task = tokio::spawn(async move {
+        let _guard = guard;
+        operation().await
+    });
+    match tokio::time::timeout(deadline, &mut task).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => Err(crate::error::AppError::Custom(format!(
+            "Roblox plugin synchronization task failed: {error}"
+        ))),
+        Err(_) => Err(crate::error::AppError::Custom(
+            "Roblox plugin synchronization is still running after the startup deadline. The app can continue starting; retry plugin installation after the current sync finishes."
+                .to_string(),
+        )),
+    }
+}
+
+async fn sync_roblox_plugin_inner(app: AppHandle) -> crate::error::Result<bool> {
     log::info!("Starting Roblox plugin sync...");
 
     let resource_path: Option<PathBuf> = {
@@ -250,7 +287,10 @@ pub fn uninstall_roblox_plugin() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_owned_plugin_file_name;
+    use super::{is_owned_plugin_file_name, run_bounded_sync};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::{oneshot, Mutex};
 
     #[test]
     fn plugin_cleanup_only_matches_files_owned_by_the_app() {
@@ -260,5 +300,45 @@ mod tests {
         assert!(!is_owned_plugin_file_name("MyTrapSpooferNotes.rbxmx"));
         assert!(!is_owned_plugin_file_name("TrapSpoofer (backup).rbxmx"));
         assert!(!is_owned_plugin_file_name("TrapSpoofer-helper.lua"));
+    }
+
+    #[tokio::test]
+    async fn timed_out_sync_keeps_lock_until_late_completion_then_allows_retry() {
+        let lock = Arc::new(Mutex::new(()));
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+        let first =
+            run_bounded_sync(Arc::clone(&lock), Duration::from_millis(20), move || async move {
+                let _ = release_rx.await;
+                Ok::<_, crate::error::AppError>(true)
+            })
+            .await;
+        assert!(first
+            .expect_err("the first sync must return after its deadline")
+            .to_string()
+            .contains("still running after the startup deadline"));
+
+        let busy = run_bounded_sync(Arc::clone(&lock), Duration::from_secs(1), || async {
+            Ok::<_, crate::error::AppError>(true)
+        })
+        .await;
+        assert!(busy
+            .expect_err("a second sync must fail while the first operation is still running")
+            .to_string()
+            .contains("already running"));
+
+        let _ = release_tx.send(());
+        for _ in 0..50 {
+            if let Ok(result) =
+                run_bounded_sync(Arc::clone(&lock), Duration::from_secs(1), || async {
+                    Ok::<_, crate::error::AppError>(true)
+                })
+                .await
+            {
+                assert!(result);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        panic!("sync lock was not released after the timed-out operation actually completed");
     }
 }
