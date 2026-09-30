@@ -1,4 +1,4 @@
-interface SpoofJobAssetResult {
+export interface SpoofJobAssetResult {
   id: string;
   type?: string;
   assetType?: string;
@@ -8,7 +8,42 @@ interface SpoofJobAssetResult {
   errorReason?: string;
   newId?: string;
   skipped?: boolean;
+  cancelled?: boolean;
+  localPath?: string;
   reason?: string;
+}
+
+export type SpoofJobResultKind = 'uploaded' | 'downloaded' | 'skipped' | 'failed' | 'cancelled';
+
+export interface SpoofJobResultCounts {
+  uploaded: number;
+  downloaded: number;
+  skipped: number;
+  failed: number;
+  cancelled: number;
+  total: number;
+}
+
+export function spoofJobResultKind(result: SpoofJobAssetResult): SpoofJobResultKind {
+  if (result.cancelled) return 'cancelled';
+  if (result.skipped) return 'skipped';
+  if (!result.success) return 'failed';
+  if (result.reason === 'downloaded' || result.stage === 'download' || result.localPath)
+    return 'downloaded';
+  return 'uploaded';
+}
+
+export function countSpoofJobResults(results: SpoofJobAssetResult[]): SpoofJobResultCounts {
+  const counts: SpoofJobResultCounts = {
+    uploaded: 0,
+    downloaded: 0,
+    skipped: 0,
+    failed: 0,
+    cancelled: 0,
+    total: results.length,
+  };
+  for (const result of results) counts[spoofJobResultKind(result)] += 1;
+  return counts;
 }
 
 interface SpoofJobConfig {

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Download,
   FileText,
   History,
   Play,
@@ -23,7 +24,7 @@ import { activateProfile, setUploadGroup } from '../../services/spoofer';
 import { useConfigStore } from '../../stores/configStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSpooferStore } from '../../stores/spooferStore';
-import type { SpoofJob } from '../../utils/jobTypes';
+import { countSpoofJobResults, type SpoofJob, spoofJobResultKind } from '../../utils/jobTypes';
 import { logIsm } from '../../utils/robloxProfiles';
 import { goTo } from '../app/nav';
 import { useFlowStore } from '../app/spoof/flowStore';
@@ -54,7 +55,7 @@ const TYPE_ALIASES: Record<string, SpoofAssetType> = {
 /** Loads a past job's assets into the Spoofar flow (step "Enviar") so the user can confirm. */
 async function loadJobIntoFlow(job: SpoofJob, onlyFailed: boolean, label: string) {
   const results = (job.assetResults ?? []).filter((r) =>
-    onlyFailed ? !r.success && !r.skipped : true,
+    onlyFailed ? spoofJobResultKind(r) === 'failed' : true,
   );
   const assets: SpoofAsset[] = [];
   const seen = new Set<string>();
@@ -107,9 +108,7 @@ function JobCard({
 }) {
   const { t, lang } = useLanguage();
   const results = job.assetResults ?? [];
-  const ok = results.filter((r) => r.success).length;
-  const skipped = results.filter((r) => r.skipped).length;
-  const failed = results.filter((r) => !r.success && !r.skipped).length;
+  const counts = countSpoofJobResults(results);
   const locale = lang === 'pt' ? 'pt-BR' : lang;
   const date = new Date(job.startTime);
   const dateText = Number.isFinite(date.getTime())
@@ -180,20 +179,34 @@ function JobCard({
           </p>
         </div>
         <div className="hidden items-center gap-1.5 sm:flex">
-          <Badge tone="ok">
-            <CheckCircle2 size={11} />
-            {ok}
-          </Badge>
-          {skipped > 0 && (
-            <Badge tone="warn">
-              <SkipForward size={11} />
-              {skipped}
+          {counts.uploaded > 0 && (
+            <Badge tone="ok">
+              <CheckCircle2 size={11} />
+              {counts.uploaded}
             </Badge>
           )}
-          {failed > 0 && (
+          {counts.downloaded > 0 && (
+            <Badge>
+              <Download size={11} />
+              {counts.downloaded}
+            </Badge>
+          )}
+          {counts.skipped > 0 && (
+            <Badge tone="warn">
+              <SkipForward size={11} />
+              {counts.skipped}
+            </Badge>
+          )}
+          {counts.failed > 0 && (
             <Badge tone="error">
               <XCircle size={11} />
-              {failed}
+              {counts.failed}
+            </Badge>
+          )}
+          {counts.cancelled > 0 && (
+            <Badge tone="warn">
+              <XCircle size={11} />
+              {counts.cancelled}
             </Badge>
           )}
         </div>
@@ -213,14 +226,14 @@ function JobCard({
               <Play />
               {t('history.redo')}
             </Button>
-            {failed > 0 && (
+            {counts.failed > 0 && (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => void loadJobIntoFlow(job, true, t('history.retryLabel'))}
               >
                 <RotateCcw />
-                {t('history.retryFailed').replace('{count}', String(failed))}
+                {t('history.retryFailed').replace('{count}', String(counts.failed))}
               </Button>
             )}
             {job.logFilePath && (
@@ -246,37 +259,49 @@ function JobCard({
               items={results}
               rowHeight={40}
               getKey={(r, i) => `${r.id}-${i}`}
-              renderRow={(res) => (
-                <div className="mx-1 flex h-[40px] items-center gap-3 rounded-md px-2.5 text-[12px] hover:bg-bg-elevated/40">
-                  {res.success ? (
-                    <CheckCircle2 size={14} className="shrink-0 text-success" />
-                  ) : res.skipped ? (
-                    <SkipForward size={14} className="shrink-0 text-warning" />
-                  ) : (
-                    <XCircle size={14} className="shrink-0 text-danger" />
-                  )}
-                  <span className="w-[120px] shrink-0 font-mono text-text-muted">{res.id}</span>
-                  <span className="min-w-0 flex-1 truncate text-text-primary">
-                    {res.name || t('history.unknownAsset')}
-                  </span>
-                  {res.newId && (
-                    <span className="flex shrink-0 items-center gap-1 font-mono text-success">
-                      <ArrowRight size={12} />
-                      {res.newId}
+              renderRow={(res) => {
+                const kind = spoofJobResultKind(res);
+                return (
+                  <div className="mx-1 flex h-[40px] items-center gap-3 rounded-md px-2.5 text-[12px] hover:bg-bg-elevated/40">
+                    {kind === 'uploaded' ? (
+                      <CheckCircle2 size={14} className="shrink-0 text-success" />
+                    ) : kind === 'downloaded' ? (
+                      <Download size={14} className="shrink-0 text-info" />
+                    ) : kind === 'skipped' ? (
+                      <SkipForward size={14} className="shrink-0 text-warning" />
+                    ) : (
+                      <XCircle
+                        size={14}
+                        className={cn(
+                          'shrink-0',
+                          kind === 'cancelled' ? 'text-warning' : 'text-danger',
+                        )}
+                      />
+                    )}
+                    <span className="w-[120px] shrink-0 font-mono text-text-muted">{res.id}</span>
+                    <span className="min-w-0 flex-1 truncate text-text-primary">
+                      {res.name || t('history.unknownAsset')}
                     </span>
-                  )}
-                  {!res.success && (res.errorReason || res.reason) && (
-                    <span
-                      className={cn(
-                        'max-w-[40%] shrink truncate',
-                        res.skipped ? 'text-warning' : 'text-danger',
+                    {res.newId && (
+                      <span className="flex shrink-0 items-center gap-1 font-mono text-success">
+                        <ArrowRight size={12} />
+                        {res.newId}
+                      </span>
+                    )}
+                    {(kind === 'failed' || kind === 'cancelled' || kind === 'skipped') &&
+                      (res.errorReason || res.reason) && (
+                        <span
+                          className={cn(
+                            'max-w-[40%] shrink truncate',
+                            kind === 'failed' ? 'text-danger' : 'text-warning',
+                          )}
+                        >
+                          {res.errorReason || res.reason}
+                        </span>
                       )}
-                    >
-                      {res.errorReason || res.reason}
-                    </span>
-                  )}
-                </div>
-              )}
+                  </div>
+                );
+              }}
               empty={
                 <p className="px-4 py-6 text-center text-[12.5px] text-text-muted">
                   {t('history.noAssets')}
@@ -330,7 +355,8 @@ export default function ActivityView() {
     const q = query.trim().toLowerCase();
     return jobs.filter((job) => {
       const results = job.assetResults ?? [];
-      if (filter === 'failed' && !results.some((r) => !r.success && !r.skipped)) return false;
+      if (filter === 'failed' && !results.some((r) => spoofJobResultKind(r) === 'failed'))
+        return false;
       if (!q) return true;
       return (
         (job.account?.name ?? '').toLowerCase().includes(q) ||

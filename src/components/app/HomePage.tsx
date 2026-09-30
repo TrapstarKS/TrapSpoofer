@@ -4,12 +4,14 @@ import {
   Check,
   CheckCircle2,
   ClipboardPaste,
+  Download,
   FileBox,
   History,
   Loader2,
   MonitorPlay,
   PartyPopper,
   ScanSearch,
+  SkipForward,
   UserRound,
   XCircle,
 } from 'lucide-react';
@@ -20,7 +22,7 @@ import { useStudioConnectionState } from '../../contexts/StudioConnectionContext
 import { cn } from '../../lib/utils';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSpooferStore } from '../../stores/spooferStore';
-import type { SpoofJob } from '../../utils/jobTypes';
+import { countSpoofJobResults, type SpoofJob } from '../../utils/jobTypes';
 import { isTauriRuntime } from '../../utils/tauriRuntime';
 import { Button } from '../ui/button';
 import { useActiveTarget } from './hooks';
@@ -353,9 +355,9 @@ function RecentJobs({ jobs }: { jobs: SpoofJob[] | null }) {
         ) : (
           <ul className="flex flex-col">
             {recent.map((job) => {
-              const total = job.assetResults?.length ?? 0;
-              const ok = job.assetResults?.filter((r) => r.success).length ?? 0;
-              const failed = job.assetResults?.filter((r) => !r.success && !r.skipped).length ?? 0;
+              const counts = countSpoofJobResults(job.assetResults ?? []);
+              const completed = counts.uploaded + counts.downloaded;
+              const issues = counts.failed + counts.cancelled;
               return (
                 <li key={job.id}>
                   <button
@@ -363,10 +365,12 @@ function RecentJobs({ jobs }: { jobs: SpoofJob[] | null }) {
                     onClick={() => goTo('history')}
                     className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-left outline-none hover:bg-bg-elevated/50 focus-visible:ring-2 focus-visible:ring-ring/40"
                   >
-                    {failed === 0 ? (
+                    {issues === 0 && completed > 0 ? (
                       <CheckCircle2 size={16} className="shrink-0 text-success" />
-                    ) : ok === 0 ? (
+                    ) : issues > 0 && completed === 0 ? (
                       <XCircle size={16} className="shrink-0 text-danger" />
+                    ) : completed === 0 ? (
+                      <SkipForward size={16} className="shrink-0 text-warning" />
                     ) : (
                       <CheckCircle2 size={16} className="shrink-0 text-warning" />
                     )}
@@ -380,13 +384,31 @@ function RecentJobs({ jobs }: { jobs: SpoofJob[] | null }) {
                       <p className="truncate text-[11.5px] text-text-muted">
                         {formatRelative(job.startTime, lang)} ·{' '}
                         {t('home.jobs.summary')
-                          .replace('{ok}', String(ok))
-                          .replace('{total}', String(total))}
+                          .replace('{ok}', String(counts.uploaded))
+                          .replace('{total}', String(counts.total))}
                       </p>
                     </div>
-                    {failed > 0 && (
+                    {counts.downloaded > 0 && (
+                      <Badge>
+                        <Download size={11} />
+                        {counts.downloaded}
+                      </Badge>
+                    )}
+                    {counts.skipped > 0 && (
+                      <Badge tone="warn">
+                        <SkipForward size={11} />
+                        {counts.skipped}
+                      </Badge>
+                    )}
+                    {counts.failed > 0 && (
                       <Badge tone="error">
-                        {t('home.jobs.failed').replace('{count}', String(failed))}
+                        {t('home.jobs.failed').replace('{count}', String(counts.failed))}
+                      </Badge>
+                    )}
+                    {counts.cancelled > 0 && (
+                      <Badge tone="warn">
+                        <XCircle size={11} />
+                        {t('flow.stage.cancelled')} {counts.cancelled}
                       </Badge>
                     )}
                   </button>
@@ -405,18 +427,18 @@ function QuickStats({ jobs }: { jobs: SpoofJob[] | null }) {
   const mappings = useSpooferStore((s) => s.lastReplacements);
   const stats = useMemo(() => {
     const list = jobs ?? [];
-    let assets = 0;
-    let ok = 0;
+    let uploaded = 0;
+    let failed = 0;
     for (const job of list) {
-      for (const r of job.assetResults ?? []) {
-        assets += 1;
-        if (r.success) ok += 1;
-      }
+      const counts = countSpoofJobResults(job.assetResults ?? []);
+      uploaded += counts.uploaded;
+      failed += counts.failed;
     }
+    const attemptedUploads = uploaded + failed;
     return {
       jobs: list.length,
-      ok,
-      rate: assets > 0 ? Math.round((ok / assets) * 100) : null,
+      ok: uploaded,
+      rate: attemptedUploads > 0 ? Math.round((uploaded / attemptedUploads) * 100) : null,
     };
   }, [jobs]);
   const mappingCount = useMemo(() => Object.keys(mappings).length, [mappings]);

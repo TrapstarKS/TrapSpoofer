@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_APP_CONFIG, useConfigStore } from '../stores/configStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSpooferStore } from '../stores/spooferStore';
+import { useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { useUpdaterStore } from '../stores/updaterStore';
+import { getStudioPlaceIdFallback } from '../utils/apiClient';
 import { validateCookieProfile } from '../utils/robloxProfiles';
 import { profileUploadAuth, resolveUploadAuth, uploadAuthNoticeKey } from '../utils/uploadAuth';
 import { getActiveTarget, runSpoof } from './spoofer';
@@ -82,8 +84,10 @@ describe('upload job authentication', () => {
       lastReplacements: {},
     });
     useSessionStore.getState().clear();
+    useStudioSessionsStore.setState({ sessions: [], selectedSessionId: null });
     useUpdaterStore.setState({ status: 'idle' });
     vi.mocked(invoke).mockResolvedValue(null);
+    vi.mocked(getStudioPlaceIdFallback).mockResolvedValue('');
     vi.mocked(validateCookieProfile).mockResolvedValue({
       user: { id: 111, name: 'fixture', displayName: 'Fixture' },
       cookie: config.spoofing.cookie,
@@ -142,6 +146,82 @@ describe('upload job authentication', () => {
         .mock.calls.some(([command]) => command === 'detect_opencloud_api_key_owner'),
     ).toBe(false);
   });
+
+  it.each([
+    {
+      sourceName: 'Studio source',
+      source: {
+        kind: 'studio' as const,
+        label: 'A',
+        studioSessionId: 'window-a',
+        placeId: null,
+        scannedAt: 1,
+      },
+    },
+    {
+      sourceName: 'manual source',
+      source: {
+        kind: 'manual' as const,
+        label: 'IDs',
+        placeId: null,
+        scannedAt: 1,
+      },
+    },
+  ])(
+    'keeps window A for place fallback with $sourceName when selection changes during preparation',
+    async ({ source }) => {
+      useStudioSessionsStore.setState({
+        selectedSessionId: 'window-a',
+        sessions: [
+          {
+            sessionId: 'window-a',
+            synced: true,
+            studioPlaceId: '11111111',
+            studioPlaceName: 'A',
+            scanStatus: null,
+          },
+          {
+            sessionId: 'window-b',
+            synced: true,
+            studioPlaceId: '22222222',
+            studioPlaceName: 'B',
+            scanStatus: null,
+          },
+        ],
+      });
+      useSessionStore.getState().setSource(source, []);
+      vi.mocked(getStudioPlaceIdFallback).mockImplementation(async (sessionId) => {
+        const resolvedSessionId = sessionId ?? useStudioSessionsStore.getState().selectedSessionId;
+        return resolvedSessionId === 'window-a' ? '11111111' : '22222222';
+      });
+
+      let resolveProfile!: (profile: Awaited<ReturnType<typeof validateCookieProfile>>) => void;
+      vi.mocked(validateCookieProfile).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveProfile = resolve;
+          }),
+      );
+
+      const running = runSpoof({ assetIds: ['12345678'] });
+      await vi.waitFor(() => expect(validateCookieProfile).toHaveBeenCalledOnce());
+      useStudioSessionsStore.setState({ selectedSessionId: 'window-b' });
+      resolveProfile({
+        user: { id: 111, name: 'fixture', displayName: 'Fixture' },
+        cookie: 's'.repeat(60),
+      });
+
+      await expect(running).resolves.toMatchObject({ ok: true });
+      expect(getStudioPlaceIdFallback).toHaveBeenCalledWith('window-a');
+      expect(useSpooferStore.getState().jobTarget?.studioSessionId).toBe('window-a');
+      expect(invoke).toHaveBeenCalledWith(
+        'run_spoofer_action',
+        expect.objectContaining({
+          data: expect.objectContaining({ forcePlaceIds: '11111111' }),
+        }),
+      );
+    },
+  );
 
   it('reports an explicitly selected rejected key with guidance instead of changing authentication silently', async () => {
     useConfigStore.setState({

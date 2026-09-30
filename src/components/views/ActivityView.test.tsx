@@ -33,6 +33,13 @@ const job = {
   logFilePath: '',
 };
 
+const cancelledJob = {
+  ...job,
+  id: '2',
+  account: { id: '2', name: 'CancelledUser', avatarUrl: '' },
+  assetResults: [{ id: '777777', name: 'Cancelled', success: false, cancelled: true }],
+};
+
 describe('ActivityView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -59,5 +66,15 @@ describe('ActivityView', () => {
     vi.mocked(invoke).mockResolvedValue([]);
     render(<ActivityView />);
     expect(await screen.findByText('history.empty')).toBeInTheDocument();
+  });
+
+  it('does not include cancelled jobs in the failed-only filter', async () => {
+    vi.mocked(invoke).mockResolvedValue([cancelledJob]);
+    render(<ActivityView />);
+
+    await screen.findByText('history.to');
+    fireEvent.click(screen.getByText('history.filter.failed'));
+
+    expect(await screen.findByText('history.noMatch')).toBeInTheDocument();
   });
 });

@@ -490,6 +490,10 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
   const spoofer = useSpooferStore.getState();
   const { config, accountSecrets } = useConfigStore.getState();
   const session = useSessionStore.getState();
+  const studioSessionId =
+    session.source?.kind === 'file'
+      ? null
+      : (session.source?.studioSessionId ?? useStudioSessionsStore.getState().selectedSessionId);
   const warnings: string[] = [];
 
   if (spoofer.isSpoofing) {
@@ -607,11 +611,7 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
     lastJobTarget: null,
     jobTarget: {
       source: session.source,
-      studioSessionId:
-        session.source?.kind === 'file'
-          ? null
-          : (session.source?.studioSessionId ??
-            useStudioSessionsStore.getState().selectedSessionId),
+      studioSessionId,
       animationMode: config.spoofing.animationMode,
       autoApply: session.autoApplyOverride ?? config.general.autoApplyResults,
       userId: target.userId,
@@ -665,7 +665,9 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
     const placeIdFallback =
       session.source?.placeId && session.source.placeId !== '0'
         ? session.source.placeId
-        : await getStudioPlaceIdFallback().catch(() => '');
+        : studioSessionId
+          ? await getStudioPlaceIdFallback(studioSessionId).catch(() => '')
+          : '';
     const forced = useSpooferStore.getState().assetForcePlaceIds || {};
     const forcePlaceIds = Array.from(
       new Set(
