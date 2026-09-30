@@ -8,6 +8,7 @@ import {
   downloadAppUpdate,
   installAppUpdate,
 } from '../../../services/updater';
+import { useConfigStore } from '../../../stores/configStore';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { useSpooferStore } from '../../../stores/spooferStore';
 import { useUpdaterStore } from '../../../stores/updaterStore';
@@ -18,6 +19,7 @@ export default function UpdatesCard() {
   const { t } = useLanguage();
   const { config, updateConfig } = useConfig();
   const update = useUpdaterStore();
+  useConfigStore((state) => state.importingStudioAccounts);
   useSpooferStore((state) =>
     [
       state.isPreparingJob,

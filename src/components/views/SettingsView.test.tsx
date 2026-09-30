@@ -44,7 +44,12 @@ vi.mock('../../contexts/ConfigContext', () => ({
 }));
 
 vi.mock('../../stores/configStore', () => ({
-  useConfigStore: vi.fn(() => ({})),
+  useConfigStore: Object.assign(
+    vi.fn(() => ({})),
+    {
+      getState: () => ({ importingStudioAccounts: false }),
+    },
+  ),
 }));
 
 globalThis.ResizeObserver = class ResizeObserver {
