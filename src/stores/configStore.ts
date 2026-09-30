@@ -91,6 +91,8 @@ export const AppConfigSchema = z.object({
         isUploader: z.boolean().default(false),
         cookieValidated: z.boolean().optional(),
         apiKeyValidated: z.boolean().optional(),
+        groupApiKeyValidated: z.boolean().optional(),
+        uploadAuthMode: z.enum(['auto', 'session']).optional(),
       }),
     )
     .default([]),

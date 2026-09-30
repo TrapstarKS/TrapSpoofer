@@ -6,6 +6,7 @@ import { cn } from '../../../lib/utils';
 import { activateProfile, setUploadGroup } from '../../../services/spoofer';
 import { useConfigStore } from '../../../stores/configStore';
 import { loadCachedGroups, normalizeId } from '../../../utils/robloxProfiles';
+import UploadAuthNotice from '../../shared/UploadAuthNotice';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
@@ -111,7 +112,7 @@ export default function ProfileCard({
   const keyChip: Record<typeof key, [ChipTone, string]> = {
     ok: ['ok', t('profiles.chip.keyOk')],
     invalid: ['bad', t('profiles.chip.keyInvalid')],
-    missing: ['warn', t('profiles.chip.keyMissing')],
+    missing: ['neutral', t('profiles.chip.keyMissing')],
     unchecked: ['neutral', t('profiles.chip.keyUnchecked')],
   };
 
@@ -273,6 +274,10 @@ export default function ProfileCard({
               accountId={profile.id}
               value={targetValue}
               onChange={(g) => void handleTarget(g)}
+            />
+            <UploadAuthNotice
+              accountId={profile.id}
+              groupId={targetValue === 'none' ? null : targetValue}
             />
           </div>
 

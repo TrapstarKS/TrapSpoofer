@@ -33,11 +33,6 @@ export const en = {
         'Log in with your Roblox account (or paste the cookie). It is used to download the original assets.',
       connectAccount: 'Connect account',
       manageAccounts: 'Manage accounts',
-      apiKey: 'Open Cloud API Key configured',
-      apiKeyOk: 'The API Key is set — uploads will go to your account or group.',
-      apiKeyHelp:
-        'Create a key at create.roblox.com with the “Assets: read + write” permission and paste it in Accounts. It is used to upload the new copies.',
-      addApiKey: 'Add API Key',
       plugin: 'Studio plugin connected',
       pluginOk: 'The plugin is connected — new IDs can be applied automatically.',
       pluginOkPlace: 'Connected to “{place}”.',
@@ -100,11 +95,6 @@ export const pt = {
         'Entre com a sua conta Roblox (ou cole o cookie). Ela é usada para baixar os assets originais.',
       connectAccount: 'Conectar conta',
       manageAccounts: 'Gerenciar contas',
-      apiKey: 'API Key Open Cloud configurada',
-      apiKeyOk: 'A API Key está configurada — os uploads vão para a sua conta ou grupo.',
-      apiKeyHelp:
-        'Crie uma chave em create.roblox.com com a permissão “Assets: read + write” e cole em Contas. Ela é usada para enviar as novas cópias.',
-      addApiKey: 'Adicionar API Key',
       plugin: 'Plugin do Studio conectado',
       pluginOk: 'O plugin está conectado — os novos IDs podem ser aplicados automaticamente.',
       pluginOkPlace: 'Conectado a “{place}”.',

@@ -528,8 +528,9 @@ pub async fn publish_asset_with_hooks(
         let mut tried_type_fallback = false;
         let mut tried_name_fallback = false;
         let mut csrf_retries = 0;
+        const MAX_UPLOAD_ATTEMPTS: u32 = 300;
 
-        for attempt in 0..300 {
+        for attempt in 0..MAX_UPLOAD_ATTEMPTS {
             wait_rate_limit(RateLimitBucket::Upload).await;
 
             let file_part = if let Some(buf) = &fallback_buffer {
@@ -704,6 +705,10 @@ pub async fn publish_asset_with_hooks(
             }
 
             if status_code == 429 {
+                if attempt + 1 == MAX_UPLOAD_ATTEMPTS {
+                    upload_error = Some("Roblox continued limiting upload requests after all retry attempts. Try again later.".into());
+                    break;
+                }
                 let retry_after_ms =
                     crate::utils::extract_retry_after(&resp, Some(attempt)).unwrap_or(30_000);
                 let jitter_ms: u64 = {
@@ -717,9 +722,10 @@ pub async fn publish_asset_with_hooks(
                     std::time::Duration::from_millis(sleep_duration),
                 );
                 let message = format!(
-                    "Roblox upload rate limit hit for {name}; backing off for {} before retry {} of 100.",
+                    "Roblox upload rate limit hit for {name} using {}; backing off for {} before attempt {} of {MAX_UPLOAD_ATTEMPTS}.",
+                    upload_auth.label(),
                     format_wait_seconds(sleep_duration),
-                    attempt + 1
+                    attempt + 2
                 );
                 if crate::commands::spoofer::should_log_rate_limit_warning("upload") {
                     emit_spoofer_log(&app, "warn", &message);

@@ -199,13 +199,9 @@ export const en = {
         title: 'No assets selected',
         help: 'Go back to the review step and select at least one asset.',
       },
-      no_api_key: {
-        title: 'Missing Open Cloud API Key',
-        help: 'Create a key with the “Assets: read + write” permission at create.roblox.com and add it in Accounts.',
-      },
       bad_api_key: {
         title: 'Roblox rejected the API Key',
-        help: 'Check that the key is still active, has “Assets: read + write” and allows your IP. Update it in Accounts.',
+        help: 'Choose Roblox session in upload authentication to continue without a key, or check the saved key, its Assets permission and authorized IPs.',
       },
       quota: {
         title: 'Audio quota exceeded',
@@ -483,13 +479,9 @@ export const pt = {
         title: 'Nenhum asset selecionado',
         help: 'Volte para a revisão e selecione pelo menos um asset.',
       },
-      no_api_key: {
-        title: 'Falta a API Key Open Cloud',
-        help: 'Crie uma chave com a permissão “Assets: read + write” em create.roblox.com e adicione em Contas.',
-      },
       bad_api_key: {
         title: 'O Roblox recusou a API Key',
-        help: 'Confira se a chave ainda está ativa, tem “Assets: read + write” e libera o seu IP. Atualize em Contas.',
+        help: 'Escolha a sessão Roblox na autenticação do envio para continuar sem chave, ou confira a chave salva, a permissão Assets e os IPs autorizados.',
       },
       quota: {
         title: 'Cota de áudio excedida',

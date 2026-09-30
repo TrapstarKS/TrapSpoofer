@@ -187,6 +187,7 @@ const StatusRow = memo(function StatusRow({
 }) {
   const { t } = useLanguage();
   const label = bucket === 'queued' ? t('flow.stage.queued') : t(`flow.stage.${stage}`);
+  const waiting = /rate.?limit|backing off/i.test(message ?? '');
   return (
     <div className="mx-2 flex h-[40px] items-center gap-3 rounded-lg px-3 hover:bg-bg-elevated/40">
       <StageIcon stage={stage} bucket={bucket} />
@@ -197,10 +198,11 @@ const StatusRow = memo(function StatusRow({
       <span
         className={cn(
           'max-w-[45%] truncate text-right text-[12px]',
-          stage === 'error' ? 'text-danger' : 'text-text-muted',
+          stage === 'error' ? 'text-danger' : waiting ? 'text-warning' : 'text-text-muted',
         )}
+        title={message || label}
       >
-        {stage === 'error' && message ? message : label}
+        {(stage === 'error' || waiting) && message ? message : label}
       </span>
     </div>
   );

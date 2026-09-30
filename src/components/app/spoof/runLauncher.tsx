@@ -73,9 +73,7 @@ export function RunFailureAlert({
 }) {
   const { t } = useLanguage();
   const setStep = useFlowStore((s) => s.setStep);
-  const toAccounts = ['no_profile', 'bad_cookie', 'no_api_key', 'bad_api_key'].includes(
-    failure.reason,
-  );
+  const toAccounts = ['no_profile', 'bad_cookie', 'bad_api_key'].includes(failure.reason);
 
   return (
     <div

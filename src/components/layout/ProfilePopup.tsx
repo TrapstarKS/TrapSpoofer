@@ -8,7 +8,7 @@ import { useConfigStore } from '../../stores/configStore';
 import { loadCachedGroups, loadCachedUsers, normalizeId } from '../../utils/robloxProfiles';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import AddProfileDialog from '../views/accounts/AddProfileDialog';
-import { keyStatus, sessionStatus } from '../views/accounts/profileActions';
+import { profileNeedsAttention } from '../views/accounts/profileActions';
 import { ProfileAvatar, UploadTargetSelect } from '../views/accounts/ProfileBits';
 
 export default function ProfilePopup({ collapsed = false }: { collapsed?: boolean }) {
@@ -16,7 +16,7 @@ export default function ProfilePopup({ collapsed = false }: { collapsed?: boolea
   const accounts = useConfigStore((s) => s.config.accounts);
   const selectedUser = useConfigStore((s) => s.config.spoofing.selectedUser);
   const selectedGroup = useConfigStore((s) => s.config.spoofing.selectedGroup);
-  const accountSecrets = useConfigStore((s) => s.accountSecrets);
+  useConfigStore((s) => s.accountSecrets);
   const secretsLoaded = useConfigStore((s) => s.secretsLoaded);
   const updateConfig = useConfigStore((s) => s.updateConfig);
   const [open, setOpen] = useState(false);
@@ -34,9 +34,7 @@ export default function ProfilePopup({ collapsed = false }: { collapsed?: boolea
   const needsAttention = (id: string) => {
     const profile = accounts.find((a) => a.id === id);
     if (!profile || !secretsLoaded) return false;
-    const s = sessionStatus(profile, accountSecrets[id]?.cookie);
-    const k = keyStatus(profile, accountSecrets[id]?.apiKey);
-    return s === 'expired' || s === 'missing' || k === 'invalid' || k === 'missing';
+    return profileNeedsAttention(profile);
   };
 
   const targetLabel = (() => {

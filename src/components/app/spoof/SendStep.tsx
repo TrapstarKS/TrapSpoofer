@@ -22,6 +22,7 @@ import { useConfigStore } from '../../../stores/configStore';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { useSpooferStore } from '../../../stores/spooferStore';
 import type { RobloxGroup } from '../../../utils/robloxProfiles';
+import UploadAuthNotice from '../../shared/UploadAuthNotice';
 import { Button } from '../../ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select';
 import { Switch } from '../../ui/switch';
@@ -259,6 +260,9 @@ function SendForm() {
       </Panel>
 
       <TargetCard />
+      {!downloadOnly && hasTarget && (
+        <UploadAuthNotice accountId={target.userId} groupId={target.groupId} />
+      )}
 
       {/* Options */}
       <Panel className="divide-y divide-border-subtle/70">

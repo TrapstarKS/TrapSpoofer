@@ -37,7 +37,7 @@ describe('AccountsView', () => {
     render(<AccountsView />);
     expect(screen.getByText('Pedro')).toBeInTheDocument();
     expect(screen.getByText('Sessão ok')).toBeInTheDocument();
-    expect(screen.getByText('API Key faltando')).toBeInTheDocument();
+    expect(screen.getByText('API Key opcional')).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText('Remover'));
     await act(async () => {

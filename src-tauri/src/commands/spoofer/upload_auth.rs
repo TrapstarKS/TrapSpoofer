@@ -30,6 +30,13 @@ impl UploadAuth {
         format!("{}assets", self.prefix())
     }
 
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::ApiKey(_) => "Open Cloud API key",
+            Self::Cookie { .. } => "Roblox session (no API key)",
+        }
+    }
+
     pub fn operation_url(&self, path: &str) -> Result<String, String> {
         let path = path.trim_start_matches('/');
         let path = path
@@ -89,7 +96,7 @@ impl UploadAuth {
 
     pub fn authorization_error(&self, status: u16) -> String {
         match self {
-            Self::ApiKey(_) => format!("Upload authorization failed (HTTP {status}). Check the Open Cloud API key, asset write permission and creator access."),
+            Self::ApiKey(_) => format!("Upload authorization failed (HTTP {status}). Choose Roblox session in upload authentication to continue without a key, or check the saved API key, asset write permission and creator access."),
             Self::Cookie { .. } if status == 401 => "Your Roblox session expired. Sign in again before uploading.".into(),
             Self::Cookie { .. } => "Roblox denied this upload. The signed-in account needs permission to create assets for the selected user or group.".into(),
         }
@@ -99,6 +106,44 @@ impl UploadAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_keys_use_session_auth_for_upload_and_polling() {
+        for api_key in [None, Some(""), Some("   ")] {
+            let auth = UploadAuth::new(api_key, "synthetic-session", "csrf").expect("session");
+            assert!(matches!(auth, UploadAuth::Cookie { .. }));
+            let request = auth
+                .apply(
+                    reqwest::Client::new()
+                        .get(auth.operation_url("operations/test-1").expect("path")),
+                )
+                .build()
+                .expect("request");
+            assert!(!request.headers().contains_key("x-api-key"));
+            assert_eq!(request.headers()["x-csrf-token"], "csrf");
+            assert_eq!(request.url().path(), "/assets/user-auth/v1/operations/test-1");
+        }
+        assert!(UploadAuth::new(None, "", "").is_err());
+    }
+
+    #[test]
+    fn csrf_refresh_requires_a_new_token_from_a_forbidden_response() {
+        let response = reqwest::Response::from(
+            axum::http::Response::builder()
+                .status(403)
+                .header("x-csrf-token", "refreshed")
+                .body("")
+                .expect("response"),
+        );
+        let mut auth = UploadAuth::new(None, "synthetic-session", "old").expect("session");
+        assert!(auth.refresh_csrf(&response));
+        assert!(!auth.refresh_csrf(&response));
+        let request =
+            auth.apply(reqwest::Client::new().post(auth.upload_url())).build().expect("request");
+        assert_eq!(request.headers()["x-csrf-token"], "refreshed");
+        let mut key = UploadAuth::new(Some("synthetic-key"), "", "").expect("key");
+        assert!(!key.refresh_csrf(&response));
+    }
 
     #[test]
     fn keeps_cookie_and_key_credentials_separate() {

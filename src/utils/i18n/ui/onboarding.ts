@@ -17,15 +17,16 @@ export const en = {
       how3: 'Replaces the old IDs with the new ones directly in Studio.',
       language: 'Language',
       start: 'Get started',
-      time: 'Takes about 2 minutes.',
+      time: 'You can change these settings later.',
     },
     profile: {
       title: 'Create your profile',
       body: 'The new copies are uploaded to this account. You can add more accounts later on the Accounts page.',
       ready: 'Profile ready: {name}',
-      readyBody: 'This profile is active and will receive the uploads.',
-      missingKey: '{name} is active, but still needs an API key to upload.',
-      fixLater: 'You can finish it later on the Accounts page.',
+      readyBody:
+        'This profile is active and can publish with its saved Roblox session. Open Cloud keys are optional.',
+      sessionProblem: '{name} needs a valid Roblox session before it can publish.',
+      fixLater: 'Reconnect the account on the Accounts page.',
       addAnother: 'Set up another account',
     },
     studio: {
@@ -70,15 +71,16 @@ export const pt = {
       how3: 'Substitui os IDs antigos pelos novos direto no Studio.',
       language: 'Idioma',
       start: 'Começar',
-      time: 'Leva uns 2 minutos.',
+      time: 'Você pode mudar estas configurações depois.',
     },
     profile: {
       title: 'Crie seu perfil',
       body: 'As novas cópias são enviadas para esta conta. Você pode adicionar outras contas depois, na página Contas.',
       ready: 'Perfil pronto: {name}',
-      readyBody: 'Este perfil está ativo e vai receber os envios.',
-      missingKey: '{name} está ativo, mas ainda precisa de uma API Key para enviar.',
-      fixLater: 'Você pode terminar isso depois na página Contas.',
+      readyBody:
+        'Este perfil está ativo e pode publicar com a sessão Roblox salva. API Keys do Open Cloud são opcionais.',
+      sessionProblem: '{name} precisa de uma sessão Roblox válida antes de publicar.',
+      fixLater: 'Reconecte a conta na página Contas.',
       addAnother: 'Configurar outra conta',
     },
     studio: {

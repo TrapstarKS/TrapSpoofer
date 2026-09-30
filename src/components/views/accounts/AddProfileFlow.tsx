@@ -10,7 +10,7 @@ import {
   PartyPopper,
   ShieldAlert,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { cn } from '../../../lib/utils';
@@ -116,6 +116,8 @@ export default function AddProfileFlow({
     const active = config.spoofing.selectedUser;
     return !active || active === 'none' || !config.accounts.some((a) => a.id === active);
   });
+  const useNowExplicit = useRef(false);
+  const studioSelectionSnapshot = useRef<{ user: string; group: string } | null>(null);
   const [finishing, setFinishing] = useState(false);
 
   const acceptSession = async (result: { user: RobloxUserInfo; cookie: string }) => {
@@ -127,12 +129,18 @@ export default function AddProfileFlow({
     const existingGroupKey = useConfigStore.getState().accountSecrets[id]?.groupApiKey ?? '';
     setGroupKey(existingGroupKey);
     setGroupOpen(Boolean(existingGroupKey));
+    setStep('done');
   };
 
   const handleStudio = async () => {
     setDetecting(true);
     setNotFound(false);
     setCookieError(null);
+    const beforeImport = useConfigStore.getState().config.spoofing;
+    studioSelectionSnapshot.current = {
+      user: beforeImport.selectedUser,
+      group: beforeImport.selectedGroup,
+    };
     try {
       const result = await importStudioAccounts();
       const id = result.currentAccountId ?? result.importedIds[0] ?? null;
@@ -149,6 +157,9 @@ export default function AddProfileFlow({
       const existingGroupKey = useConfigStore.getState().accountSecrets[id]?.groupApiKey ?? '';
       setGroupKey(existingGroupKey);
       setGroupOpen(Boolean(existingGroupKey));
+      const current = useConfigStore.getState().config.spoofing;
+      setUseNow(current.selectedUser === id);
+      useNowExplicit.current = false;
       setStep('done');
     } catch {
       setNotFound(true);
@@ -214,11 +225,32 @@ export default function AddProfileFlow({
     }
     setFinishing(true);
     try {
-      if (useNow) await activateProfile(profileId, null);
+      let activated = false;
+      if (useNow) {
+        const current = useConfigStore.getState().config.spoofing;
+        const snapshot = studioSelectionSnapshot.current;
+        const selectionChangedSinceImportStarted = Boolean(
+          snapshot &&
+          (current.selectedUser !== snapshot.user || current.selectedGroup !== snapshot.group),
+        );
+        const mayActivate =
+          useNowExplicit.current ||
+          current.selectedUser === profileId ||
+          !selectionChangedSinceImportStarted;
+        if (mayActivate) {
+          await activateProfile(
+            profileId,
+            current.selectedUser === profileId && current.selectedGroup !== 'none'
+              ? current.selectedGroup
+              : null,
+          );
+          activated = true;
+        }
+      }
       const name = user?.displayName || user?.name || profileId;
       window.ismLog?.(
         'success',
-        useNow ? tf('profiles.toast.activated', { name }) : tf('profiles.toast.added', { name }),
+        activated ? tf('profiles.toast.activated', { name }) : tf('profiles.toast.added', { name }),
         true,
       );
     } finally {
@@ -329,7 +361,7 @@ export default function AddProfileFlow({
             ) : (
               <span />
             )}
-            <Button disabled={!profileId} onClick={() => setStep('key')}>
+            <Button disabled={!profileId} onClick={() => setStep('done')}>
               {t('profiles.dialog.continue')}
               <ArrowRight />
             </Button>
@@ -484,9 +516,19 @@ export default function AddProfileFlow({
             )}
           </div>
           <label className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-base/50 px-3 py-2 text-[13px] text-text-primary cursor-pointer">
-            <Switch checked={useNow} onCheckedChange={setUseNow} />
+            <Switch
+              checked={useNow}
+              onCheckedChange={(checked) => {
+                useNowExplicit.current = true;
+                setUseNow(checked);
+              }}
+            />
             {t('profiles.dialog.useNow')}
           </label>
+          <Button variant="outline" className="w-full" onClick={() => setStep('key')}>
+            <KeyRound />
+            {t('profiles.dialog.addOptionalKey')}
+          </Button>
           <Button
             size="lg"
             className="h-10 w-full font-semibold"

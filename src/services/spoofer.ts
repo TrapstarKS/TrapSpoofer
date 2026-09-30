@@ -26,6 +26,7 @@ import {
 import { appendSpoofingLog } from '../utils/spoofingLogs';
 import { triggerStudioScan } from '../utils/studioScan';
 import { isTauriRuntime } from '../utils/tauriRuntime';
+import { profileUploadAuth, type UploadAuthMethod } from '../utils/uploadAuth';
 import {
   type AssetOwner,
   type AssetStores,
@@ -252,6 +253,7 @@ export interface ActiveTarget {
   groupId: string;
   cookie: string;
   apiKey: string;
+  uploadAuthMethod: UploadAuthMethod;
   accountName: string;
   groupName: string | null;
 }
@@ -261,13 +263,7 @@ export function getActiveTarget(): ActiveTarget {
   const s = config.spoofing;
   const isGroup = s.selectedGroup !== 'none';
   const secrets = accountSecrets[s.selectedUser] ?? {};
-  const apiKey = isGroup
-    ? s.groupApiKey?.trim() ||
-      secrets.groupApiKey?.trim() ||
-      s.apiKey?.trim() ||
-      secrets.apiKey?.trim() ||
-      ''
-    : s.apiKey?.trim() || secrets.apiKey?.trim() || '';
+  const auth = profileUploadAuth(config, accountSecrets, s.selectedUser, s.selectedGroup);
   const account = config.accounts.find((a) => a.id === s.selectedUser);
   const cachedUser = loadCachedUsers().find((u) => String(u.id) === s.selectedUser);
   const group = isGroup
@@ -279,7 +275,8 @@ export function getActiveTarget(): ActiveTarget {
     userId: s.selectedUser,
     groupId: s.selectedGroup,
     cookie: (s.cookie || secrets.cookie || '').trim(),
-    apiKey,
+    apiKey: auth.apiKey,
+    uploadAuthMethod: auth.method,
     accountName: account?.name || cachedUser?.displayName || cachedUser?.name || 'Sem perfil',
     groupName: isGroup ? group?.name || `Grupo ${s.selectedGroup}` : null,
   };
@@ -408,14 +405,7 @@ export function ownershipOf(assetId: string): boolean | undefined {
 /* ------------------------------------------------------------------ */
 
 export type RunFailure =
-  | 'busy'
-  | 'no_profile'
-  | 'bad_cookie'
-  | 'no_assets'
-  | 'no_api_key'
-  | 'bad_api_key'
-  | 'quota'
-  | 'launch_failed';
+  'busy' | 'no_profile' | 'bad_cookie' | 'no_assets' | 'bad_api_key' | 'quota' | 'launch_failed';
 
 export type RunResult =
   | { ok: true; count: number; warnings: string[] }
@@ -589,7 +579,7 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
         return {
           ok: false,
           reason: 'bad_api_key',
-          message: owner.message || serviceText('apiKeyRejected'),
+          message: serviceText('apiKeyRejected'),
         };
       }
       if (

@@ -88,7 +88,7 @@ export const fr: TranslationTree = {
     selectPlaceholder: "Sélectionner les types d'asset...",
     cookie: 'Cookie Roblox',
     apiKey: 'Clé API Open Cloud',
-    apiKeyPlaceholder: "Requise pour les uploads d'animations",
+    apiKeyPlaceholder: 'Facultative pour les envois pris en charge',
     openApiDashboard: 'Ouvrir les identifiants API Open Cloud',
     downloadPath: 'Chemin de Téléchargement',
     enableSpoofing: "Activer l'Usurpation",
@@ -324,7 +324,7 @@ export const fr: TranslationTree = {
     cookieLabel: 'Cookie ROBLOSECURITY',
     cookiePlaceholder: '_|WARNING:-DO-NOT-SHARE-THIS...',
     apiKeyLabel: 'Clé API Open Cloud (Facultatif)',
-    apiKeyPlaceholder: 'Pour téléverser des ressources...',
+    apiKeyPlaceholder: 'Clé Open Cloud facultative...',
     useForDownloading: 'Utiliser pour le téléchargement',
     useForDownloadingDesc:
       'Sera utilisé pour télécharger des ressources. Inclut un repli si la limite de débit est atteinte.',

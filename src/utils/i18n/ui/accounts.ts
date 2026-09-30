@@ -40,7 +40,7 @@ export const en = {
       editKeys: 'Edit keys',
       hideKeys: 'Hide keys',
       groupKeyHint:
-        'Uploading to a group? Create a key owned by the group and paste it here (optional).',
+        'Optional: add a key owned by the group if you prefer key-based publishing for that group.',
       id: 'ID {id}',
     },
     chip: {
@@ -50,7 +50,7 @@ export const en = {
       sessionUnchecked: 'Session not checked',
       keyOk: 'API key ok',
       keyInvalid: 'API key rejected',
-      keyMissing: 'API key missing',
+      keyMissing: 'API key optional',
       keyUnchecked: 'API key not checked',
       groupKey: 'Group key',
     },
@@ -58,7 +58,7 @@ export const en = {
       title: 'Add profile',
       reconnectTitle: 'Reconnect profile',
       stepSession: 'Sign in',
-      stepKey: 'API key',
+      stepKey: 'Optional key',
       stepDone: 'Done',
       sessionTitle: 'Connect your Roblox account',
       sessionBody:
@@ -78,22 +78,24 @@ export const en = {
       invalidCookie: 'Roblox rejected this cookie. It may be expired or incomplete.',
       found: 'Signed in as',
       continue: 'Continue',
-      keyTitle: 'Create an Open Cloud API key',
-      keyBody: 'The key lets the app upload the new copies of the assets. Create one in 3 steps:',
+      keyTitle: 'Optional Open Cloud API key',
+      keyBody:
+        'You can publish supported assets with your saved Roblox session. Add an Open Cloud key only if you want to use key-based publishing where supported.',
       keyStep1: 'Open the Creator Hub credentials page and click "Create API Key".',
       keyStep2:
         'Under "Access Permissions", add the "Assets" API with Read and Write. Pick yourself as the owner (or the group, if you will upload to a group).',
       keyStep3:
-        'Under "Security", add the IP 0.0.0.0/0, save and copy the key (it is shown only once).',
+        'Under "Security", allow only the IP addresses you authorize, then save and copy the key (it is shown only once).',
       openDashboard: 'Open credentials page',
       keyLabel: 'API key',
       keyPlaceholder: 'Paste the key here',
       verifyKey: 'Verify and save',
-      keyInvalid: 'Roblox rejected this key. Check the "Assets" permission and the IP 0.0.0.0/0.',
+      keyInvalid:
+        'Roblox rejected this key. Check the Assets permission and your authorized IP settings.',
       keyOtherOwner:
         'This key belongs to another account ({owner}). It only works if that account can upload for this profile — double check.',
       keyUnverified: 'Could not confirm the key right now ({message}). It was saved anyway.',
-      groupKeyToggle: 'I also want to upload to a group',
+      groupKeyToggle: 'Add a separate optional Open Cloud key for this group',
       groupKeyLabel: 'Group API key (optional)',
       skip: 'Skip for now',
       skipHint: 'The API key is optional for supported session-based uploads.',
@@ -101,6 +103,7 @@ export const en = {
       doneBody:
         '{name} was saved. You can change where uploads go on the profile card at any time.',
       doneNoKey: 'No API key was added. Supported uploads can use the saved Roblox session.',
+      addOptionalKey: 'Add optional Open Cloud key',
       useNow: 'Use this profile now',
       finish: 'Finish',
       back: 'Back',
@@ -168,7 +171,7 @@ export const pt = {
       editKeys: 'Editar chaves',
       hideKeys: 'Ocultar chaves',
       groupKeyHint:
-        'Vai enviar para um grupo? Crie uma chave pertencente ao grupo e cole aqui (opcional).',
+        'Opcional: adicione uma chave pertencente ao grupo se preferir publicação por chave nesse grupo.',
       id: 'ID {id}',
     },
     chip: {
@@ -178,7 +181,7 @@ export const pt = {
       sessionUnchecked: 'Sessão não verificada',
       keyOk: 'API Key ok',
       keyInvalid: 'API Key recusada',
-      keyMissing: 'API Key faltando',
+      keyMissing: 'API Key opcional',
       keyUnchecked: 'API Key não verificada',
       groupKey: 'Chave de grupo',
     },
@@ -186,7 +189,7 @@ export const pt = {
       title: 'Adicionar perfil',
       reconnectTitle: 'Reconectar perfil',
       stepSession: 'Login',
-      stepKey: 'API Key',
+      stepKey: 'Chave opcional',
       stepDone: 'Pronto',
       sessionTitle: 'Conecte sua conta Roblox',
       sessionBody:
@@ -206,24 +209,24 @@ export const pt = {
       invalidCookie: 'O Roblox recusou este cookie. Ele pode estar expirado ou incompleto.',
       found: 'Conectado como',
       continue: 'Continuar',
-      keyTitle: 'Crie uma API Key do Open Cloud',
+      keyTitle: 'API Key opcional do Open Cloud',
       keyBody:
-        'A chave permite que o app envie as novas cópias dos assets. Crie a sua em 3 passos:',
+        'Você pode publicar assets compatíveis usando a sessão Roblox salva. Adicione uma API Key do Open Cloud apenas se quiser usar publicação por chave onde houver suporte.',
       keyStep1: 'Abra a página de credenciais do Creator Hub e clique em "Create API Key".',
       keyStep2:
         'Em "Access Permissions", adicione a API "Assets" com Read e Write. Escolha você como dono (ou o grupo, se for enviar para um grupo).',
       keyStep3:
-        'Em "Security", adicione o IP 0.0.0.0/0, salve e copie a chave (ela só aparece uma vez).',
+        'Em "Security", permita somente os endereços IP que você autoriza, salve e copie a chave (ela só aparece uma vez).',
       openDashboard: 'Abrir página de credenciais',
       keyLabel: 'API Key',
       keyPlaceholder: 'Cole a chave aqui',
       verifyKey: 'Verificar e salvar',
-      keyInvalid: 'O Roblox recusou esta chave. Confira a permissão "Assets" e o IP 0.0.0.0/0.',
+      keyInvalid: 'O Roblox recusou esta chave. Confira a permissão Assets e os IPs autorizados.',
       keyOtherOwner:
         'Esta chave pertence a outra conta ({owner}). Ela só funciona se essa conta puder enviar para este perfil — vale conferir.',
       keyUnverified:
         'Não foi possível confirmar a chave agora ({message}). Ela foi salva mesmo assim.',
-      groupKeyToggle: 'Também quero enviar para um grupo',
+      groupKeyToggle: 'Adicionar uma API Key opcional separada para este grupo',
       groupKeyLabel: 'API Key do grupo (opcional)',
       skip: 'Pular por enquanto',
       skipHint: 'A API Key é opcional para envios compatíveis usando a sessão.',
@@ -232,6 +235,7 @@ export const pt = {
         '{name} foi salvo. Você pode trocar para onde os envios vão no cartão do perfil quando quiser.',
       doneNoKey:
         'Nenhuma API Key foi adicionada. Envios compatíveis podem usar a sessão Roblox salva.',
+      addOptionalKey: 'Adicionar API Key opcional do Open Cloud',
       useNow: 'Usar este perfil agora',
       finish: 'Concluir',
       back: 'Voltar',

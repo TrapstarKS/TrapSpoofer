@@ -14,6 +14,7 @@ import {
   validateCookieProfile,
 } from '../../../utils/robloxProfiles';
 import { isTauriRuntime } from '../../../utils/tauriRuntime';
+import { profileUploadAuth } from '../../../utils/uploadAuth';
 
 export type Profile = AppConfig['accounts'][number];
 
@@ -40,10 +41,18 @@ export function keyStatus(profile: Profile, apiKey: string | undefined): KeyStat
 }
 
 export function profileNeedsAttention(profile: Profile): boolean {
-  const secrets = useConfigStore.getState().accountSecrets[profile.id];
+  const { config, accountSecrets } = useConfigStore.getState();
+  const secrets = accountSecrets[profile.id];
   const s = sessionStatus(profile, secrets?.cookie);
-  const k = keyStatus(profile, secrets?.apiKey);
-  return s === 'expired' || s === 'missing' || k === 'invalid';
+  const group =
+    config.spoofing.selectedUser === profile.id ? config.spoofing.selectedGroup : 'none';
+  const auth = profileUploadAuth(config, accountSecrets, profile.id, group);
+  return (
+    s === 'expired' ||
+    s === 'missing' ||
+    (auth.method === 'personal_key' && profile.apiKeyValidated === false) ||
+    (auth.method === 'group_key' && profile.groupApiKeyValidated === false)
+  );
 }
 
 export async function openExternal(url: string) {
@@ -173,10 +182,12 @@ export async function saveProfileGroupKey(
     const check = await checkApiKey(trimmed);
     if (check.state === 'invalid') return check;
     await store.updateAccountSecret(accountId, undefined, undefined, trimmed);
+    patchProfile(accountId, { groupApiKeyValidated: check.state === 'ok' ? true : undefined });
     await resyncIfActive(accountId);
     return check;
   }
   await store.updateAccountSecret(accountId, undefined, undefined, '');
+  patchProfile(accountId, { groupApiKeyValidated: undefined });
   await resyncIfActive(accountId);
   return null;
 }
@@ -203,17 +214,28 @@ export async function revalidateProfile(accountId: string): Promise<boolean> {
   }
   if (patch.cookieValidated !== true) ok = false;
 
-  if (secrets.apiKey?.trim()) {
+  const profile = store.config.accounts.find((account) => account.id === accountId);
+  if (secrets.apiKey?.trim() && profile?.uploadAuthMode !== 'session') {
     const check = await checkApiKey(secrets.apiKey);
     patch.apiKeyValidated =
       check.state === 'ok' ? true : check.state === 'invalid' ? false : undefined;
-    if (check.state === 'invalid') ok = false;
-  } else {
+  } else if (!secrets.apiKey?.trim()) {
     patch.apiKeyValidated = undefined;
   }
 
+  if (secrets.groupApiKey?.trim() && profile?.uploadAuthMode !== 'session') {
+    const check = await checkApiKey(secrets.groupApiKey);
+    patch.groupApiKeyValidated =
+      check.state === 'ok' ? true : check.state === 'invalid' ? false : undefined;
+  } else if (!secrets.groupApiKey?.trim()) {
+    patch.groupApiKeyValidated = undefined;
+  }
+
   patchProfile(accountId, patch);
-  return ok;
+  const refreshed = useConfigStore
+    .getState()
+    .config.accounts.find((account) => account.id === accountId);
+  return ok && Boolean(refreshed && !profileNeedsAttention(refreshed));
 }
 
 /** Remove a profile and wipe its secrets. Falls back to another profile if it was active. */

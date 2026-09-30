@@ -7,12 +7,11 @@ export const en = {
     jobBusy: 'A spoof job is already running.',
     noProfile: 'No active Roblox profile. Add or select a profile in Accounts.',
     badCookie: "The active profile's cookie expired or is invalid. Update the profile in Accounts.",
-    noApiKey:
-      'Missing the Open Cloud API key (Assets: read + write) needed to upload. Set it up in Accounts.',
     noAssets: 'No assets selected. Scan Studio, open a file or paste IDs.',
     quota:
       'You selected {count} audio file(s), but the monthly quota only allows {remaining} more.',
-    apiKeyRejected: 'Roblox rejected the API key.',
+    apiKeyRejected:
+      'Roblox rejected the selected API key. Choose Roblox session in upload authentication, replace the key, or clear it to continue without a key.',
     apiKeyOwnerMismatch:
       'The API key belongs to user {owner}, but the active profile is {profile}.',
     apiKeyPrecheckFailed: 'Could not pre-validate the API key ({error}).',
@@ -35,11 +34,10 @@ export const pt = {
     jobBusy: 'Já existe um job de spoof rodando.',
     noProfile: 'Nenhum perfil Roblox ativo. Adicione ou selecione um perfil em Contas.',
     badCookie: 'O cookie do perfil ativo expirou ou é inválido. Atualize o perfil em Contas.',
-    noApiKey:
-      'Falta a Open Cloud API Key (permissão Assets: read + write) para enviar os assets. Configure em Contas.',
     noAssets: 'Nenhum asset selecionado. Faça um scan, abra um arquivo ou cole IDs.',
     quota: 'Você selecionou {count} áudio(s), mas a cota mensal só permite mais {remaining}.',
-    apiKeyRejected: 'A API Key foi recusada pelo Roblox.',
+    apiKeyRejected:
+      'O Roblox recusou a API key selecionada. Escolha a sessão Roblox na autenticação do envio, substitua a chave ou limpe o campo para continuar sem chave.',
     apiKeyOwnerMismatch: 'A API Key pertence ao usuário {owner}, mas o perfil ativo é {profile}.',
     apiKeyPrecheckFailed: 'Não foi possível pré-validar a API Key ({error}).',
     launchFailed: 'Não foi possível iniciar o spoof: {error}',

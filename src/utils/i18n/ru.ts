@@ -94,7 +94,7 @@ export const ru: TranslationTree = {
     selectPlaceholder: 'Выберите типы ресурсов...',
     cookie: 'Cookie Roblox',
     apiKey: 'Ключ Open Cloud API',
-    apiKeyPlaceholder: 'Требуется для загрузки анимаций',
+    apiKeyPlaceholder: 'Необязательно для поддерживаемых загрузок',
     openApiDashboard: 'Открыть учётные данные Open Cloud API',
     downloadPath: 'Путь загрузки',
     enableSpoofing: 'Включить подмену',
@@ -331,7 +331,7 @@ export const ru: TranslationTree = {
     cookieLabel: 'Файл cookie ROBLOSECURITY',
     cookiePlaceholder: '_|WARNING:-DO-NOT-SHARE-THIS...',
     apiKeyLabel: 'Ключ API Open Cloud (необязательно)',
-    apiKeyPlaceholder: 'Для выгрузки ассетов...',
+    apiKeyPlaceholder: 'Необязательный ключ Open Cloud...',
     useForDownloading: 'Использовать для загрузки',
     useForDownloadingDesc:
       'Будет использоваться для загрузки ассетов. Включает резервный вариант при ограничении скорости.',

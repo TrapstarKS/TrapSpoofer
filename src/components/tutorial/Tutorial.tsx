@@ -21,7 +21,7 @@ import { useConfigStore } from '../../stores/configStore';
 import { SUPPORTED_LANGUAGES } from '../../utils/i18n';
 import { Button } from '../ui/button';
 import AddProfileFlow from '../views/accounts/AddProfileFlow';
-import { keyStatus } from '../views/accounts/profileActions';
+import { sessionStatus } from '../views/accounts/profileActions';
 import { ProfileAvatar } from '../views/accounts/ProfileBits';
 
 type StepId = 'intro' | 'profile' | 'studio' | 'done';
@@ -141,7 +141,7 @@ function ProfileStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
   const [adding, setAdding] = useState(!active);
 
   if (active && !adding) {
-    const hasKey = keyStatus(active, secrets[active.id]?.apiKey) !== 'missing';
+    const ready = sessionStatus(active, secrets[active.id]?.cookie) === 'ok';
     return (
       <div className="flex flex-col gap-5">
         <div className="space-y-1">
@@ -151,23 +151,21 @@ function ProfileStep({ onNext, onBack }: { onNext: () => void; onBack: () => voi
         <div
           className={cn(
             'flex items-center gap-3 rounded-xl border p-4',
-            hasKey
-              ? 'border-emerald-500/30 bg-emerald-500/5'
-              : 'border-amber-500/30 bg-amber-500/5',
+            ready ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/5',
           )}
         >
           <ProfileAvatar url={active.avatarUrl} name={active.name} size={44} />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-text-primary">
-              {hasKey
+              {ready
                 ? tf('welcome.profile.ready', { name: active.name })
-                : tf('welcome.profile.missingKey', { name: active.name })}
+                : tf('welcome.profile.sessionProblem', { name: active.name })}
             </p>
             <p className="text-[12px] text-text-secondary">
-              {hasKey ? t('welcome.profile.readyBody') : t('welcome.profile.fixLater')}
+              {ready ? t('welcome.profile.readyBody') : t('welcome.profile.fixLater')}
             </p>
           </div>
-          {hasKey && <CheckCircle2 size={20} className="text-emerald-500" />}
+          {ready && <CheckCircle2 size={20} className="text-emerald-500" />}
         </div>
         <div className="flex items-center justify-between gap-2">
           <Button variant="ghost" onClick={onBack}>

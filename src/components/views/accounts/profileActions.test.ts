@@ -52,4 +52,31 @@ describe('profileActions', () => {
     await expect(revalidateProfile('42')).resolves.toBe(true);
     expect(useConfigStore.getState().config.accounts[0].apiKeyValidated).toBeUndefined();
   });
+
+  it('only warns about the key selected for the current destination', () => {
+    const profile = {
+      id: '42',
+      name: 'User',
+      isDownloader: true,
+      isUploader: true,
+      cookieValidated: true,
+      apiKeyValidated: false,
+      groupApiKeyValidated: true,
+    };
+    useConfigStore.setState((state) => ({
+      config: {
+        ...state.config,
+        accounts: [profile],
+        spoofing: { ...state.config.spoofing, selectedUser: '42', selectedGroup: '222' },
+      },
+      accountSecrets: {
+        '42': { cookie: 's'.repeat(60), apiKey: 'personal-fixture', groupApiKey: 'group-fixture' },
+      },
+    }));
+    expect(profileNeedsAttention(profile)).toBe(false);
+    useConfigStore.getState().updateConfig('spoofing', 'selectedGroup', 'none');
+    expect(profileNeedsAttention(profile)).toBe(true);
+    useConfigStore.getState().updateAccountsList([{ ...profile, uploadAuthMode: 'session' }]);
+    expect(profileNeedsAttention(useConfigStore.getState().config.accounts[0])).toBe(false);
+  });
 });
