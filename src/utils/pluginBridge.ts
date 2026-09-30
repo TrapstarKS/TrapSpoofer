@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import { useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { isTauriRuntime } from './tauriRuntime';
 
 export const DEFAULT_PLUGIN_PORT = '14285';
@@ -33,9 +34,15 @@ let cachedPort: string | null = null;
 let cachedAt = 0;
 let pendingDiscovery: Promise<string | null> | null = null;
 
-export async function fetchPluginBridge(path: string, port: string, init?: RequestInit) {
+export async function fetchPluginBridge(
+  path: string,
+  port: string,
+  init?: RequestInit,
+  sessionId = useStudioSessionsStore.getState().selectedSessionId,
+) {
   const base = `http://localhost:${port}`;
   const headers = new Headers(init?.headers);
+  if (sessionId) headers.set('x-trapspoofer-session', sessionId);
 
   const requestInit: RequestInit = { ...init, headers };
   requestInit.signal ??= AbortSignal.timeout(5000);

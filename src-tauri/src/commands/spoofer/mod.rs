@@ -1,6 +1,7 @@
 #![allow(clippy::wildcard_imports, clippy::too_many_lines, clippy::missing_errors_doc)]
 
 pub mod inspector;
+mod upload_auth;
 
 use crate::utils::{build_roblox_cookie_header, sanitize_filename};
 use reqwest::header::{CONTENT_LENGTH, COOKIE};
@@ -318,10 +319,6 @@ pub fn apply_roblox_game_context(
     builder
 }
 
-fn apply_upload_auth(builder: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder {
-    builder.header("x-api-key", api_key)
-}
-
 pub(crate) async fn wait_rate_limit(bucket: RateLimitBucket) {
     let wait_dur = {
         let mut max_until: Option<Instant> = None;
@@ -453,6 +450,10 @@ pub struct BatchAssetRequest {
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_asset_cache(app: AppHandle) -> bool {
+    if let Err(error) = crate::domain::asset_owners::clear() {
+        log::warn!("Could not clear asset owner cache: {error}");
+        return false;
+    }
     get_asset_cache().clear();
     place::clear_place_caches(Some(&app));
     if let Some(data) = crate::studio_bridge::bridge_data() {

@@ -1,137 +1,88 @@
-import * as tauriCore from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import * as pluginBridge from '../utils/pluginBridge';
+import { type StudioSession, useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { useStudioConnection } from './useStudioConnection';
 
-vi.mock('../utils/pluginBridge', () => ({
-  findPluginBridgePort: vi.fn(),
-}));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+const windowState = (sessionId: string): StudioSession => ({
+  sessionId,
+  synced: true,
+  studioPlaceId: '123',
+  studioPlaceName: 'Same place',
+  scanStatus: null,
+});
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
-}));
-
-describe('useStudioConnection', () => {
-  const storeData: Record<string, string> = {};
-  const mockLocalStorage = {
-    getItem: vi.fn((key: string) => storeData[key] || null),
-    setItem: vi.fn((key: string, val: string) => {
-      storeData[key] = val;
-    }),
-    clear: vi.fn(() => {
-      for (const k of Object.keys(storeData)) delete storeData[k];
-    }),
-  };
-
+describe('Studio connection', () => {
   beforeEach(() => {
-    vi.stubGlobal('localStorage', mockLocalStorage);
-    Object.defineProperty(window, 'localStorage', {
-      value: mockLocalStorage,
-      writable: true,
-      configurable: true,
-    });
     vi.useFakeTimers();
-    vi.clearAllMocks();
-    localStorage.clear();
+    vi.resetAllMocks();
+    useStudioSessionsStore.setState({ selectedSessionId: null, sessions: [] });
   });
+  afterEach(() => vi.useRealTimers());
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.useRealTimers();
-  });
-
-  it('initializes with disconnected state if no port found', async () => {
-    (pluginBridge.findPluginBridgePort as any).mockResolvedValue(null);
-
+  it('recovers when the bridge starts after an initial failure', async () => {
+    vi.mocked(invoke)
+      .mockRejectedValueOnce(new Error('not started'))
+      .mockResolvedValue({ sessions: [windowState('one')] });
     const { result } = renderHook(() => useStudioConnection());
-
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(result.current.studioConnected).toBe(false);
-    expect(result.current.scanStatus).toBeNull();
-  });
-
-  it('sets connected and reads place ID if bridge port active and synced', async () => {
-    (pluginBridge.findPluginBridgePort as any).mockResolvedValue(55055);
-    vi.mocked(tauriCore.invoke).mockImplementation(async (cmd) => {
-      if (cmd === 'get_studio_health_status') {
-        return {
-          synced: true,
-          scanStatus: null,
-          studioPlaceId: '123456789',
-        };
-      }
-      return null;
-    });
-
-    const { result } = renderHook(() => useStudioConnection());
-
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(5000);
     });
-
     expect(result.current.studioConnected).toBe(true);
-    expect(result.current.studioPlaceId).toBe('123456789');
-
-    expect(window.localStorage.getItem('TrapSpoofer_LastStudioPlaceId')).toBe('123456789');
+    expect(result.current.studioPlaceId).toBe('123');
   });
 
-  it('caches and loads place ID from local storage', async () => {
-    window.localStorage.setItem('TrapSpoofer_LastStudioPlaceId', '987654321');
-    (pluginBridge.findPluginBridgePort as any).mockResolvedValue(null);
-
+  it('requires a selection for two windows of the same place', async () => {
+    vi.mocked(invoke).mockResolvedValue({ sessions: [windowState('one'), windowState('two')] });
     const { result } = renderHook(() => useStudioConnection());
-
-    expect(result.current.studioPlaceId).toBe('987654321');
-  });
-
-  it('updates scan status', async () => {
-    (pluginBridge.findPluginBridgePort as any).mockResolvedValue(55055);
-    const mockStatus = {
-      scanning: true,
-      current_service: 'Animations',
-      scanned: 10,
-      total: 100,
-    };
-    vi.mocked(tauriCore.invoke).mockImplementation(async (cmd) => {
-      if (cmd === 'get_studio_health_status') {
-        return {
-          synced: true,
-          scanStatus: mockStatus,
-          studioPlaceId: '12345',
-        };
-      }
-      return null;
-    });
-
-    const { result } = renderHook(() => useStudioConnection());
-
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(0);
     });
-
-    expect(result.current.scanStatus).toEqual(mockStatus);
+    expect(result.current.studioConnected).toBe(false);
+    act(() => result.current.selectStudioSession('two'));
+    expect(result.current.selectedStudioSessionId).toBe('two');
+    expect(result.current.studioConnected).toBe(true);
   });
 
-  it('backs off polling interval on failure', async () => {
-    (pluginBridge.findPluginBridgePort as any).mockResolvedValue(null);
+  it('never reuses a previous place ID when its window disconnects', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce({ sessions: [windowState('one')] })
+      .mockResolvedValue({ sessions: [windowState('two')] });
+    const { result } = renderHook(() => useStudioConnection());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.studioPlaceId).toBe('123');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(result.current.selectedStudioSessionId).toBe('one');
+    expect(result.current.studioPlaceId).toBe('');
+    expect(result.current.studioConnected).toBe(false);
+  });
 
-    renderHook(() => useStudioConnection());
-
-    await vi.advanceTimersByTimeAsync(100);
-
-    await vi.advanceTimersByTimeAsync(1300);
-    expect(pluginBridge.findPluginBridgePort).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(200);
-    expect(pluginBridge.findPluginBridgePort).toHaveBeenCalledTimes(2);
-
-    await vi.advanceTimersByTimeAsync(2100);
-    expect(pluginBridge.findPluginBridgePort).toHaveBeenCalledTimes(2);
-
-    await vi.advanceTimersByTimeAsync(200);
-    expect(pluginBridge.findPluginBridgePort).toHaveBeenCalledTimes(3);
+  it('does not overlap pending requests or apply a response after unmount', async () => {
+    let complete: (value: unknown) => void = () => {};
+    vi.mocked(invoke).mockReturnValue(
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+    );
+    const { unmount } = renderHook(() => useStudioConnection());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000);
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    unmount();
+    await act(async () => {
+      complete({ sessions: [windowState('one')] });
+    });
+    expect(useStudioSessionsStore.getState().sessions).toEqual([]);
   });
 });

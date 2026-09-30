@@ -8,6 +8,7 @@ local function requestPollEndpoint(baseUrl: string, endpoint: string): (boolean,
 		return HttpService:RequestAsync({
 			Url = baseUrl .. endpoint,
 			Method = "GET",
+			Headers = { ["x-trapspoofer-session"] = STUDIO_SESSION_ID },
 		})
 	end)
 
@@ -217,6 +218,7 @@ local function operationBusy(): boolean
 end
 
 local function startRequestedScan(decoded: any)
+	ACTIVE_SCAN_ID = decoded.scanId or HttpService:GenerateGUID(false)
 	if type(decoded.scanTypes) == "table" then
 		activeScanTypes = decoded.scanTypes
 	end
@@ -253,6 +255,8 @@ local function markConnectionLost(baseUrl: string, reason: string)
 	setConnectionStatus(false)
 	setPluginGuiStatus("Lost connection; reconnecting...")
 	BASE_URL = nil
+	deferredScanRequest = nil
+	table.clear(deferredPatchBatches)
 	pollFailureStreak = 0
 	patchFailureStreak = 0
 end

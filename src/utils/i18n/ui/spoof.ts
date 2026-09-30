@@ -161,6 +161,8 @@ export const en = {
         queued: 'Queued',
         error: 'Errors',
         done: 'Done',
+        skipped: 'Skipped',
+        cancelled: 'Cancelled',
       },
     },
     stage: {
@@ -174,6 +176,7 @@ export const en = {
       done: 'Done',
       error: 'Failed',
       skipped: 'Skipped',
+      cancelled: 'Cancelled',
     },
     fail: {
       detail: 'Details:',
@@ -224,7 +227,8 @@ export const en = {
       subtitle: 'The job finished. Put the new IDs in your game and keep a copy of the list.',
       subtitleDownload: 'The download finished. The files were saved on your PC.',
       newSpoof: 'New spoof',
-      succeeded: 'Spoofed',
+      succeeded: 'Completed',
+      cancelled: 'Cancelled',
       skipped: 'Skipped',
       failed: 'Failed',
       studioTitle: 'Apply in Roblox Studio',
@@ -441,6 +445,8 @@ export const pt = {
         queued: 'Na fila',
         error: 'Erros',
         done: 'Concluídos',
+        skipped: 'Pulados',
+        cancelled: 'Cancelados',
       },
     },
     stage: {
@@ -454,6 +460,7 @@ export const pt = {
       done: 'Concluído',
       error: 'Falhou',
       skipped: 'Pulado',
+      cancelled: 'Cancelado',
     },
     fail: {
       detail: 'Detalhes:',
@@ -504,7 +511,8 @@ export const pt = {
       subtitle: 'O job terminou. Coloque os novos IDs no seu jogo e guarde uma cópia da lista.',
       subtitleDownload: 'O download terminou. Os arquivos foram salvos no seu PC.',
       newSpoof: 'Novo spoof',
-      succeeded: 'Spoofados',
+      succeeded: 'Concluídos',
+      cancelled: 'Cancelados',
       skipped: 'Pulados',
       failed: 'Falharam',
       studioTitle: 'Aplicar no Roblox Studio',

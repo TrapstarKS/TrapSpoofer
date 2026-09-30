@@ -18,6 +18,8 @@ local AssetService = game:GetService("AssetService")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local CollectionService = game:GetService("CollectionService")
 local HttpService = game:GetService("HttpService")
+local STUDIO_SESSION_ID = HttpService:GenerateGUID(false)
+local ACTIVE_SCAN_ID = nil
 local ScriptEditorService = game:GetService("ScriptEditorService")
 
 local PORT_START = 14285

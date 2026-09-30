@@ -35,9 +35,11 @@ struct JobContext {
     enable_archive_recovery: bool,
     operation_poll_interval_ms: Option<u32>,
 
+    total_assets: usize,
     success_count: AtomicUsize,
     skip_count: AtomicUsize,
     fail_count: AtomicUsize,
+    cancelled_count: AtomicUsize,
     interrupted: AtomicBool,
 
     creator_place_ids_cache: dashmap::DashMap<String, Vec<String>>,
@@ -121,7 +123,8 @@ impl JobContext {
             "spoofer-log",
             serde_json::json!({
                 "message": msg,
-                "level": level
+                "level": level,
+                "jobId": self.job_id,
             }),
         );
 
@@ -132,9 +135,57 @@ impl JobContext {
         }
     }
 
+    fn transition(&self, asset_id: &str, stage: &str, message: &str) {
+        let _ = self.app.emit(
+            "spoofer-asset-status",
+            serde_json::json!({
+                "jobId": self.job_id, "id": asset_id, "stage": stage, "message": message,
+            }),
+        );
+    }
+
     fn record_result(&self, result: serde_json::Value) {
         if let Ok(mut results) = self.asset_results.lock() {
+            let Some(id) = result.get("id").and_then(|value| value.as_str()) else {
+                return;
+            };
+            if results
+                .iter()
+                .any(|existing| existing.get("id").and_then(|value| value.as_str()) == Some(id))
+            {
+                return;
+            }
+            let stage = result_stage(&result);
+            match stage {
+                "done" => {
+                    self.success_count.fetch_add(1, Ordering::Relaxed);
+                }
+                "skipped" => {
+                    self.skip_count.fetch_add(1, Ordering::Relaxed);
+                }
+                "cancelled" => {
+                    self.cancelled_count.fetch_add(1, Ordering::Relaxed);
+                }
+                _ => {
+                    self.fail_count.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            self.transition(
+                id,
+                stage,
+                result
+                    .get("errorReason")
+                    .or_else(|| result.get("reason"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default(),
+            );
             results.push(result);
+            let _ = self.app.emit(
+                "spoofer-progress",
+                serde_json::json!({
+                    "jobId": self.job_id, "current": results.len(), "total": self.total_assets,
+                }),
+            );
         }
     }
 }
@@ -210,6 +261,33 @@ async fn resolve_creator_place_ids(ctx: Arc<JobContext>, asset_id: String) -> Ve
     }
     ctx.creator_place_ids_cache.insert(cache_key, fallback_ids.clone());
     fallback_ids
+}
+
+fn result_stage(result: &serde_json::Value) -> &'static str {
+    if result.get("cancelled").and_then(serde_json::Value::as_bool) == Some(true) {
+        "cancelled"
+    } else if result.get("skipped").and_then(serde_json::Value::as_bool) == Some(true) {
+        "skipped"
+    } else if result.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+        "done"
+    } else {
+        "error"
+    }
+}
+
+fn cached_owner_matches(asset_id: &str, user_id: Option<&str>, group_id: Option<&str>) -> bool {
+    let Some(owner) = crate::domain::asset_owners::get(asset_id) else {
+        return false;
+    };
+    let Some(owner_id) = owner.creator_id.as_deref() else {
+        return false;
+    };
+    let owner_type = owner.creator_type.as_deref().unwrap_or_default();
+    if let Some(group_id) = group_id.filter(|id| !id.is_empty()) {
+        owner_type.eq_ignore_ascii_case("group") && owner_id == group_id
+    } else {
+        owner_type.eq_ignore_ascii_case("user") && user_id == Some(owner_id)
+    }
 }
 
 fn valid_place_ids(raw: Option<&str>) -> Vec<String> {
@@ -442,7 +520,12 @@ pub async fn process_spoofer_action(
     data: SpooferActionRequest,
 ) -> crate::error::Result<()> {
     let start_time = chrono::Utc::now();
-    let job_id = format!("{}", start_time.timestamp_millis());
+    let job_id = data
+        .job_id
+        .as_deref()
+        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+        .unwrap_or_else(uuid::Uuid::new_v4)
+        .to_string();
     let app_data_dir = app.path().app_data_dir()?;
     let logs_dir = app_data_dir.join("trapspoofer_logs");
     std::fs::create_dir_all(&logs_dir)?;
@@ -502,18 +585,6 @@ pub async fn process_spoofer_action(
     if cookie.trim().len() < 50 {
         temp_log("A valid Roblox cookie is required before spoofing.", "error");
         let _ = app.emit("spoofer-result", serde_json::json!({"success": false, "output": "Missing Roblox cookie", "jobId": job_id, "logFilePath": job_log_path}));
-        finish_spoofer_job(&job_id);
-        return Ok(());
-    }
-
-    let is_download_only_job = data.upload_types.as_ref().map_or(true, |types| {
-        types.is_empty()
-            || (types.contains(&"download".to_string()) && !types.contains(&"upload".to_string()))
-    });
-
-    if !is_download_only_job && api_key.trim().len() < 20 {
-        temp_log("An Open Cloud API key is required before spoofing. Create one with Assets read/write access for the selected creator.", "error");
-        let _ = app.emit("spoofer-result", serde_json::json!({"success": false, "output": "Missing Open Cloud API key", "jobId": job_id, "logFilePath": job_log_path}));
         finish_spoofer_job(&job_id);
         return Ok(());
     }
@@ -580,7 +651,7 @@ pub async fn process_spoofer_action(
         if !seen_asset_ids.insert(asset_id.clone()) {
             continue;
         }
-        if skip_existing_replacements && existing_replacements.contains_key(&asset_id) {
+        if asset_id.parse::<u64>().is_err() || asset_id == "0" {
             continue;
         }
         deduped_assets.push((asset_id, asset_type, raw_value, name));
@@ -595,6 +666,33 @@ pub async fn process_spoofer_action(
     }
 
     let total = parsed_assets.len();
+    let account_id = data.account.as_ref().and_then(|account| selected_account_id(&account.0));
+    let mut cached_outcomes = HashMap::new();
+    for (id, asset_type, _, name) in &parsed_assets {
+        let reused = existing_replacements.get(id).filter(|new_id| {
+            skip_existing_replacements
+                && cached_owner_matches(new_id, account_id.as_deref(), data.group_id.as_deref())
+        });
+        if let Some(new_id) = reused {
+            cached_outcomes.insert(
+                id.clone(),
+                serde_json::json!({
+                    "id": id, "name": name, "type": asset_type, "success": true, "skipped": true,
+                    "reason": "already_uploaded", "newId": new_id,
+                }),
+            );
+        } else if data.skip_owned.unwrap_or(false)
+            && cached_owner_matches(id, account_id.as_deref(), data.group_id.as_deref())
+        {
+            cached_outcomes.insert(id.clone(), serde_json::json!({
+                "id": id, "name": name, "type": asset_type, "success": true, "skipped": true, "reason": "owned",
+            }));
+        }
+    }
+    let _ = app.emit("spoofer-queued", serde_json::json!({
+        "jobId": job_id, "total": total,
+        "assets": parsed_assets.iter().map(|(id, kind, _, name)| serde_json::json!({"id": id, "type": kind, "name": name})).collect::<Vec<_>>(),
+    }));
     temp_log(&format!("Found {total} asset(s) to process."), "info");
 
     let forced_place_ids = valid_place_ids(data.force_place_ids.as_deref());
@@ -619,8 +717,11 @@ pub async fn process_spoofer_action(
         .unwrap_or_default();
 
     let mut batch_urls = HashMap::new();
-    let batch_assets =
-        parsed_assets.iter().map(|(id, t, _, _)| (id.clone(), t.clone())).collect::<Vec<_>>();
+    let batch_assets = parsed_assets
+        .iter()
+        .filter(|(id, _, _, _)| !cached_outcomes.contains_key(id))
+        .map(|(id, t, _, _)| (id.clone(), t.clone()))
+        .collect::<Vec<_>>();
     let per_asset_place_ids = data.asset_force_place_ids.as_ref();
     if let Ok(urls) = crate::commands::spoofer::batch_get_download_urls_for_assets(
         app.clone(),
@@ -658,8 +759,12 @@ pub async fn process_spoofer_action(
 
     let mut batch_metadata = HashMap::new();
     let preserve_metadata = data.preserve_metadata.unwrap_or(true);
-    let asset_ids: Vec<String> = parsed_assets.iter().map(|(id, _, _, _)| id.clone()).collect();
-    if preserve_metadata {
+    let asset_ids: Vec<String> = parsed_assets
+        .iter()
+        .filter(|(id, _, _, _)| !cached_outcomes.contains_key(id))
+        .map(|(id, _, _, _)| id.clone())
+        .collect();
+    if preserve_metadata && !asset_ids.is_empty() {
         temp_log("Fetching asset metadata in batch...", "info");
         let (fetched_metadata, fetched_creators) =
             batch_fetch_asset_details(&asset_ids, &cookie, &csrf_token, &client).await;
@@ -703,7 +808,7 @@ pub async fn process_spoofer_action(
         }
     }
 
-    let total_pre = parsed_assets.len();
+    let total_pre = asset_ids.len();
     let forced_place_present = !forced_place_ids.is_empty();
     let cheap_gate = preserve_metadata
         && total_pre >= 5
@@ -727,17 +832,14 @@ pub async fn process_spoofer_action(
         discovery_found_places,
     ) {
         temp_log(
-            &format!(
-                "Aborting: batch endpoints returned no results for any of {total_pre} assets. This is a Roblox auth refusal, not a per-asset issue. Check: (1) ROBLOSECURITY cookie is fresh -- log out and back in on Roblox.com, then paste the new cookie into Accounts; (2) forced Place ID {} is owned by you (or your group); (3) Open Cloud API key has 'Assets: Write' AND '0.0.0.0/0' in the Accepted IPs.",
-                data.force_place_ids.clone().unwrap_or_else(|| "N/A".to_string())
-            ),
+            "No accessible asset data was returned by Roblox. Check the selected account, asset permissions and place context before retrying.",
             "error",
         );
         let _ = app.emit(
             "spoofer-result",
             serde_json::json!({
                 "success": false,
-                "output": "Auth check failed -- aborted before per-asset processing.",
+                "output": "No accessible asset data was returned; processing stopped before upload.",
                 "jobId": job_id,
                 "logFilePath": job_log_path,
                 "replacements": {},
@@ -805,9 +907,11 @@ pub async fn process_spoofer_action(
         batch_metadata,
         enable_archive_recovery: data.enable_archive_recovery.unwrap_or(false),
         operation_poll_interval_ms: data.operation_poll_interval_ms,
+        total_assets: total,
         success_count: AtomicUsize::new(0),
         skip_count: AtomicUsize::new(0),
         fail_count: AtomicUsize::new(0),
+        cancelled_count: AtomicUsize::new(0),
         interrupted: AtomicBool::new(false),
         creator_place_ids_cache: dashmap::DashMap::new(),
         replacements: dashmap::DashMap::new(),
@@ -822,6 +926,7 @@ pub async fn process_spoofer_action(
     });
 
     let skip_owned = data.skip_owned.unwrap_or(false);
+    let all_assets = parsed_assets.clone();
     let stream = stream::iter(parsed_assets.into_iter().enumerate());
 
     const PER_ASSET_TIMEOUT_SECS: u64 = 600;
@@ -829,8 +934,16 @@ pub async fn process_spoofer_action(
     stream
         .for_each_concurrent(max_concurrency, |(i, (asset_id, asset_type, raw_value, asset_name))| {
             let ctx = Arc::clone(&ctx);
+            let cached_outcome = cached_outcomes.get(&asset_id).cloned();
 
             async move {
+                if let Some(result) = cached_outcome {
+                    if let Some(new_id) = result.get("newId").and_then(|value| value.as_str()) {
+                        ctx.replacements.insert(asset_id.clone(), serde_json::Value::String(new_id.to_string()));
+                    }
+                    ctx.record_result(result);
+                    return;
+                }
                 let exact_name = ctx.batch_metadata
                     .get(&asset_id)
                     .map(|d| d.name.clone())
@@ -858,10 +971,7 @@ pub async fn process_spoofer_action(
                     return;
                 }
 
-                let _ = ctx.app.emit(
-                    "spoofer-progress",
-                    serde_json::json!({ "jobId": ctx.job_id, "current": i + 1, "total": total }),
-                );
+                ctx.transition(&asset_id, "resolving_location", "Checking asset owner");
 
                 if crate::commands::spoofer::should_skip_asset_for_spoofing(
                     ctx.app.clone(),
@@ -875,7 +985,7 @@ pub async fn process_spoofer_action(
                 )
                 .await
                 {
-                    ctx.skip_count.fetch_add(1, Ordering::Relaxed);
+
                     ctx.record_result(serde_json::json!({
                         "id": asset_id, "name": exact_name, "type": asset_type, "success": true, "skipped": true, "reason": "filtered"
                     }));
@@ -937,6 +1047,7 @@ pub async fn process_spoofer_action(
                     };
                 let mut remove_download_file = false;
 
+                ctx.transition(&asset_id, "downloading", "Downloading");
                 let dl_res = if asset_type == "raw_keyframe_sequence" {
                     if let Some(raw_xml) = &raw_value {
                         let full_xml = format!("<roblox xmlns:xmime=\"http://www.w3.org/2005/05/xmlmime\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://www.roblox.com/roblox.xsd\" version=\"4\">\n{}\n</roblox>", raw_xml);
@@ -951,7 +1062,7 @@ pub async fn process_spoofer_action(
                 } else {
                     let _dl_permit = ctx.download_semaphore.acquire().await.ok();
                     crate::commands::spoofer::download_asset_with_deferred_places(
-                        ctx.app.clone(), direct_url, ctx.cookie.clone(), ctx.fallback_cookies.clone(), file_path.clone(), format!("dl_{asset_id}"), exact_name.clone(), asset_id.clone(), Some(asset_type.clone()), place_id_arg, deferred_place_ids, ctx.enable_archive_recovery, ctx.proxy_url.clone()
+                        ctx.app.clone(), direct_url, ctx.cookie.clone(), ctx.fallback_cookies.clone(), file_path.clone(), format!("{}:dl:{asset_id}", ctx.job_id), exact_name.clone(), asset_id.clone(), Some(asset_type.clone()), place_id_arg, deferred_place_ids, ctx.enable_archive_recovery, ctx.proxy_url.clone()
                     ).await
                 };
 
@@ -964,16 +1075,15 @@ pub async fn process_spoofer_action(
                                     disc.push((asset_id.clone(), place_id));
                                 }
                             }
-                            ctx.success_count.fetch_add(1, Ordering::Relaxed);
-                            ctx.skip_count.fetch_add(1, Ordering::Relaxed);
+
+
                             ctx.record_result(serde_json::json!({
                                 "id": asset_id,
                                 "name": exact_name,
                                 "type": asset_type,
                                 "success": true,
-                                "skipped": true,
-                                "reason": "already_uploaded",
-                                "errorReason": "Already uploaded in a previous run -- reused the existing spoofed ID.",
+                                "reason": "downloaded",
+                                "localPath": file_path,
                             }));
                             return;
                         }
@@ -982,9 +1092,13 @@ pub async fn process_spoofer_action(
                             return;
                         }
 
+                        if wait_if_paused(&ctx.job_id).await.is_err() {
+                            ctx.interrupted.store(true, Ordering::Relaxed);
+                            return;
+                        }
                         let upload_user_id = if ctx.group_id.is_none() { ctx.account_id.clone() } else { None };
                         if ctx.group_id.is_none() && upload_user_id.is_none() {
-                            ctx.fail_count.fetch_add(1, Ordering::Relaxed);
+
                             ctx.record_result(serde_json::json!({ "id": asset_id, "name": exact_name, "type": asset_type, "success": false, "stage": "upload", "errorReason": "No valid user ID" }));
                             return;
                         }
@@ -1002,8 +1116,9 @@ pub async fn process_spoofer_action(
                         let sink_ctx = Arc::clone(&ctx);
                         let permission_sink: crate::commands::spoofer::PermissionSink =
                             Arc::new(move |new_asset_id, universe_id| sink_ctx.spawn_permission_grant(new_asset_id, universe_id));
+                        ctx.transition(&asset_id, "uploading", "Uploading and processing");
                         let up_res = crate::commands::spoofer::publish_asset_with_hooks(
-                            ctx.app.clone(), file_path.clone(), details.name, final_description, ctx.cookie.clone(), ctx.csrf_token.clone(), ctx.group_id.clone(), format!("up_{asset_id}"), Some(mapped_type_name.to_string()), Some(ctx.api_key.clone()), upload_user_id, Some(asset_id.clone()), ctx.universe_id.clone(), Some(ctx.downloads_root.clone()), ctx.proxy_url.clone(), ctx.operation_poll_interval_ms,
+                            ctx.app.clone(), file_path.clone(), details.name, final_description, ctx.cookie.clone(), ctx.csrf_token.clone(), ctx.group_id.clone(), format!("{}:up:{asset_id}", ctx.job_id), Some(mapped_type_name.to_string()), Some(ctx.api_key.clone()), upload_user_id, Some(asset_id.clone()), ctx.universe_id.clone(), Some(ctx.downloads_root.clone()), ctx.proxy_url.clone(), ctx.operation_poll_interval_ms,
                             crate::commands::spoofer::PublishHooks { upload_permit: Some(asset_permit), permission_sink: Some(permission_sink) },
                         ).await;
 
@@ -1013,7 +1128,7 @@ pub async fn process_spoofer_action(
                                 ctx.log(&format!("Upload successful! New ID: {new_id}"), "success");
                                 ctx.replacements.insert(asset_id.clone(), serde_json::Value::String(new_id.clone()));
                                 ctx.record_result(serde_json::json!({ "id": asset_id, "name": exact_name, "type": asset_type, "success": true, "newId": new_id }));
-                                ctx.success_count.fetch_add(1, Ordering::Relaxed);
+
                                 if let Some(place_id) = res.resolved_place_id {
                                     if let Ok(mut disc) = ctx.discoveries.lock() {
                                         disc.push((asset_id.clone(), place_id));
@@ -1022,13 +1137,13 @@ pub async fn process_spoofer_action(
                                 remove_download_file = true;
                             }
                             Ok(up) => {
-                                ctx.fail_count.fetch_add(1, Ordering::Relaxed);
+
                                 let err_msg = up.error.unwrap_or_default();
                                 ctx.log(&format!("Upload failed for {asset_id}: {err_msg}"), "error");
                                 ctx.record_result(serde_json::json!({ "id": asset_id, "name": exact_name, "type": asset_type, "success": false, "stage": "upload", "errorReason": err_msg }));
                             }
                             Err(e) => {
-                                ctx.fail_count.fetch_add(1, Ordering::Relaxed);
+
                                 let e_str = e.to_string();
                                 ctx.log(&format!("Upload error for {asset_id}: {e_str}"), "error");
                                 ctx.record_result(serde_json::json!({ "id": asset_id, "name": exact_name, "type": asset_type, "success": false, "stage": "upload", "errorReason": e_str }));
@@ -1036,7 +1151,7 @@ pub async fn process_spoofer_action(
 
                                     && !ctx.interrupted.swap(true, Ordering::Relaxed) {
                                         ctx.log(
-                                            "Halting the rest of this job -- the Open Cloud API key was rejected. Fix the key (Assets = Write, IP whitelist = 0.0.0.0/0) in the Creator Dashboard, then retry. Assets that hadn't been reached yet were NOT processed.",
+                                            "Halting this job because Roblox rejected upload authorization. Check the account or API key and the selected creator permissions before retrying.",
                                             "warn",
                                         );
                                     }
@@ -1044,7 +1159,7 @@ pub async fn process_spoofer_action(
                         }
                     }
                     Ok(res) => {
-                        ctx.fail_count.fetch_add(1, Ordering::Relaxed);
+
                         let err_msg = res.error.unwrap_or_default();
                         let is_upstream_inaccessible = err_msg.contains("Permission Denied") || err_msg.contains("Asset is private") || err_msg.contains("copylocked") || err_msg.contains("Conflict: Asset delivery blocked") || err_msg.contains("Not Found: Asset");
                         let (level, msg) = if is_upstream_inaccessible {
@@ -1063,7 +1178,7 @@ pub async fn process_spoofer_action(
                         ctx.record_result(serde_json::json!({ "id": asset_id, "name": exact_name, "type": asset_type, "success": false, "stage": "download", "errorReason": err_msg }));
                     }
                     Err(e) => {
-                        ctx.fail_count.fetch_add(1, Ordering::Relaxed);
+
                         let raw = e.to_string();
 
                         let human = if raw.contains("error decoding response body") {
@@ -1103,7 +1218,7 @@ pub async fn process_spoofer_action(
                             "warn",
                         );
                     } else {
-                        ctx_for_timeout.fail_count.fetch_add(1, Ordering::Relaxed);
+
                         let msg = format!(
                             "Timed out processing asset {asset_id_for_timeout} after {PER_ASSET_TIMEOUT_SECS}s; giving up so the job can finish."
                         );
@@ -1122,12 +1237,19 @@ pub async fn process_spoofer_action(
         })
         .await;
 
+    for (id, asset_type, _, name) in all_assets {
+        ctx.record_result(serde_json::json!({
+            "id": id, "name": name, "type": asset_type, "success": false, "cancelled": true,
+            "reason": "cancelled", "errorReason": "Job stopped before this asset finished",
+        }));
+    }
     ctx.drain_permission_grants().await;
 
     let success = ctx.success_count.load(Ordering::Relaxed);
     let skipped = ctx.skip_count.load(Ordering::Relaxed);
     let failed = ctx.fail_count.load(Ordering::Relaxed);
-    let interrupted_flag = ctx.interrupted.load(Ordering::Relaxed);
+    let cancelled = ctx.cancelled_count.load(Ordering::Relaxed);
+    let interrupted_flag = ctx.interrupted.load(Ordering::Relaxed) || cancelled > 0;
 
     let completed_successfully = !interrupted_flag && failed == 0;
     let status = if completed_successfully {
@@ -1168,13 +1290,14 @@ pub async fn process_spoofer_action(
     }
 
     let summary = format!(
-        "Spoofing job finished in {:.2}s ({}ms/asset avg).\nTotal Assets: {} | Successful: {} (Skipped: {}) | Failed: {}",
+        "Spoofing job finished in {:.2}s ({}ms/asset avg).\nTotal Assets: {} | Completed: {} | Skipped: {} | Failed: {} | Cancelled: {}",
         (duration_ms as f64) / 1000.0,
         if total > 0 { duration_ms / (total as i64) } else { 0 },
         total,
         success,
         skipped,
-        failed
+        failed,
+        cancelled
     );
     ctx.log(&summary, if completed_successfully { "success" } else { "warn" });
 
@@ -1195,16 +1318,13 @@ pub async fn process_spoofer_action(
     if !final_replacements.is_empty() {
         ctx.log(
             &format!(
-                "{} replacement(s) queued to the Studio plugin bridge. They only apply once Studio is running with the TrapSpoofer plugin loaded -- watch the plugin status pill in the app. Don't forget to save your place after the replacements land.",
+                "{} replacement(s) ready to apply. Save the selected place after applying them.",
                 final_replacements.len()
             ),
             "info",
         );
     } else if success > 0 {
-        ctx.log(
-            "Uploads succeeded but no replacements got queued to the plugin. If this reproduces please share the log -- it means the mapping-collection step failed.",
-            "warn",
-        );
+        ctx.log("Downloads completed; no uploaded IDs to apply.", "info");
     }
 
     let _ = app.emit(
@@ -1212,6 +1332,7 @@ pub async fn process_spoofer_action(
         serde_json::json!({
             "success": completed_successfully,
             "partial": !completed_successfully && success > 0,
+            "cancelled": cancelled > 0,
             "replacements": final_replacements,
             "output": format!("Processed {success}/{total} assets."),
             "jobId": job_id,

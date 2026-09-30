@@ -2,7 +2,6 @@
 
 import { invoke as __TAURI_INVOKE } from '@tauri-apps/api/core';
 
-/** Commands */
 export const commands = {
   parseAnimationData: (xml: string) =>
     typedError<
@@ -71,6 +70,8 @@ export const commands = {
   openExternal: (url: string) =>
     typedError<boolean, AppError>(__TAURI_INVOKE('open_external', { url })),
   selectFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE('select_folder')),
+  revealInFolder: (path: string) =>
+    typedError<boolean, AppError>(__TAURI_INVOKE('reveal_in_folder', { path })),
   uninstallApp: () => typedError<boolean, AppError>(__TAURI_INVOKE('uninstall_app')),
   clearPluginCache: () => typedError<boolean, AppError>(__TAURI_INVOKE('clear_plugin_cache')),
   openFrontendDevtools: () => __TAURI_INVOKE<void>('open_frontend_devtools'),
@@ -123,7 +124,7 @@ export const commands = {
     typedError<PlaceParseResult, string>(__TAURI_INVOKE('parse_place_file', { filePath })),
   findStudioProcess: () => __TAURI_INVOKE<number | null>('find_studio_process'),
   focusAndSaveStudio: (pid: number) =>
-    typedError<null, AppError>(__TAURI_INVOKE('focus_and_save_studio', { pid })),
+    typedError<null, string>(__TAURI_INVOKE('focus_and_save_studio', { pid })),
   scanAndReplaceMultipleStrings: (pid: number, replacements: { [key in string]: string }) =>
     typedError<{ [key in string]: MemoryInjectionResult }, string>(
       __TAURI_INVOKE('scan_and_replace_multiple_strings', { pid, replacements }),
@@ -193,16 +194,37 @@ export const commands = {
     typedError<string | null, AppError>(
       __TAURI_INVOKE('find_asset_by_name', { cookie, assetType, name, groupId }),
     ),
-  pushToStudio: (replacementsMap: unknown, pluginPort: string | null) =>
-    typedError<string, AppError>(__TAURI_INVOKE('push_to_studio', { replacementsMap, pluginPort })),
+  pushToStudio: (
+    replacementsMap: unknown,
+    sessionId: string | null,
+    operationId: string,
+    animationMode: string | null,
+  ) =>
+    typedError<unknown, string>(
+      __TAURI_INVOKE('push_to_studio', { replacementsMap, sessionId, operationId, animationMode }),
+    ),
   setPluginBatchSize: (batchSize: number) =>
     typedError<null, string>(__TAURI_INVOKE('set_plugin_batch_size', { batchSize })),
   setBridgeSkipOwnedCheck: (skipOwned: boolean) =>
     __TAURI_INVOKE<boolean>('set_bridge_skip_owned_check', { skipOwned }),
   getPluginBridgePort: () => __TAURI_INVOKE<number | null>('get_plugin_bridge_port'),
-  getStudioHealthStatus: () => __TAURI_INVOKE<unknown>('get_studio_health_status'),
+  getStudioHealthStatus: (sessionId: string | null) =>
+    __TAURI_INVOKE<unknown>('get_studio_health_status', { sessionId }),
   getPortDiagnostic: () => __TAURI_INVOKE<unknown>('get_port_diagnostic'),
-  getStudioAssetSnapshots: () => __TAURI_INVOKE<unknown>('get_studio_asset_snapshots'),
+  getStudioAssetSnapshots: (sessionId: string | null) =>
+    typedError<unknown, string>(__TAURI_INVOKE('get_studio_asset_snapshots', { sessionId })),
+  scanPlaceFileAssets: (path: string) =>
+    typedError<unknown, AppError>(__TAURI_INVOKE('scan_place_file_assets', { path })),
+  writeSpoofedPlaceFile: (path: string, outputPath: string | null, mappings: unknown) =>
+    typedError<unknown, AppError>(
+      __TAURI_INVOKE('write_spoofed_place_file', { path, outputPath, mappings }),
+    ),
+  mcpRespond: (requestId: string, isError: boolean, payload: string) =>
+    __TAURI_INVOKE<boolean>('mcp_respond', { requestId, isError, payload }),
+  mcpSetFrontendReady: (ready: boolean) =>
+    __TAURI_INVOKE<void>('mcp_set_frontend_ready', { ready }),
+  mcpSetEnabled: (enabled: boolean) => __TAURI_INVOKE<void>('mcp_set_enabled', { enabled }),
+  mcpGetInfo: () => __TAURI_INVOKE<McpInfo>('mcp_get_info'),
 };
 
 /* Types */
@@ -268,6 +290,14 @@ export type GlobalPlacesResponse = {
   previousPageCursor: string | null;
   nextPageCursor: string | null;
   games: GlobalPlace[];
+};
+
+export type McpInfo = {
+  enabled: boolean;
+  port: number | null;
+  url: string | null;
+  executable: string;
+  tools: string[];
 };
 
 export type MemoryInjectionResult = {
@@ -362,6 +392,7 @@ export type RobloxUserInfo = {
 };
 
 export type SpooferActionRequest = {
+  jobId: string | null;
   assets: string | null;
   cookie: string | null;
   fallbackCookies: string[] | null;

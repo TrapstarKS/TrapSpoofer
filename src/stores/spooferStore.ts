@@ -4,6 +4,8 @@ import type { SpooferAssetResult } from '../types/tauriEvents';
 
 export type AssetStage =
   | 'idle'
+  | 'queued'
+  | 'cancelled'
   | 'resolving_location'
   | 'discovering_usage'
   | 'discovering_graph'
@@ -15,11 +17,38 @@ export type AssetStage =
 import { notifyError } from '../utils/notifyError';
 import type { ParsedAssetRef, RbxInstance } from '../utils/robloxPlaceParser/types';
 import { appendSpoofingLog } from '../utils/spoofingLogs';
-import { queueStudioReplacements } from '../utils/studioBridge';
+import { performStudioReplacement } from '../utils/studioReplacementTask';
 import { isTauriRuntime } from '../utils/tauriRuntime';
+import type { AppConfig } from './configStore';
 import { useConfigStore } from './configStore';
+import type { SessionSource } from './sessionStore';
+import { requireStudioSession } from './studioSessionsStore';
+import { assertAppIsNotUpdating } from './updaterStore';
+
+export interface JobTarget {
+  studioSessionId: string | null;
+  animationMode: 'animation' | 'clip_replace' | 'clip_parent';
+  source: SessionSource | null;
+  autoApply: boolean;
+  userId: string;
+  groupId: string;
+  cookie: string;
+  apiKey: string;
+  permissions: AppConfig['permissions'];
+}
+
+export interface LastJobTarget {
+  studioSessionId: string;
+  animationMode: JobTarget['animationMode'];
+}
 
 interface SpooferState {
+  replacingSessionId: string | null;
+  replacementOperationId: string | null;
+  jobTarget: JobTarget | null;
+  lastJobTarget: LastJobTarget | null;
+  lastJobSource: SessionSource | null;
+  isPreparingJob: boolean;
   rootInstances: RbxInstance[];
   setRootInstances: (val: RbxInstance[] | ((prev: RbxInstance[]) => RbxInstance[])) => void;
 
@@ -192,6 +221,12 @@ const loadSavedPlaceIds = (): Record<string, string> => {
 };
 
 export const useSpooferStore = create<SpooferState>((set) => ({
+  replacingSessionId: null,
+  replacementOperationId: null,
+  jobTarget: null,
+  lastJobTarget: null,
+  lastJobSource: null,
+  isPreparingJob: false,
   rootInstances: [],
   setRootInstances: (val) =>
     set((state) => ({
@@ -439,121 +474,61 @@ export const useSpooferStore = create<SpooferState>((set) => ({
 export const applyReplacements = async (
   replacements: Record<string, string>,
   skipPersist = false,
-) => {
-  if (!isTauriRuntime()) return;
-  const { config } = useConfigStore.getState();
-  const { setSpoofingLogs, setLastReplacements, setIsReplacing, setReplaceError } =
-    useSpooferStore.getState();
-
+  studioSessionId?: string,
+  animationMode = useConfigStore.getState().config.spoofing.animationMode,
+): Promise<void> => {
+  assertAppIsNotUpdating();
+  if (!isTauriRuntime() || !Object.keys(replacements).length) return;
+  const store = useSpooferStore.getState();
+  if (store.isReplacing) throw new Error('A Studio replacement is already in progress.');
+  if (studioSessionId === undefined) useSpooferStore.setState({ lastJobTarget: null });
+  const sessionId = requireStudioSession(studioSessionId);
+  const operationId = crypto.randomUUID();
+  useSpooferStore.setState({
+    isReplacing: true,
+    replaceError: false,
+    replaceCurrentCount: 0,
+    replaceTotalCount: Object.keys(replacements).length,
+    replaceStartTime: Date.now(),
+    replacingSessionId: sessionId,
+    replacementOperationId: operationId,
+  });
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const totalCount = Object.keys(replacements).length;
-
-    if (totalCount === 0) {
-      setSpoofingLogs((prev) =>
-        appendSpoofingLog(
-          prev,
-          '\n[INFO] No replacements were generated (all assets may have been skipped or failed).',
-        ),
+    if (!skipPersist) store.setLastReplacements(replacements);
+    const result = await performStudioReplacement(replacements, store.targetPathsMap, {
+      sessionId,
+      operationId,
+      animationMode,
+    });
+    const succeeded = result.succeeded ?? 0;
+    const failed = result.failed ?? 0;
+    useSpooferStore.setState({
+      replaceCurrentCount: succeeded + failed,
+      replaceTotalCount: result.total ?? succeeded + failed,
+    });
+    if (result.error || failed > 0)
+      throw new Error(
+        result.error ||
+          `${succeeded} replacements applied; ${failed} failed. Check the plugin log before retrying.`,
       );
-      if (typeof window.ismLog === 'function') {
-        window.ismLog(
-          'info',
-          'No replacements generated. All selected assets may have already been spoofed or failed.',
-          true,
-        );
-      }
-      return;
-    }
-
-    setIsReplacing(true);
-    setReplaceError(false);
-    useSpooferStore.getState().setReplaceTotalCount(totalCount);
-    useSpooferStore.getState().setReplaceCurrentCount(0);
-    useSpooferStore.getState().setReplaceStartTime(Date.now());
-
-    setSpoofingLogs((prev) => appendSpoofingLog(prev, '\nApplying replacements to Studio...'));
-
-    if (!skipPersist) {
-      setLastReplacements(replacements);
-    }
-
-    if (config.advanced.memoryInjectionEnabled) {
-      setSpoofingLogs((prev) => appendSpoofingLog(prev, 'Starting Memory Injection (Beta)...'));
-      const pid = await invoke<number | null>('find_studio_process');
-      if (!pid) {
-        setSpoofingLogs((prev) =>
-          appendSpoofingLog(
-            prev,
-            "[INFO] Studio isn't running -- skipping memory injection. Mappings are ready; open Studio and hit Retry Replacement (or copy the IDs from the Results panel).",
-          ),
-        );
-      } else {
-        const results = await invoke<Record<string, { total_replaced: number }>>(
-          'scan_and_replace_multiple_strings',
-          {
-            pid,
-            replacements,
-          },
-        );
-
-        let total = 0;
-        for (const [, res] of Object.entries(results)) {
-          total += res.total_replaced;
-        }
-
-        setSpoofingLogs((prev) =>
-          appendSpoofingLog(
-            prev,
-            `Memory injection complete! Patched ${total} exact matches in memory. Handing any length-mismatched pairs to the plugin bridge...`,
-          ),
-        );
-      }
-    }
-
-    try {
-      await queueStudioReplacements(replacements, useSpooferStore.getState().targetPathsMap);
-      setSpoofingLogs((prev) =>
-        appendSpoofingLog(
-          prev,
-          "Queued replacements to plugin bridge. The Studio plugin will auto-replace anything memory injection couldn't patch.",
-        ),
-      );
-    } catch (bridgeErr: unknown) {
-      const msg = String(bridgeErr);
-
-      if (msg.includes('plugin') || msg.includes('Studio') || msg.includes('bridge')) {
-        setSpoofingLogs((prev) =>
-          appendSpoofingLog(
-            prev,
-            `[INFO] ${Object.keys(replacements).length} replacement(s) generated but the Studio plugin isn't connected. Open Studio with the TrapSpoofer plugin loaded and use Retry Replacement, or copy the IDs from the Results panel.`,
-          ),
-        );
-      } else {
-        throw bridgeErr;
-      }
-    }
-  } catch (e: unknown) {
-    const errorStr = String(e);
-
-    const isExpectedOutcome =
-      errorStr.includes('No usable replacements') ||
-      errorStr.includes('did not accept any mappings') ||
-      errorStr.includes('rejected the mappings') ||
-      errorStr.includes('length mismatch') ||
-      errorStr.includes('Plugin bridge will apply');
-    if (isExpectedOutcome) {
-      setSpoofingLogs((prev) =>
-        appendSpoofingLog(prev, `\n[INFO] ${errorStr.replace('Error: ', '')}`),
-      );
-    } else {
-      setReplaceError(true);
-      notifyError('Could Not Apply Replacements', errorStr);
-      setSpoofingLogs((prev) =>
-        appendSpoofingLog(prev, `[ERROR] Could not apply replacements to Studio: ${errorStr}`),
-      );
-    }
+    store.setSpoofingLogs((previous) =>
+      appendSpoofingLog(
+        previous,
+        `[SUCCESS] ${succeeded} replacements applied in the selected Studio window. Save the place.`,
+      ),
+    );
+  } catch (error) {
+    store.setReplaceError(true);
+    notifyError('Could Not Apply Replacements', String(error));
+    store.setSpoofingLogs((previous) => appendSpoofingLog(previous, `[ERROR] ${String(error)}`));
+    throw error;
   } finally {
-    setIsReplacing(false);
+    if (useSpooferStore.getState().replacementOperationId === operationId) {
+      useSpooferStore.setState({
+        isReplacing: false,
+        replacingSessionId: null,
+        replacementOperationId: null,
+      });
+    }
   }
 };

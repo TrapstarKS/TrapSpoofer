@@ -92,6 +92,7 @@ export function resetFlow() {
   useSessionStore.getState().clear();
   useSpooferStore.getState().clearAssetStatuses();
   useSpooferStore.getState().setLastAssetResults([]);
+  useSpooferStore.setState({ jobTarget: null, lastJobTarget: null, lastJobSource: null });
   const flow = useFlowStore.getState();
   flow.setStep(0);
   flow.setTreeView(false);

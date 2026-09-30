@@ -161,6 +161,10 @@ where
     F: Fn(ResolverProgress) + Send + Sync + 'static,
     C: Fn(&reqwest::Response, &str) + Send + Sync + 'static,
 {
+    let _lookup = super::asset_owners::lookup_lock(&asset.asset_id).await;
+    if let Some(cached) = super::asset_owners::get(&asset.asset_id) {
+        return (cached, "Owner loaded from cache".to_string(), true);
+    }
     let Ok(_permit) = sem.acquire().await else {
         return (asset, "Resolver concurrency limiter closed".to_string(), false);
     };
@@ -244,6 +248,66 @@ where
         }
     }
 
+    if !success {
+        let url = format!("https://economy.roblox.com/v2/assets/{}/details", asset.asset_id);
+        if let Ok(response) =
+            cli.get(url).header(COOKIE, cookie_value.as_ref().clone()).send().await
+        {
+            if response.status().is_success() {
+                if let Ok(data) = response.json::<serde_json::Value>().await {
+                    if let Some(creator) = data.get("Creator") {
+                        let creator_id = creator
+                            .get("CreatorTargetId")
+                            .or_else(|| creator.get("Id"))
+                            .or_else(|| creator.get("TargetId"))
+                            .and_then(|value| {
+                                value
+                                    .as_u64()
+                                    .map(|id| id.to_string())
+                                    .or_else(|| value.as_str().map(str::to_string))
+                            });
+                        let creator_type = creator
+                            .get("CreatorType")
+                            .or_else(|| creator.get("Type"))
+                            .and_then(|value| value.as_str());
+                        if let (Some(id), Some(kind)) = (creator_id, creator_type) {
+                            if id.parse::<u64>().is_ok_and(|id| id > 0)
+                                && (kind.eq_ignore_ascii_case("user")
+                                    || kind.eq_ignore_ascii_case("group"))
+                            {
+                                asset.creator_id = Some(id.clone());
+                                asset.creator_type = Some(
+                                    if kind.eq_ignore_ascii_case("group") {
+                                        "Group"
+                                    } else {
+                                        "User"
+                                    }
+                                    .into(),
+                                );
+                                asset.creator = Some(
+                                    creator
+                                        .get("Name")
+                                        .and_then(|value| value.as_str())
+                                        .unwrap_or(&id)
+                                        .to_string(),
+                                );
+                                if let Some(name) =
+                                    data.get("Name").and_then(|value| value.as_str())
+                                {
+                                    asset.name = Some(name.into());
+                                }
+                                success = true;
+                                msg = format!("Found: {kind} {id}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if success {
+        super::asset_owners::put(&asset);
+    }
     (asset, msg, success)
 }
 
@@ -257,17 +321,38 @@ where
     F: Fn(ResolverProgress) + Send + Sync + 'static,
     C: Fn(&reqwest::Response, &str) + Send + Sync + 'static,
 {
-    let cookie_header = build_roblox_cookie_header(&cookie);
-    if cookie_header.is_empty() {
-        return Err("Missing or invalid ROBLOSECURITY cookie".into());
+    let mut seen = std::collections::HashSet::new();
+    let mut resolved_assets = Vec::new();
+    let mut needs_resolution = Vec::new();
+    for mut asset in assets {
+        if !seen.insert(asset.asset_id.clone()) {
+            continue;
+        }
+        if let Some(cached) = super::asset_owners::get(&asset.asset_id) {
+            resolved_assets.push(cached);
+        } else {
+            asset.creator = None;
+            asset.creator_id = None;
+            asset.creator_type = None;
+            needs_resolution.push(asset);
+        }
+    }
+    let cached_count = resolved_assets.len();
+    let total = cached_count + needs_resolution.len();
+    if needs_resolution.is_empty() {
+        on_progress(ResolverProgress {
+            resolved: total,
+            total,
+            message: "Owners loaded from cache".into(),
+            asset_id: String::new(),
+            success: Some(true),
+        });
+        return Ok(resolved_assets);
     }
 
-    let (needs_resolution, mut resolved_assets): (Vec<_>, Vec<_>) = assets
-        .into_iter()
-        .partition(|a| a.creator.as_deref() == Some("Unknown") || a.creator.is_none());
-
-    let total = needs_resolution.len();
-    if total == 0 {
+    let cookie_header = build_roblox_cookie_header(&cookie);
+    if cookie_header.is_empty() {
+        resolved_assets.extend(needs_resolution);
         return Ok(resolved_assets);
     }
 
@@ -291,11 +376,16 @@ where
         )));
     }
 
-    let results = futures::future::join_all(tasks).await;
-    for (index, res) in results.into_iter().flatten().enumerate() {
-        let (asset, msg, success) = res;
+    use futures::StreamExt;
+    let mut results: futures::stream::FuturesUnordered<_> = tasks.into_iter().collect();
+    let mut resolved_count = cached_count;
+    while let Some(result) = results.next().await {
+        let Ok((asset, msg, success)) = result else {
+            continue;
+        };
+        resolved_count += 1;
         on_progress(ResolverProgress {
-            resolved: index + 1,
+            resolved: resolved_count,
             total,
             message: msg,
             asset_id: asset.asset_id.clone(),

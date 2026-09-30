@@ -29,6 +29,7 @@
     "deep-link:default",
     "updater:default",
     "process:default",
+    "playwright:allow-pw-result",
     "fs:default",
     "fs:read-all",
     "fs:write-all",

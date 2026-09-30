@@ -16,7 +16,14 @@ const { navMocks, spooferState, studioState } = vi.hoisted(() => ({
     replaceTotalCount: 0,
     showToast: () => {},
   },
-  studioState: { studioConnected: false, studioPlaceName: null as string | null, scanStatus: null },
+  studioState: {
+    studioConnected: false,
+    studioPlaceName: null as string | null,
+    scanStatus: null,
+    studioSessions: [],
+    selectedStudioSessionId: null,
+    selectStudioSession: vi.fn(),
+  },
 }));
 
 vi.mock('../../contexts/LanguageContext', () => ({

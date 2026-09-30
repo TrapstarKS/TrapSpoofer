@@ -41,7 +41,7 @@ TrapSpoofer is a heavily reworked fork of [ISpooferMotion V2](https://github.com
 
 ## What it does
 
-The app talks directly to a Roblox Studio session through a companion Luau plugin. Once connected, assets are discovered, re-uploaded to your account (or group), and the new IDs are written back across the whole place.
+The app connects to Roblox Studio through a companion Luau plugin. Choose the target window in the Studio status menu, including when several windows have the same Place ID. Scans, progress and replacements stay attached to that window. The plugin works in the background; its panel opens only when you click its toolbar button.
 
 <table>
   <tr>
@@ -87,11 +87,17 @@ The Roblox Studio plugin (`TrapSpoofer.rbxmx`) ships with every release. The app
 
 ## Quick start
 
-1. **Accounts** — add a Roblox account: the `.ROBLOSECURITY` cookie (the account that **downloads**) and an **Open Cloud API key** with the _Assets: read + write_ scope (the credential that **uploads**). The app can detect the Studio/browser cookie for you.
-2. **Source** — scan Studio, open a `.rbxl`/`.rbxm` file, or paste IDs.
+1. **Accounts** — add a Roblox account using its `.ROBLOSECURITY` cookie. The app can detect the Studio/browser cookie. Uploads can use this session, including for a selected group where the account has asset creation permission. An Open Cloud API key remains optional; when provided, the app uses that key for supported uploads.
+2. **Source** — select a connected Studio window and scan it, open a `.rbxl`/`.rbxm` file, or paste IDs.
 3. **Review** — pick the assets to spoof (assets you already own are flagged).
 4. **Upload** — hit _Start spoof_. Each asset is downloaded and re-uploaded.
 5. **Apply** — the new IDs are pushed into Studio (or into a new file, in file mode). Save your place.
+
+Asset owners are cached on disk for seven days, up to 50,000 entries. Successful uploads immediately add the new asset's creator to the cache. Repeated runs reuse that information, while failed owner lookups remain eligible for retry. Clear it through the existing cache controls in Settings.
+
+**Native animation clips:** Settings → Upload behavior lets you update the Animation ID normally, replace the Animation with its editable KeyframeSequence/CurveAnimation, or add that native clip as its parent while retaining the Animation. The Studio plugin downloads the original clip through AnimationClipProvider, preserves its keyframes/curves and playback metadata, and leaves the original instance intact if loading fails. The clip format is preserved, not converted. Normal ID replacement is the default. Game code that expects an Animation at the original path must be adapted when using either native clip mode. File mode continues to update IDs only.
+
+**Updates:** Settings → General → Updates controls automatic checking and downloading. The app checks on startup and every six hours, with retries after failures. A downloaded update waits for you to choose **Install and restart**; installation is blocked while scans, uploads or replacements are active. Update the bundled plugin and reopen Studio when moving to a release with the new window-selection protocol.
 
 ---
 
@@ -156,7 +162,7 @@ bun run tauri:dev
 
 ### Releasing
 
-`bun run bump` → commit → push to `main`. CI builds Windows, macOS and Linux in parallel and publishes the release (with `latest.json` for the auto-updater) whenever the version is new.
+`bun run bump` → commit → push to `main`. CI builds Windows, macOS and Linux in parallel and publishes the release (with `latest.json` for the auto-updater) whenever the version is new. Publication requires successful checks, successful builds and signed updater artifacts for every required platform. Run `node --test scripts/updater-manifest.node.mjs` to validate the manifest generator.
 
 ---
 

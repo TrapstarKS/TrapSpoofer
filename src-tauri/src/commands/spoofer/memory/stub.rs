@@ -1,7 +1,7 @@
 #[tauri::command]
 #[specta::specta]
 #[must_use]
-pub fn find_studio_process() -> Option<u32> {
+pub const fn find_studio_process() -> Option<u32> {
     None
 }
 

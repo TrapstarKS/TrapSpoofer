@@ -39,7 +39,7 @@ pub const PROFILE_COOKIE_SERVICE: &str = "TrapSpoofer.RobloxProfileCookie";
 fn roblosecurity_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
-        Regex::new(r#"(?i)_\|WARNING:-DO-NOT-SHARE-THIS\.--Sharing-this-will-allow-someone-to-log-in-as-you-and-to-steal-your-ROBUX-and-items\.\|_[^\s"';,]+"#)
+        Regex::new(r#"(?i)_\|WARNING:-DO-NOT-SHARE-THIS\.--Sharing-this-will-allow-someone-to-log-in-as-you-and-to-steal-your-ROBUX-and-items\.\|_[^\s"';,\x00-\x1f\x7f]+"#)
             .expect("Failed to compile ROBLOSECURITY regex")
     })
 }
@@ -578,4 +578,27 @@ pub fn profile_cookie_entry(user_id: &str) -> crate::error::Result<Entry> {
     Entry::new(PROFILE_COOKIE_SERVICE, &normalized_user_id).map_err(|e| {
         crate::error::AppError::Custom(format!("Failed to open credential store: {e}"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_roblox_cookie;
+
+    const SAMPLE: &str = "_|WARNING:-DO-NOT-SHARE-THIS.--Sharing-this-will-allow-someone-to-log-in-as-you-and-to-steal-your-ROBUX-and-items.|_synthetic-token";
+
+    #[test]
+    fn stops_at_binary_cookie_record_terminator() {
+        let raw = format!("binary-header\0{SAMPLE}\0next-cookie-record\u{7f}tail");
+        assert_eq!(extract_roblox_cookie(&raw).as_deref(), Some(SAMPLE));
+        assert_eq!(extract_roblox_cookie(&format!("{SAMPLE}\u{1}tail")).as_deref(), Some(SAMPLE));
+    }
+
+    #[test]
+    fn accepts_text_cookie_and_rejects_unrelated_data() {
+        assert_eq!(
+            extract_roblox_cookie(&format!(".ROBLOSECURITY={SAMPLE}; Path=/")).as_deref(),
+            Some(SAMPLE)
+        );
+        assert_eq!(extract_roblox_cookie("unrelated binary cookie record"), None);
+    }
 }

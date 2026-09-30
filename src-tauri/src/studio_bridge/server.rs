@@ -1,4 +1,5 @@
-use axum::extract::{Json, Query, State};
+use super::sessions::StudioSession;
+use axum::extract::{Json, Query};
 use serde::Deserialize;
 use serde_json::Value;
 use std::time::{Duration, Instant};
@@ -7,7 +8,7 @@ use tauri::Emitter;
 use super::messages::{
     analyze_records, count_keyframe_warnings, plan_patches, AssetStore, StudioRecord,
 };
-use super::{AppState, STUDIO_PROTOCOL_VERSION};
+use super::STUDIO_PROTOCOL_VERSION;
 
 #[derive(Deserialize, Default)]
 pub struct PollQuery {
@@ -15,7 +16,7 @@ pub struct PollQuery {
     pub place_name: Option<String>,
 }
 
-pub async fn handle_studio_health(State(state): State<AppState>) -> Json<Value> {
+pub async fn handle_studio_health(StudioSession(state): StudioSession) -> Json<Value> {
     let guard = state.data.read().await;
 
     let synced =
@@ -31,10 +32,21 @@ pub async fn handle_studio_health(State(state): State<AppState>) -> Json<Value> 
 }
 
 pub async fn handle_scan_start(
-    State(state): State<AppState>,
+    StudioSession(state): StudioSession,
     Json(payload): Json<Value>,
 ) -> Json<Value> {
     let mut guard = state.data.write().await;
+    if guard.active_scan_id == state.scan_id && state.scan_id.is_some() {
+        return Json(serde_json::json!({"success": true}));
+    }
+    if guard.active_scan_id.is_some()
+        || (guard.requested_scan_id.is_some() && guard.requested_scan_id != state.scan_id)
+        || (state.scan_id.is_some() && guard.completed_scan_id == state.scan_id)
+    {
+        return Json(serde_json::json!({"success": false, "error": "A different scan is active"}));
+    }
+    guard.active_scan_id = state.scan_id.clone();
+    guard.requested_scan_id = None;
     guard.last_plugin_poll_time = Some(Instant::now());
     guard.pending_studio_records = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let incoming_place_id = payload
@@ -46,9 +58,7 @@ pub async fn handle_scan_start(
                 .or_else(|| value.as_str().map(std::string::ToString::to_string))
         })
         .filter(|id| id != "0" && id.chars().all(|character| character.is_ascii_digit()));
-    if incoming_place_id.is_some() {
-        guard.studio_place_id = incoming_place_id;
-    }
+    guard.studio_place_id = incoming_place_id;
     let incoming_place_name = payload
         .get("placeName")
         .and_then(|value| value.as_str().map(std::string::ToString::to_string))
@@ -72,10 +82,13 @@ pub async fn handle_scan_start(
 }
 
 pub async fn handle_scan_progress(
-    State(state): State<AppState>,
+    StudioSession(state): StudioSession,
     Json(mut payload): Json<Value>,
 ) -> Json<Value> {
     let mut guard = state.data.write().await;
+    if guard.active_scan_id != state.scan_id || guard.completing_scan {
+        return Json(serde_json::json!({"success": false, "error": "Stale scan"}));
+    }
     guard.last_plugin_poll_time = Some(Instant::now());
     if let Some(obj) = payload.as_object_mut() {
         obj.insert("scanning".to_string(), Value::Bool(true));
@@ -85,7 +98,7 @@ pub async fn handle_scan_progress(
 }
 
 pub async fn handle_scan_records(
-    State(state): State<AppState>,
+    StudioSession(state): StudioSession,
     Json(payload): Json<Value>,
 ) -> Json<Value> {
     let Some(records_value) = payload.get("records").and_then(Value::as_array) else {
@@ -102,6 +115,9 @@ pub async fn handle_scan_records(
     }
 
     let mut guard = state.data.write().await;
+    if guard.active_scan_id != state.scan_id || guard.completing_scan {
+        return Json(serde_json::json!({"success": false, "error": "Stale scan"}));
+    }
     guard.last_plugin_poll_time = Some(Instant::now());
 
     let mut truncated = false;
@@ -127,9 +143,19 @@ pub async fn handle_scan_records(
     Json(serde_json::json!({"success": true}))
 }
 
-pub async fn handle_scan_complete(State(state): State<AppState>) -> Json<Value> {
-    let (records, mappings) = {
+pub async fn handle_scan_complete(StudioSession(state): StudioSession) -> Json<Value> {
+    let (records, mappings, operation_id, animation_mode) = {
         let mut guard = state.data.write().await;
+        if state.scan_id.is_some() && guard.completed_scan_id == state.scan_id {
+            return Json(serde_json::json!({"success": true}));
+        }
+        if guard.active_scan_id != state.scan_id {
+            return Json(serde_json::json!({"success": false, "error": "Stale scan"}));
+        }
+        if guard.completing_scan {
+            return Json(serde_json::json!({"success": true, "pending": true}));
+        }
+        guard.completing_scan = true;
         guard.last_plugin_poll_time = Some(Instant::now());
         let extracted_records = std::mem::take(
             &mut *guard
@@ -138,7 +164,12 @@ pub async fn handle_scan_complete(State(state): State<AppState>) -> Json<Value> 
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
         guard.studio_records = std::sync::Arc::new(extracted_records);
-        (std::sync::Arc::clone(&guard.studio_records), guard.stored_mappings.clone())
+        (
+            std::sync::Arc::clone(&guard.studio_records),
+            guard.stored_mappings.clone(),
+            guard.pending_patch_id.clone(),
+            guard.animation_mode.clone(),
+        )
     };
     let record_count = records.len();
     let mapping_count = mappings.len();
@@ -175,6 +206,12 @@ pub async fn handle_scan_complete(State(state): State<AppState>) -> Json<Value> 
         Vec::new()
     };
 
+    let patches = super::animation::annotate_patches(
+        patches,
+        &records,
+        operation_id.as_deref(),
+        &animation_mode,
+    );
     let patch_count = patches.len();
     log::info!(
         "handle_scan_complete: records={record_count} mappings={mapping_count} patches={patch_count}"
@@ -201,6 +238,12 @@ pub async fn handle_scan_complete(State(state): State<AppState>) -> Json<Value> 
     }
 
     let mut guard = state.data.write().await;
+    if guard.active_scan_id != state.scan_id {
+        return Json(serde_json::json!({"success": false, "error": "Stale scan"}));
+    }
+    guard.completing_scan = false;
+    guard.completed_scan_id = state.scan_id.clone();
+    guard.active_scan_id = None;
     (
         guard.last_animations,
         guard.last_sounds,
@@ -214,12 +257,16 @@ pub async fn handle_scan_complete(State(state): State<AppState>) -> Json<Value> 
             let _ = state.app_handle.emit(
                 "patch-results",
                 serde_json::json!({
+                    "sessionId": state.session_id,
+                    "operationId": guard.pending_patch_id,
+                    "error": "No matching assets were found in the selected Studio window. Scan it again before applying.",
                     "failedPatches": [],
                     "succeeded": 0,
                     "failed": 0,
                     "total": 0
                 }),
             );
+            guard.completed_patch_id = guard.pending_patch_id.take();
             guard.stored_mappings.clear();
             guard.stored_patches.clear();
         } else {
@@ -243,8 +290,14 @@ pub async fn handle_scan_complete(State(state): State<AppState>) -> Json<Value> 
     }))
 }
 
-pub async fn handle_scan_abort(State(state): State<AppState>) -> Json<Value> {
+pub async fn handle_scan_abort(StudioSession(state): StudioSession) -> Json<Value> {
     let mut guard = state.data.write().await;
+    if guard.active_scan_id != state.scan_id {
+        return Json(serde_json::json!({"success": false, "error": "Stale scan"}));
+    }
+    guard.completing_scan = false;
+    guard.active_scan_id = None;
+    guard.requested_scan_id = None;
     guard.scan_status = None;
     guard.pending_studio_records = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     guard.last_sounds.scanning = false;
@@ -257,12 +310,16 @@ pub async fn handle_scan_abort(State(state): State<AppState>) -> Json<Value> {
         let _ = state.app_handle.emit(
             "patch-results",
             serde_json::json!({
+                "sessionId": state.session_id,
+                "operationId": guard.pending_patch_id,
+                "error": "The Studio scan was aborted",
                 "failedPatches": [],
                 "succeeded": 0,
                 "failed": 0,
                 "total": 0
             }),
         );
+        guard.completed_patch_id = guard.pending_patch_id.take();
         guard.stored_mappings.clear();
         guard.stored_patches.clear();
     }
@@ -271,7 +328,7 @@ pub async fn handle_scan_abort(State(state): State<AppState>) -> Json<Value> {
 }
 
 pub async fn handle_poll(
-    State(state): State<AppState>,
+    StudioSession(state): StudioSession,
     Query(query): Query<PollQuery>,
 ) -> Json<Value> {
     let timeout = tokio::time::Duration::from_secs(8);
@@ -287,11 +344,11 @@ pub async fn handle_poll(
             if let Some(name) = query.place_name.as_deref().filter(|n| !n.trim().is_empty()) {
                 guard.studio_place_name = Some(name.to_string());
             }
-            if let Some(id) =
-                query.place_id.as_deref().filter(|i| !i.trim().is_empty() && *i != "0")
-            {
-                guard.studio_place_id = Some(id.to_string());
-            }
+            guard.studio_place_id = query
+                .place_id
+                .as_deref()
+                .filter(|id| *id != "0" && id.bytes().all(|byte| byte.is_ascii_digit()))
+                .map(str::to_string);
             let request_assets = guard.request_sounds
                 || guard.request_animations
                 || guard.request_images
@@ -308,6 +365,7 @@ pub async fn handle_poll(
                 let batch_size = guard.batch_size;
                 return Json(serde_json::json!({
                     "requestAssets": true,
+                    "scanId": guard.requested_scan_id,
                     "scanTypes": scan_types,
                     "scanPath": scan_path,
                     "batchSize": batch_size,
@@ -325,7 +383,7 @@ pub async fn handle_poll(
     }
 }
 
-pub async fn handle_poll_replacements(State(state): State<AppState>) -> Json<Value> {
+pub async fn handle_poll_replacements(StudioSession(state): StudioSession) -> Json<Value> {
     let timeout = tokio::time::Duration::from_secs(8);
     let heartbeat_interval = tokio::time::Duration::from_secs(5);
     let start = Instant::now();
@@ -371,17 +429,22 @@ pub async fn handle_poll_replacements(State(state): State<AppState>) -> Json<Val
 }
 
 pub async fn handle_patch_progress(
-    State(state): State<AppState>,
-    Json(payload): Json<Value>,
+    StudioSession(state): StudioSession,
+    Json(mut payload): Json<Value>,
 ) -> Json<Value> {
-    if let Err(e) = state.app_handle.emit("patch-progress", &payload) {
-        log::error!("Failed to emit patch-progress event: {}", e);
+    let guard = state.data.read().await;
+    if payload.get("operationId").and_then(Value::as_str) != guard.pending_patch_id.as_deref()
+        || guard.pending_patch_id.is_none()
+    {
+        return Json(serde_json::json!({"success": false, "error": "Stale replacement operation"}));
     }
+    payload["sessionId"] = serde_json::json!(state.session_id);
+    let _ = state.app_handle.emit("patch-progress", &payload);
     Json(serde_json::json!({"success": true}))
 }
 
 pub async fn handle_set_batch_size(
-    State(state): State<AppState>,
+    StudioSession(state): StudioSession,
     Json(body): Json<Value>,
 ) -> Json<Value> {
     let size = body.get("batchSize").and_then(Value::as_u64).unwrap_or(50).clamp(1, 1_000);
@@ -390,82 +453,86 @@ pub async fn handle_set_batch_size(
 }
 
 pub async fn handle_replace_ids(
-    State(state): State<AppState>,
+    StudioSession(state): StudioSession,
     Json(payload): Json<Value>,
 ) -> Json<Value> {
-    let mappings_raw =
-        payload.get("mappings").and_then(Value::as_array).cloned().unwrap_or_default();
-    let over_limit = mappings_raw.len() > 5_000;
-    let mappings = mappings_raw.into_iter().take(5_000).collect::<Vec<_>>();
-    let records = std::sync::Arc::clone(&state.data.read().await.studio_records);
-    let plan_mappings = mappings.clone();
-    let plan_records = std::sync::Arc::clone(&records);
-    let patches = tokio::task::spawn_blocking(move || plan_patches(&plan_records, &plan_mappings))
-        .await
-        .unwrap_or_else(|e| {
-            log::error!("Failed to plan patches: {}", e);
-            Vec::new()
-        });
-    let mut guard = state.data.write().await;
-    if records.is_empty() {
-        guard.stored_mappings = mappings;
-        guard.stored_patches = patches;
-        guard.request_sounds = true;
-        guard.request_animations = true;
-        guard.request_images = true;
-        guard.request_meshes = true;
-        guard.request_script_refs = true;
-        guard.notify.notify_waiters();
-    } else {
-        if patches.is_empty() {
-            let _ = state.app_handle.emit(
-                "spoofer-log",
-                serde_json::json!({
-                    "level": "warn",
-                    "message": "0 patches could be planned from the current scan data. Nothing to replace."
-                }),
-            );
-            let _ = state.app_handle.emit(
-                "patch-results",
-                serde_json::json!({
-                    "failedPatches": [],
-                    "succeeded": 0,
-                    "failed": 0,
-                    "total": 0
-                }),
-            );
-        } else {
-            guard.stored_mappings = mappings;
-            guard.stored_patches = patches;
-            guard.notify.notify_waiters();
-        }
+    let mappings = payload.get("mappings").and_then(Value::as_array).cloned().unwrap_or_default();
+    let operation_id = payload.get("operationId").and_then(Value::as_str).unwrap_or_default();
+    match super::queue_replace_mappings_internal(
+        mappings,
+        Some(&state.session_id),
+        operation_id,
+        payload.get("animationMode").and_then(Value::as_str).unwrap_or("animation"),
+    )
+    .await
+    {
+        Ok(_) => Json(serde_json::json!({"success": true, "operationId": operation_id})),
+        Err(error) => Json(serde_json::json!({"success": false, "error": error})),
     }
-    Json(serde_json::json!({ "ok": true, "truncated": over_limit }))
 }
 
 pub async fn handle_patch_results(
-    State(state): State<AppState>,
+    StudioSession(state): StudioSession,
+    Json(mut payload): Json<Value>,
+) -> Json<Value> {
+    let mut guard = state.data.write().await;
+    let operation_id = payload.get("operationId").and_then(Value::as_str);
+    if operation_id.is_some() && operation_id == guard.completed_patch_id.as_deref() {
+        return Json(serde_json::json!({"success": true}));
+    }
+    if operation_id.is_none() || operation_id != guard.pending_patch_id.as_deref() {
+        return Json(serde_json::json!({"success": false, "error": "Stale replacement operation"}));
+    }
+    payload["sessionId"] = serde_json::json!(state.session_id);
+    guard.completed_patch_id = guard.pending_patch_id.take();
+    let _ = state.app_handle.emit("patch-results", &payload);
+    Json(serde_json::json!({"success": true}))
+}
+
+pub async fn request_scan(
+    StudioSession(state): StudioSession,
     Json(payload): Json<Value>,
 ) -> Json<Value> {
-    let succeeded = payload.get("succeeded").and_then(Value::as_u64).unwrap_or(0);
-    let failed = payload.get("failed").and_then(Value::as_u64).unwrap_or(0);
-    let total = payload.get("total").and_then(Value::as_u64).unwrap_or(succeeded + failed);
-    if total > 0 {
-        let level = if failed == 0 { "info" } else { "warn" };
-        let _ = state.app_handle.emit(
-            "spoofer-log",
-            serde_json::json!({
-                "level": level,
-                "message": format!(
-                    "Studio plugin applied {succeeded}/{total} patches (failed: {failed})."
-                ),
-            }),
+    let mut guard = state.data.write().await;
+    if state.session_id == "legacy" {
+        return Json(
+            serde_json::json!({"success": false, "error": "Update the Studio plugin to select windows and scan safely."}),
         );
     }
-    if let Err(e) = state.app_handle.emit("patch-results", &payload) {
-        log::error!("Failed to emit patch-results event: {}", e);
+    if guard.active_scan_id.is_some()
+        || guard.requested_scan_id.is_some()
+        || guard.pending_patch_id.is_some()
+    {
+        return Json(
+            serde_json::json!({"success": false, "error": "The selected Studio window is busy."}),
+        );
     }
-    Json(serde_json::json!({"success": true}))
+    let scan_id = uuid::Uuid::new_v4().to_string();
+    guard.requested_scan_id = Some(scan_id.clone());
+    guard.scan_types = payload
+        .get("scanTypes")
+        .and_then(Value::as_array)
+        .map(|types| types.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_else(|| {
+            vec![
+                "sounds".into(),
+                "animations".into(),
+                "images".into(),
+                "meshes".into(),
+                "scripts".into(),
+            ]
+        });
+    guard.scan_path = payload
+        .get("scanPath")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    guard.request_sounds = true;
+    guard.scan_status = Some(
+        serde_json::json!({"scanning": true, "current_service": "Pending", "scanned": 0, "total": 0}),
+    );
+    guard.notify.notify_waiters();
+    Json(serde_json::json!({"success": true, "scanId": scan_id, "sessionId": state.session_id}))
 }
 
 fn clear_stale(store: &mut AssetStore) {
@@ -488,7 +555,7 @@ fn snapshot(store: &mut AssetStore) -> AssetStore {
 
 macro_rules! snapshot_handler {
     ($name:ident, $field:ident) => {
-        pub async fn $name(State(state): State<AppState>) -> Json<AssetStore> {
+        pub async fn $name(StudioSession(state): StudioSession) -> Json<AssetStore> {
             Json(snapshot(&mut state.data.write().await.$field))
         }
     };
@@ -502,7 +569,7 @@ snapshot_handler!(get_last_script_refs, last_script_refs);
 
 macro_rules! request_handler {
     ($name:ident, $flag:ident, $store:ident) => {
-        pub async fn $name(State(state): State<AppState>) -> Json<Value> {
+        pub async fn $name(StudioSession(state): StudioSession) -> Json<Value> {
             let mut guard = state.data.write().await;
             guard.$flag = true;
             if !guard.$store.scanning {
@@ -529,7 +596,7 @@ request_handler!(request_meshes, request_meshes, last_meshes);
 request_handler!(request_script_refs, request_script_refs, last_script_refs);
 
 pub async fn set_scan_options(
-    State(state): State<AppState>,
+    StudioSession(state): StudioSession,
     Json(body): Json<Value>,
 ) -> Json<Value> {
     let mut guard = state.data.write().await;
@@ -542,7 +609,7 @@ pub async fn set_scan_options(
     Json(serde_json::json!({"success": true}))
 }
 
-async fn legacy_poll(State(state): State<AppState>, kind: &'static str) -> Json<Value> {
+async fn legacy_poll(StudioSession(state): StudioSession, kind: &'static str) -> Json<Value> {
     let timeout = tokio::time::Duration::from_secs(8);
 
     let heartbeat_interval = tokio::time::Duration::from_secs(5);
@@ -577,15 +644,15 @@ async fn legacy_poll(State(state): State<AppState>, kind: &'static str) -> Json<
     }
 }
 
-pub async fn handle_poll_sounds(state: State<AppState>) -> Json<Value> {
+pub async fn handle_poll_sounds(state: StudioSession) -> Json<Value> {
     legacy_poll(state, "sounds").await
 }
 
-pub async fn handle_poll_animations(state: State<AppState>) -> Json<Value> {
+pub async fn handle_poll_animations(state: StudioSession) -> Json<Value> {
     legacy_poll(state, "animations").await
 }
 
-pub async fn handle_poll_images(state: State<AppState>) -> Json<Value> {
+pub async fn handle_poll_images(state: StudioSession) -> Json<Value> {
     legacy_poll(state, "images").await
 }
 
@@ -598,7 +665,7 @@ fn append_legacy_assets(store: &mut AssetStore, payload: &Value) {
 macro_rules! legacy_assets_handler {
     ($name:ident, $field:ident) => {
         pub async fn $name(
-            State(state): State<AppState>,
+            StudioSession(state): StudioSession,
             Json(payload): Json<Value>,
         ) -> Json<Value> {
             append_legacy_assets(&mut state.data.write().await.$field, &payload);
@@ -615,7 +682,7 @@ legacy_assets_handler!(handle_assets_script_refs, last_script_refs);
 
 macro_rules! legacy_complete_handler {
     ($name:ident, $field:ident) => {
-        pub async fn $name(State(state): State<AppState>) -> Json<Value> {
+        pub async fn $name(StudioSession(state): StudioSession) -> Json<Value> {
             let mut guard = state.data.write().await;
             guard.$field.scanning = false;
             guard.$field.complete = true;

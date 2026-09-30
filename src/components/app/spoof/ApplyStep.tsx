@@ -19,7 +19,8 @@ import { cn } from '../../../lib/utils';
 import { pushToStudio, retryFailed, writeSpoofedFile } from '../../../services/spoofer';
 import { useConfigStore } from '../../../stores/configStore';
 import { useSessionStore } from '../../../stores/sessionStore';
-import { applyReplacements, useSpooferStore } from '../../../stores/spooferStore';
+import { useSpooferStore } from '../../../stores/spooferStore';
+import { countJobResults, jobReplacements } from '../../../utils/jobProgress';
 import { isTauriRuntime } from '../../../utils/tauriRuntime';
 import { Button } from '../../ui/button';
 import { useCopy } from '../hooks';
@@ -33,46 +34,35 @@ type Mapping = { oldId: string; newId: string; name: string };
 
 /** Mappings of the last job (falls back to the saved mappings for the current session). */
 function useJobMappings(): Mapping[] {
-  const results = useSpooferStore((s) => s.lastAssetResults);
-  const replacements = useSpooferStore((s) => s.lastReplacements);
-  const meta = useSpooferStore((s) => s.assetMetadataMap);
-  const assets = useSessionStore((s) => s.assets);
-
+  const results = useSpooferStore((state) => state.lastAssetResults);
+  const replacements = useSpooferStore((state) => state.lastReplacements);
+  const metadata = useSpooferStore((state) => state.assetMetadataMap);
+  const assets = useSessionStore((state) => state.assets);
   return useMemo(() => {
-    const names = new Map(assets.map((a) => [a.id, a.name]));
-    const nameOf = (id: string) => meta[id]?.name ?? names.get(id) ?? `Asset ${id}`;
-    const fromResults: Mapping[] = [];
-    for (const r of results) {
-      const oldId = String(r.id ?? '');
-      const newId = r.newId ? String(r.newId) : replacements[oldId];
-      if (r.success && oldId && newId)
-        fromResults.push({ oldId, newId, name: r.name || nameOf(oldId) });
-    }
-    if (fromResults.length > 0) return fromResults;
-    const scope = assets.length > 0 ? assets.map((a) => a.id) : Object.keys(replacements);
-    return scope
-      .filter((id) => replacements[id])
-      .map((id) => ({ oldId: id, newId: replacements[id], name: nameOf(id) }));
-  }, [results, replacements, meta, assets]);
+    const names = new Map(
+      [...assets, ...results].filter((asset) => asset.id).map((asset) => [asset.id, asset.name]),
+    );
+    return Object.entries(
+      jobReplacements(
+        results,
+        replacements,
+        assets.map((asset) => asset.id),
+      ),
+    ).map(([oldId, newId]) => ({
+      oldId,
+      newId,
+      name: names.get(oldId) || metadata[oldId]?.name || `Asset ${oldId}`,
+    }));
+  }, [results, replacements, metadata, assets]);
 }
 
 function Summary() {
   const { t } = useLanguage();
   const results = useSpooferStore((s) => s.lastAssetResults);
-  const stats = useMemo(() => {
-    let ok = 0;
-    let skipped = 0;
-    let failed = 0;
-    for (const r of results) {
-      if (r.success) ok += 1;
-      else if (r.skipped) skipped += 1;
-      else failed += 1;
-    }
-    return { ok, skipped, failed };
-  }, [results]);
+  const stats = useMemo(() => countJobResults(results), [results]);
   if (results.length === 0) return null;
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <Stat
         label={
           <span className="flex items-center gap-1.5">
@@ -80,7 +70,7 @@ function Summary() {
             {t('flow.apply.succeeded')}
           </span>
         }
-        value={stats.ok}
+        value={stats.completed}
       />
       <Stat
         label={
@@ -98,8 +88,9 @@ function Summary() {
             {t('flow.apply.failed')}
           </span>
         }
-        value={stats.failed}
+        value={stats.errors}
       />
+      <Stat label={t('flow.apply.cancelled')} value={stats.cancelled} />
     </div>
   );
 }
@@ -115,18 +106,12 @@ function StudioApply({ mappings }: { mappings: Mapping[] }) {
   const current = useSpooferStore((s) => s.replaceCurrentCount);
   const total = useSpooferStore((s) => s.replaceTotalCount);
   const replaceError = useSpooferStore((s) => s.replaceError);
-  const autoApply = useConfigStore((s) => s.config.general.autoApplyResults);
   const toast = useSpooferStore((s) => s.showToast);
   const [applied, setApplied] = useState(false);
 
   const apply = async () => {
     try {
-      if (mappings.length > 0) {
-        // Apply only this job's pairs without overwriting the saved mapping history.
-        await applyReplacements(Object.fromEntries(mappings.map((m) => [m.oldId, m.newId])), true);
-      } else {
-        await pushToStudio();
-      }
+      await pushToStudio();
       setApplied(true);
     } catch (e) {
       toast('error', errorText(e));
@@ -134,7 +119,7 @@ function StudioApply({ mappings }: { mappings: Mapping[] }) {
   };
 
   const pct = total > 0 ? (current / total) * 100 : undefined;
-  const alreadySent = autoApply || applied;
+  const alreadySent = applied;
 
   return (
     <Panel>
@@ -195,7 +180,7 @@ function FileApply() {
   const { t } = useLanguage();
   const source = useSessionStore((s) => s.source);
   const lastWrite = useSessionStore((s) => s.lastFileWrite);
-  const hasMappings = useSpooferStore((s) => Object.keys(s.lastReplacements).length > 0);
+  const hasMappings = useJobMappings().length > 0;
   const toast = useSpooferStore((s) => s.showToast);
   const { copy } = useCopy();
   const [saving, setSaving] = useState(false);

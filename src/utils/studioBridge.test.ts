@@ -1,66 +1,72 @@
-import * as tauriCore from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import * as debugLogger from './debugLogger';
-import * as pluginBridge from './pluginBridge';
+import { useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { queueStudioReplacements } from './studioBridge';
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
-}));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-vi.mock('./debugLogger', () => ({
-  addDebugLog: vi.fn(),
-}));
-
-vi.mock('./pluginBridge', () => ({
-  findPluginBridgePort: vi.fn(),
-  DEFAULT_PLUGIN_PORT: '14285',
-}));
-
-describe('studioBridge', () => {
+describe('Studio replacement targeting', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    useStudioSessionsStore.setState({
+      selectedSessionId: 'one',
+      sessions: [
+        {
+          sessionId: 'one',
+          synced: true,
+          studioPlaceId: '123',
+          studioPlaceName: 'First',
+          scanStatus: null,
+        },
+        {
+          sessionId: 'two',
+          synced: true,
+          studioPlaceId: '123',
+          studioPlaceName: 'Second',
+          scanStatus: null,
+        },
+      ],
+    });
+    vi.mocked(invoke).mockImplementation(async (_, args) => ({
+      sessionId: (args as { sessionId: string }).sessionId,
+      operationId: (args as { operationId: string }).operationId,
+    }));
   });
 
-  it('does nothing if replacements empty', async () => {
-    await queueStudioReplacements({});
-    expect(debugLogger.addDebugLog).toHaveBeenCalled();
-    expect(tauriCore.invoke).not.toHaveBeenCalled();
+  it('rejects empty mappings', async () => {
+    await expect(queueStudioReplacements({})).rejects.toThrow(/No asset mappings/);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('throws error on plugin_not_connected', async () => {
-    vi.mocked(tauriCore.invoke).mockResolvedValue('plugin_not_connected');
-    await expect(queueStudioReplacements({ a: 'b' })).rejects.toThrow(/Could not reach/);
-  });
-
-  it('throws error on bridge_unavailable', async () => {
-    vi.mocked(tauriCore.invoke).mockResolvedValue('bridge_unavailable');
-    await expect(queueStudioReplacements({ a: 'b' })).rejects.toThrow(/Could not reach/);
-  });
-
-  it('throws error on empty_mappings', async () => {
-    vi.mocked(tauriCore.invoke).mockResolvedValue('empty_mappings');
-    await expect(queueStudioReplacements({ a: 'b' })).rejects.toThrow(/No valid asset/);
-  });
-
-  it('succeeds normally', async () => {
-    vi.mocked(tauriCore.invoke).mockResolvedValue(true);
-    vi.mocked(pluginBridge.findPluginBridgePort).mockResolvedValue('1234');
-    await queueStudioReplacements({ a: 'b' });
-    expect(tauriCore.invoke).toHaveBeenCalledWith('push_to_studio', {
-      replacementsMap: { a: 'b' },
-      pluginPort: '1234',
+  it('sends the explicit window, operation and animation mode', async () => {
+    await queueStudioReplacements(
+      { '123': '456' },
+      { '123': ['Workspace.Animation'] },
+      { sessionId: 'two', operationId: 'operation', animationMode: 'clip_parent' },
+    );
+    expect(invoke).toHaveBeenCalledWith('push_to_studio', {
+      replacementsMap: [{ originalId: '123', newId: '456', targetPaths: ['Workspace.Animation'] }],
+      sessionId: 'two',
+      operationId: 'operation',
+      animationMode: 'clip_parent',
     });
   });
 
-  it('falls back to default plugin port if findPluginBridgePort returns null', async () => {
-    vi.mocked(tauriCore.invoke).mockResolvedValue(true);
-    vi.mocked(pluginBridge.findPluginBridgePort).mockResolvedValue(null);
-    await queueStudioReplacements({ a: 'b' });
-    expect(tauriCore.invoke).toHaveBeenCalledWith('push_to_studio', {
-      replacementsMap: { a: 'b' },
-      pluginPort: '14285',
-    });
+  it('never falls back to another window after the captured window disconnects', async () => {
+    useStudioSessionsStore.setState((state) => ({
+      sessions: state.sessions.filter((session) => session.sessionId !== 'one'),
+      selectedSessionId: 'two',
+    }));
+    await expect(
+      queueStudioReplacements({ '123': '456' }, {}, { sessionId: 'one' }),
+    ).rejects.toThrow(/disconnected/);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('propagates backend rejection without replaying the command', async () => {
+    vi.mocked(invoke).mockRejectedValue(new Error('Window busy'));
+    await expect(queueStudioReplacements({ '123': '456' })).rejects.toThrow('Window busy');
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 });

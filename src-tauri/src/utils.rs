@@ -216,7 +216,7 @@ fn parse_wininet_proxy(raw: &str) -> Option<String> {
 }
 
 #[cfg(not(windows))]
-fn system_proxy() -> Option<String> {
+const fn system_proxy() -> Option<String> {
     None
 }
 

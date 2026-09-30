@@ -31,7 +31,6 @@ pub fn open_frontend_devtools(app: AppHandle) {
 #[tauri::command]
 #[specta::specta]
 pub fn window_close(app: AppHandle) {
-    crate::commands::startup::uninstall_roblox_plugin();
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.close();
     }
@@ -40,7 +39,6 @@ pub fn window_close(app: AppHandle) {
 #[tauri::command]
 #[specta::specta]
 pub fn quit_app(app: AppHandle) {
-    crate::commands::startup::uninstall_roblox_plugin();
     app.exit(0);
 }
 

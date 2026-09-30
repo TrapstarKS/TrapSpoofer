@@ -6,7 +6,6 @@ import {
   ClipboardPaste,
   FileBox,
   History,
-  KeyRound,
   Loader2,
   MonitorPlay,
   PartyPopper,
@@ -111,9 +110,8 @@ function SetupChecklist() {
   const { studioConnected, studioPlaceName } = useStudioConnectionState();
 
   const hasAccount = target.userId !== 'none' && target.cookie.length > 0;
-  const hasApiKey = target.apiKey.length >= 20;
-  const ready = hasAccount && hasApiKey && studioConnected;
-  const doneCount = [hasAccount, hasApiKey, studioConnected].filter(Boolean).length;
+  const ready = hasAccount && studioConnected;
+  const doneCount = [hasAccount, studioConnected].filter(Boolean).length;
 
   return (
     <Panel>
@@ -123,7 +121,7 @@ function SetupChecklist() {
         description={t('home.checklist.subtitle')}
         actions={
           <Badge tone={ready ? 'ok' : 'idle'} className="tabular-nums">
-            {doneCount}/3
+            {doneCount}/2
           </Badge>
         }
       />
@@ -151,25 +149,6 @@ function SetupChecklist() {
 
         <ChecklistStep
           index={2}
-          done={hasApiKey}
-          icon={<KeyRound size={14} />}
-          title={t('home.checklist.apiKey')}
-          description={hasApiKey ? t('home.checklist.apiKeyOk') : t('home.checklist.apiKeyHelp')}
-        >
-          {!hasApiKey && (
-            <Button
-              size="sm"
-              variant={hasAccount ? 'default' : 'outline'}
-              onClick={() => goTo('accounts')}
-            >
-              {t('home.checklist.addApiKey')}
-              <ArrowRight />
-            </Button>
-          )}
-        </ChecklistStep>
-
-        <ChecklistStep
-          index={3}
           done={studioConnected}
           icon={<MonitorPlay size={14} />}
           title={t('home.checklist.plugin')}
@@ -185,7 +164,7 @@ function SetupChecklist() {
         </ChecklistStep>
 
         <ChecklistStep
-          index={4}
+          index={3}
           done={ready}
           last
           icon={<PartyPopper size={14} />}

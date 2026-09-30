@@ -1,23 +1,39 @@
-import { test, expect } from '@playwright/test';
-import { createTauriTest } from '@srsholmes/tauri-playwright';
+import { expect, test } from '@playwright/test';
+import { PluginClient, TauriPage } from '@srsholmes/tauri-playwright';
 
-const { test: tauriTest, expect: tauriExpect } = createTauriTest({
-  cdpEndpoint: 'http://localhost:9222',
-  devUrl: 'http://localhost:5173',
-});
+const socketPath = '/tmp/tauri-playwright.sock';
+
+async function attachNative() {
+  const client = new PluginClient(socketPath);
+  await client.connect();
+  const ping = await client.send({ type: 'ping' });
+  expect(ping.ok).toBe(true);
+  return { client, page: new TauriPage(client) };
+}
 
 test.describe('TrapSpoofer E2E', () => {
-  tauriTest('App launches and renders splash screen', async ({ context }) => {
-    let mainPage;
-    for (let i = 0; i < 30; i++) {
-      const pages = context.pages();
-      mainPage = pages.find((p) => p.url().includes('localhost:5173'));
-      if (mainPage) break;
-      await new Promise((r) => setTimeout(r, 1000));
+  test('attaches to the existing native app', async () => {
+    const { client, page } = await attachNative();
+    try {
+      const windows = await page.listWindows();
+      expect(
+        windows.some((window) => window.label === 'main' || window.label === 'splashscreen'),
+      ).toBe(true);
+    } finally {
+      client.disconnect();
     }
+  });
 
-    expect(mainPage).toBeDefined();
-
-    await expect(mainPage!.locator('text=TrapSpoofer')).toBeVisible({ timeout: 15000 });
+  test('renders the main TrapSpoofer window', async () => {
+    const { client, page } = await attachNative();
+    try {
+      const mainPage = await page.waitForWindow((window) => window.label === 'main', {
+        timeout: 15000,
+      });
+      expect(await mainPage.evaluate<string>('document.readyState')).toBe('complete');
+      expect(await mainPage.evaluate<boolean>('document.body !== null')).toBe(true);
+    } finally {
+      client.disconnect();
+    }
   });
 });

@@ -3,6 +3,8 @@ use validator::Validate;
 
 #[derive(serde::Deserialize, specta::Type, Validate)]
 pub struct SpooferActionRequest {
+    #[serde(rename = "jobId")]
+    pub job_id: Option<String>,
     #[validate(length(min = 1))]
     pub assets: Option<String>,
     pub cookie: Option<String>,

@@ -135,7 +135,7 @@ function ProgressHeader() {
 /* Per-asset statuses                                                  */
 /* ------------------------------------------------------------------ */
 
-type Bucket = 'active' | 'error' | 'done' | 'queued';
+type Bucket = 'active' | 'error' | 'done' | 'queued' | 'skipped' | 'cancelled';
 
 const ACTIVE: AssetStage[] = [
   'resolving_location',
@@ -145,21 +145,28 @@ const ACTIVE: AssetStage[] = [
   'uploading',
 ];
 
-function bucketOf(stage: AssetStage, message?: string): Bucket {
+function bucketOf(stage: AssetStage): Bucket {
   if (stage === 'error') return 'error';
-  if (stage === 'done' || stage === 'skipped') return 'done';
-  if (stage === 'downloading' && message && /fila|queue/i.test(message)) return 'queued';
+  if (stage === 'done' || stage === 'skipped' || stage === 'cancelled') return stage;
   if (ACTIVE.includes(stage)) return 'active';
   return 'queued';
 }
 
-const ORDER: Record<Bucket, number> = { active: 0, error: 1, queued: 2, done: 3 };
+const ORDER: Record<Bucket, number> = {
+  active: 0,
+  error: 1,
+  queued: 2,
+  done: 3,
+  skipped: 4,
+  cancelled: 5,
+};
 
 function StageIcon({ stage, bucket }: { stage: AssetStage; bucket: Bucket }) {
   if (bucket === 'queued') return <CircleDashed size={15} className="text-text-muted" />;
   if (stage === 'done') return <CheckCircle2 size={15} className="text-success" />;
   if (stage === 'skipped') return <SkipForward size={15} className="text-warning" />;
-  if (stage === 'error') return <XCircle size={15} className="text-danger" />;
+  if (stage === 'error' || stage === 'cancelled')
+    return <XCircle size={15} className="text-danger" />;
   if (stage === 'uploading') return <Upload size={15} className="text-brand" />;
   if (stage === 'downloading') return <Download size={15} className="text-info" />;
   return <Search size={15} className="text-info" />;
@@ -211,14 +218,21 @@ function AssetStatusList() {
       name: meta[id]?.name ?? `Asset ${id}`,
       stage: st.stage,
       message: st.message,
-      bucket: bucketOf(st.stage, st.message),
+      bucket: bucketOf(st.stage),
     }));
     list.sort((a, b) => ORDER[a.bucket] - ORDER[b.bucket]);
     return list;
   }, [statuses, meta]);
 
   const counts = useMemo(() => {
-    const c: Record<Bucket, number> = { active: 0, error: 0, done: 0, queued: 0 };
+    const c: Record<Bucket, number> = {
+      active: 0,
+      error: 0,
+      done: 0,
+      queued: 0,
+      skipped: 0,
+      cancelled: 0,
+    };
     for (const r of rows) c[r.bucket] += 1;
     return c;
   }, [rows]);
@@ -234,6 +248,8 @@ function AssetStatusList() {
     { id: 'queued', count: counts.queued },
     { id: 'error', count: counts.error },
     { id: 'done', count: counts.done },
+    { id: 'skipped', count: counts.skipped },
+    { id: 'cancelled', count: counts.cancelled },
   ];
 
   return (

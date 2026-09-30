@@ -9,6 +9,7 @@ export interface SessionSource {
   /** Place name, file name or "IDs colados". */
   label: string;
   filePath?: string;
+  studioSessionId?: string;
   placeId?: string | null;
   scannedAt: number;
 }
@@ -146,7 +147,7 @@ export function isOwnedBy(
 ): boolean | undefined {
   if (!owner?.creatorId) return undefined;
   const type = (owner.creatorType || '').toLowerCase();
-  if (groupId && groupId !== 'none' && type.includes('group')) return owner.creatorId === groupId;
+  if (groupId && groupId !== 'none') return type === 'group' && owner.creatorId === groupId;
   if (userId && userId !== 'none' && type.includes('user')) return owner.creatorId === userId;
   return false;
 }

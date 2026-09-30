@@ -1,7 +1,7 @@
 import * as tauriCore from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DEFAULT_APP_CONFIG, useConfigStore } from './configStore';
+import { AppConfigSchema, DEFAULT_APP_CONFIG, useConfigStore } from './configStore';
 
 vi.mock('../utils/tauriRuntime', () => ({
   isTauriRuntime: vi.fn().mockReturnValue(true),
@@ -29,6 +29,27 @@ describe('configStore', () => {
   it('initializes with default config', () => {
     const { config } = useConfigStore.getState();
     expect(config).toEqual(DEFAULT_APP_CONFIG);
+  });
+
+  it('migrates a retired animation mode without dropping account or upload settings', () => {
+    const saved = {
+      ...DEFAULT_APP_CONFIG,
+      spoofing: {
+        ...DEFAULT_APP_CONFIG.spoofing,
+        animationMode: 'track_loader',
+        selectedUser: '12345',
+        selectedGroup: '67890',
+      },
+    };
+    const next = AppConfigSchema.parse(saved);
+    expect(next.spoofing.animationMode).toBe('animation');
+    expect(next.spoofing.selectedUser).toBe('12345');
+    expect(next.spoofing.selectedGroup).toBe('67890');
+    for (const animationMode of ['clip_replace', 'clip_parent'])
+      expect(
+        AppConfigSchema.parse({ ...saved, spoofing: { ...saved.spoofing, animationMode } }).spoofing
+          .animationMode,
+      ).toBe(animationMode);
   });
 
   it('updates a specific config value', () => {

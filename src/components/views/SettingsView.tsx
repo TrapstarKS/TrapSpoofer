@@ -13,6 +13,7 @@ import CredentialsCard from './settings/CredentialsCard';
 import DangerCard from './settings/DangerCard';
 import DebugCard from './settings/DebugCard';
 import PermissionsCard from './settings/PermissionsCard';
+import UpdatesCard from './settings/UpdatesCard';
 
 type SectionId = 'general' | 'uploads' | 'advanced';
 
@@ -93,6 +94,7 @@ export default function SettingsView() {
                 <CredentialsCard />
                 <AppearanceCard />
                 <BehaviorCard />
+                <UpdatesCard />
               </>
             )}
             {section === 'uploads' && (

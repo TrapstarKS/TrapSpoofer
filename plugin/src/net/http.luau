@@ -51,6 +51,14 @@ local function postJson(endpoint: string, payload: any): (boolean, any)
 		return false, nil
 	end
 
+	local targetUrl = BASE_URL
+	local headers = {
+		["Content-Type"] = "application/json",
+		["x-trapspoofer-session"] = STUDIO_SESSION_ID,
+	}
+	if string.sub(endpoint, 1, 6) == "/scan-" and ACTIVE_SCAN_ID then
+		headers["x-trapspoofer-scan"] = ACTIVE_SCAN_ID
+	end
 	local maxAttempts = if endpoint == "/patch-progress" then 1 else 3
 	local attempt = 0
 
@@ -58,11 +66,9 @@ local function postJson(endpoint: string, payload: any): (boolean, any)
 		attempt += 1
 		local ok, response = pcall(function()
 			return HttpService:RequestAsync({
-				Url = BASE_URL .. endpoint,
+				Url = targetUrl .. endpoint,
 				Method = "POST",
-				Headers = {
-					["Content-Type"] = "application/json",
-				},
+				Headers = headers,
 				Body = body,
 			})
 		end)
@@ -74,6 +80,9 @@ local function postJson(endpoint: string, payload: any): (boolean, any)
 					warn("[TrapSpoofer] Invalid JSON response from " .. endpoint)
 				end
 				return false, nil
+			end
+			if type(decoded) == "table" and decoded.success == false then
+				return false, decoded
 			end
 			return true, decoded
 		end

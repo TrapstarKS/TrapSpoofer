@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo } from 'react';
 
 import { type AppConfig, useConfigStore } from '../stores/configStore';
-import { useSessionStore } from '../stores/sessionStore';
+import type { AssetStage } from '../stores/spooferStore';
 import { applyReplacements, useSpooferStore } from '../stores/spooferStore';
 import type {
   SpooferLogPayload,
@@ -10,6 +10,14 @@ import type {
   SpooferStartedPayload,
 } from '../types/tauriEvents';
 import { serviceText } from '../utils/i18n/serviceText';
+import {
+  acceptsJobEvent,
+  countJobResults,
+  normalizeJobResults,
+  stageFromResult,
+  terminalStages,
+  transferStage,
+} from '../utils/jobProgress';
 import { logIsm } from '../utils/robloxProfiles';
 import { appendSpoofingLog } from '../utils/spoofingLogs';
 import { isTauriRuntime } from '../utils/tauriRuntime';
@@ -59,18 +67,36 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setAssetStatus,
       } = useSpooferStore.getState();
 
+      const accepts = (jobId?: string) => {
+        const state = useSpooferStore.getState();
+        return acceptsJobEvent(state.activeSpooferJobId, state.isSpoofing, jobId);
+      };
+
       const p1 = listen<SpooferStartedPayload>('spoofer-started', (e) => {
+        const jobId = e.payload.job_id ?? e.payload.jobId;
+        const state = useSpooferStore.getState();
+        if (state.activeSpooferJobId && state.activeSpooferJobId !== jobId) return;
+        if (!state.activeSpooferJobId) {
+          useSpooferStore.setState({
+            assetMetadataMap: {},
+            assetStatuses: {},
+            lastAssetResults: [],
+            jobTarget: null,
+            lastJobTarget: null,
+            spoofTotalCount: 0,
+            isJobPaused: false,
+          });
+        }
         setIsSpoofing(true);
-        setSpoofingLogs([]);
         setSpoofProgress(0);
         setSpoofStatusText('Initializing...');
         setSpoofCurrentCount(0);
-        setSpoofTotalCount(0);
         setSpoofStartTime(Date.now());
         setActiveSpooferJobId(e.payload.job_id ?? e.payload.jobId);
       });
 
       const p2 = listen<SpooferLogPayload>('spoofer-log', (e) => {
+        if (e.payload.jobId && !accepts(e.payload.jobId)) return;
         let msg = e.payload.message ?? '';
         const rawLevel = (e.payload.level || 'info').toUpperCase();
 
@@ -78,29 +104,17 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           msg = `[${rawLevel}] ${msg}`;
         }
 
-        const processingMatch = msg.match(/Processing asset (\S+)\s+\((\d+)\/(\d+)\)/);
-        if (processingMatch) {
-          const assetId = processingMatch[1];
-          setAssetStatus(assetId, { stage: 'downloading' });
-        }
-
-        if (msg.toLowerCase().includes('upload') && msg.includes('asset')) {
-          const uploadMatch = msg.match(/asset (\S+)/i);
-          if (uploadMatch) {
-            setAssetStatus(uploadMatch[1], { stage: 'uploading' });
-          }
-        }
-
         setSpoofingLogs((prev) => appendSpoofingLog(prev, msg));
       });
 
       const p3 = listen<SpooferProgressPayload>('spoofer-progress', (e) => {
+        if (!accepts(e.payload.jobId)) return;
         if (e.payload.message) {
           setSpoofStatusText(e.payload.message);
         }
 
         if (e.payload.current !== undefined) {
-          setSpoofCurrentCount(e.payload.current);
+          setSpoofCurrentCount((previous) => Math.max(previous, e.payload.current ?? 0));
         }
 
         if (e.payload.total !== undefined) {
@@ -114,41 +128,52 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           e.payload.total !== undefined &&
           e.payload.total > 0
         ) {
-          setSpoofProgress((e.payload.current / e.payload.total) * 100);
+          setSpoofProgress(
+            Math.min(100, (useSpooferStore.getState().spoofCurrentCount / e.payload.total) * 100),
+          );
         }
       });
 
       const p4 = listen<SpooferResultPayload>('spoofer-result', (e) => {
-        const startTime = useSpooferStore.getState().spoofStartTime;
+        if (!accepts(e.payload.jobId)) return;
+        const state = useSpooferStore.getState();
+        const target = state.jobTarget;
+        const startTime = state.spoofStartTime;
+        const results = normalizeJobResults(
+          e.payload.assetResults ?? e.payload.results ?? [],
+          state.assetMetadataMap,
+          e.payload.error || e.payload.output || 'Job stopped before this asset finished',
+          e.payload.cancelled,
+        );
         setIsSpoofing(false);
         setActiveSpooferJobId(null);
         setSpoofStartTime(null);
-        setLastAssetResults(e.payload.assetResults ?? e.payload.results ?? []);
+        setLastAssetResults(results);
         setKeyframeWarningCount(e.payload.keyframe_warnings ?? 0);
         incrementSpoofCompletionVersion();
-
-        const results = e.payload.assetResults ?? e.payload.results ?? [];
+        useSpooferStore.setState({
+          isJobPaused: false,
+          jobTarget: null,
+          lastJobTarget: target?.studioSessionId
+            ? {
+                studioSessionId: target.studioSessionId,
+                animationMode: target.animationMode,
+              }
+            : null,
+          lastJobSource: target?.source ?? null,
+        });
         for (const result of results) {
           if (!result.id) continue;
-          if (result.skipped) {
-            setAssetStatus(String(result.id), {
-              stage: 'skipped',
-              message: result.reason || result.errorReason,
-            });
-          } else if (result.success) {
-            setAssetStatus(String(result.id), { stage: 'done' });
-          } else {
-            setAssetStatus(String(result.id), {
-              stage: 'error',
-              message: result.errorReason || result.reason || 'Failed',
-            });
-          }
+          setAssetStatus(result.id, {
+            stage: stageFromResult(result),
+            message: result.errorReason || result.reason,
+          });
         }
-
-        const total = results.length;
-        const ok = results.filter((r) => r.success).length;
-        const skipped = results.filter((r) => r.skipped).length;
-        const failed = results.filter((r) => !r.success && !r.skipped).length;
+        const counts = countJobResults(results);
+        const { total, completed: ok, skipped, errors: failed, cancelled } = counts;
+        setSpoofCurrentCount(total);
+        setSpoofTotalCount(total);
+        setSpoofProgress(total ? 100 : 0);
         const durationMs = startTime ? Date.now() - startTime : 0;
         const durationSec = (durationMs / 1000).toFixed(2);
         const avgMsPerAsset = Math.round(durationMs / Math.max(1, total));
@@ -157,15 +182,10 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (e.payload.error) {
           level = 'error';
           message = `Spoofing job stopped: ${e.payload.error}`;
-        } else if (failed === 0 && total > 0) {
-          level = 'success';
-          message = `Spoofing finished! All ${total} asset(s) were successfully uploaded in ${durationSec}s (${avgMsPerAsset}ms/asset${skipped ? `, ${skipped} skipped` : ''}).`;
-        } else if (ok === 0) {
-          level = 'error';
-          message = `None of the ${total} asset(s) could be spoofed. Check the Console tab for detailed error logs.`;
         } else {
-          level = 'info';
-          message = `Spoofing complete: ${ok} succeeded, ${failed} failed${skipped ? `, ${skipped} skipped` : ''} out of ${total} asset(s) in ${durationSec}s (${avgMsPerAsset}ms/asset).`;
+          level =
+            failed > 0 && ok === 0 ? 'error' : failed > 0 || cancelled > 0 ? 'info' : 'success';
+          message = `Job finished: ${ok} completed, ${skipped} skipped, ${failed} failed, ${cancelled} cancelled out of ${total} assets in ${durationSec}s (${avgMsPerAsset}ms/asset).`;
         }
         useSpooferStore.getState().showToast(level, message, 6000);
         logIsm(
@@ -189,29 +209,25 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
             useSpooferStore.getState().setLastReplacements(mergedReplacements);
 
-            const toApply =
-              Object.keys(newBatchReplacements).length > 0
-                ? newBatchReplacements
-                : mergedReplacements;
-            const session = useSessionStore.getState();
-            const autoApply =
-              session.autoApplyOverride ??
-              useConfigStore.getState().config.general.autoApplyResults;
-            if (session.autoApplyOverride !== null) {
-              useSessionStore.setState({ autoApplyOverride: null });
-            }
-            if (session.source?.kind === 'file') {
+            const toApply = newBatchReplacements;
+            const autoApply = target?.autoApply ?? false;
+            if (target?.source?.kind === 'file') {
               setSpoofingLogs((prev) =>
                 appendSpoofingLog(prev, `[INFO] ${serviceText('fileModeHint')}`),
               );
-            } else if (autoApply) {
-              applyReplacements(toApply, true);
+            } else if (autoApply && target?.studioSessionId && Object.keys(toApply).length > 0) {
+              void applyReplacements(
+                toApply,
+                true,
+                target?.studioSessionId ?? undefined,
+                target?.animationMode,
+              ).catch((error) => {
+                useSpooferStore.getState().showToast('error', String(error), 6000);
+              });
             }
           }
 
-          const storeState = useConfigStore.getState();
-          const currentConfig = storeState.config;
-          const permissionsConfig = currentConfig.permissions;
+          const permissionsConfig = target?.permissions;
           if (permissionsConfig?.enabled && permissionsConfig.subjectIds?.trim()) {
             const rawIds: unknown[] = [];
             if (e.payload.replacements) {
@@ -219,7 +235,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             }
             if (e.payload.assetResults) {
               for (const r of e.payload.assetResults as any[]) {
-                const newId = r.new_asset_id || r.newAssetId;
+                const newId = r.newId || r.new_asset_id || r.newAssetId;
                 if (newId) {
                   rawIds.push(newId);
                 }
@@ -241,35 +257,8 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 .filter(Boolean);
 
               if (subjectIds.length > 0) {
-                const selectedUser = currentConfig.spoofing.selectedUser;
-                const accountSecrets = storeState.accountSecrets;
-                let apiKey =
-                  (selectedUser !== 'none' ? accountSecrets[selectedUser]?.apiKey : null) ||
-                  currentConfig.spoofing.apiKey?.trim() ||
-                  null;
-                let cookie =
-                  (selectedUser !== 'none' ? accountSecrets[selectedUser]?.cookie : null) ||
-                  currentConfig.spoofing.cookie?.trim() ||
-                  null;
-
-                if (!cookie && currentConfig.accounts?.length) {
-                  for (const acc of currentConfig.accounts) {
-                    const candidate = accountSecrets[acc.id]?.cookie?.trim();
-                    if (candidate) {
-                      cookie = candidate;
-                      break;
-                    }
-                  }
-                }
-                if (!apiKey && currentConfig.accounts?.length) {
-                  for (const acc of currentConfig.accounts) {
-                    const candidate = accountSecrets[acc.id]?.apiKey?.trim();
-                    if (candidate) {
-                      apiKey = candidate;
-                      break;
-                    }
-                  }
-                }
+                const apiKey = target?.apiKey || null;
+                const cookie = target?.cookie || null;
 
                 console.log(
                   '[AssetPermissions] Auto-granting permissions for asset IDs:',
@@ -355,70 +344,71 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         status?: string;
         error?: string;
       }>('transfer-update', (e) => {
+        const state = useSpooferStore.getState();
+        const jobId = state.activeSpooferJobId;
+        if (!jobId || !state.isSpoofing) return;
         const payload = e.payload;
-        const assetId = payload.original_asset_id || payload.id;
-        if (!assetId) return;
-
-        const rawStatus = payload.status || '';
-        if (rawStatus.startsWith('downloading:')) {
-          const progressStr = rawStatus.slice('downloading:'.length);
-          setAssetStatus(assetId, {
-            stage: 'downloading',
-            message: `Downloading (${progressStr})...`,
-          });
-        } else if (rawStatus === 'resolving_location') {
-          setAssetStatus(assetId, {
-            stage: 'resolving_location',
-            message: 'Checking direct Place IDs...',
-          });
-        } else if (rawStatus === 'discovering_usage') {
-          setAssetStatus(assetId, {
-            stage: 'discovering_usage',
-            message: 'Discovering Place IDs (Asset Usage)...',
-          });
-        } else if (rawStatus === 'discovering_graph') {
-          setAssetStatus(assetId, {
-            stage: 'discovering_graph',
-            message: 'Discovering Place IDs (Creator Graph)...',
-          });
-        } else if (rawStatus === 'uploading') {
-          setAssetStatus(assetId, {
-            stage: 'uploading',
-            message: 'Uploading...',
-          });
-        } else if (rawStatus === 'done' || rawStatus === 'completed') {
-          setAssetStatus(assetId, { stage: 'done', message: 'Completed' });
-        } else if (rawStatus === 'failed_discovery') {
-          setAssetStatus(assetId, {
-            stage: 'error',
-            message: payload.error || 'Failed: No Place ID found',
-          });
-        } else if (rawStatus === 'failed_download') {
-          setAssetStatus(assetId, {
-            stage: 'error',
-            message: payload.error || 'Failed: Download rejected',
-          });
-        } else if (payload.error) {
-          setAssetStatus(assetId, { stage: 'error', message: payload.error });
-        }
+        const assetId = payload.original_asset_id || payload.id.split(':').at(-1) || '';
+        const current = state.assetStatuses[assetId];
+        if (!current || !Object.hasOwn(state.assetMetadataMap, assetId)) return;
+        const stage = transferStage(current.stage, payload.id, payload.status, jobId);
+        if (stage) setAssetStatus(assetId, { stage, message: payload.error || payload.status });
       });
 
-      const p6 = listen<{ current?: number; total?: number }>('patch-progress', (e) => {
+      const p9 = listen<{ jobId: string; id: string; stage: AssetStage; message?: string }>(
+        'spoofer-asset-status',
+        (e) => {
+          if (!accepts(e.payload.jobId)) return;
+          const state = useSpooferStore.getState();
+          const current = state.assetStatuses[e.payload.id];
+          if (!current || terminalStages.has(current.stage)) return;
+          setAssetStatus(e.payload.id, { stage: e.payload.stage, message: e.payload.message });
+        },
+      );
+
+      const p10 = listen<{
+        jobId: string;
+        total: number;
+        assets: { id: string; name?: string; type: string }[];
+      }>('spoofer-queued', (e) => {
+        if (!accepts(e.payload.jobId)) return;
+        useSpooferStore.setState({
+          spoofTotalCount: e.payload.total,
+          assetMetadataMap: Object.fromEntries(
+            e.payload.assets.map((asset) => [
+              asset.id,
+              { name: asset.name || `Asset ${asset.id}`, type: asset.type },
+            ]),
+          ),
+          assetStatuses: Object.fromEntries(
+            e.payload.assets.map((asset) => [asset.id, { stage: 'queued' }]),
+          ),
+        });
+      });
+
+      const p6 = listen<{
+        sessionId?: string;
+        operationId?: string;
+        current?: number;
+        total?: number;
+      }>('patch-progress', (e) => {
+        const state = useSpooferStore.getState();
+        if (
+          !state.isReplacing ||
+          e.payload.sessionId !== state.replacingSessionId ||
+          e.payload.operationId !== state.replacementOperationId
+        )
+          return;
         const { current, total } = e.payload;
         if (typeof current === 'number') {
-          useSpooferStore.getState().setReplaceCurrentCount(current);
+          useSpooferStore
+            .getState()
+            .setReplaceCurrentCount(Math.max(state.replaceCurrentCount, current));
         }
         if (typeof total === 'number') {
           useSpooferStore.getState().setReplaceTotalCount(total);
         }
       });
-
-      const p7 = listen<{ succeeded?: number; failed?: number; total?: number }>(
-        'patch-results',
-        () => {
-          useSpooferStore.getState().setIsReplacing(false);
-        },
-      );
 
       const p8 = listen<{ current?: number; total?: number; assetId?: number }>(
         'asset-permissions-progress',
@@ -438,7 +428,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         invoke('set_plugin_batch_size', { batchSize: currentBatch }).catch(() => {});
       });
 
-      const uns = await Promise.all([p1, p2, p3, p4, p5, p6, p7, p8]);
+      const uns = await Promise.all([p1, p2, p3, p4, p5, p6, p8, p9, p10]);
       if (!isMounted) {
         uns.forEach((u) => u());
       } else {

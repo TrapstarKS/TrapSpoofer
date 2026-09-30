@@ -12,6 +12,7 @@ pub struct NotificationOptions {
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_app_cache(app: AppHandle) -> crate::error::Result<bool> {
+    crate::domain::asset_owners::clear()?;
     let cache_dir = app.path().app_cache_dir()?;
     match tokio::fs::remove_dir_all(&cache_dir).await {
         Ok(()) => {}

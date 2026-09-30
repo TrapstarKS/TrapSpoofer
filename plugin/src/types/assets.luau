@@ -20,6 +20,7 @@ type PatchAction =
 	| "replaceAttribute"
 	| "replaceScriptSource"
 	| "replaceMeshPart"
+	| "replaceAnimationClip"
 
 type Patch = {
 	token: string,
@@ -29,4 +30,7 @@ type Patch = {
 	value: any,
 	meshId: string?,
 	textureId: string?,
+	animationMode: string?,
+	expectedValue: string?,
+	operationId: string?,
 }

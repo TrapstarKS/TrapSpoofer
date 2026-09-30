@@ -19,6 +19,7 @@ local VALID_PATCH_ACTIONS: { [string]: boolean } = {
 	replaceAttribute = true,
 	replaceScriptSource = true,
 	replaceMeshPart = true,
+	replaceAnimationClip = true,
 }
 
 local function normalizeAssetId(value: any): string?
@@ -203,6 +204,9 @@ local function normalizePatch(rawPatch: any): (Patch?, string?)
 		fullName = if rawPatch.fullName ~= nil then tostring(rawPatch.fullName) else nil,
 		action = rawPatch.action :: PatchAction,
 		property = property,
+		animationMode = rawPatch.animationMode,
+		expectedValue = rawPatch.expectedValue,
+		operationId = rawPatch.operationId,
 		value = rawPatch.value,
 		meshId = if rawPatch.meshId ~= nil then tostring(rawPatch.meshId) else nil,
 		textureId = if rawPatch.textureId ~= nil then tostring(rawPatch.textureId) else nil,
@@ -253,6 +257,147 @@ local function validateTags(decoded: any): (boolean, string?)
 	return true, nil
 end
 
+local animationClipCache: { [string]: AnimationClip } = {}
+local animationClipOrder: { string } = {}
+
+local function clearAnimationClipCache()
+	for _, clip in pairs(animationClipCache) do
+		clip:Destroy()
+	end
+	table.clear(animationClipCache)
+	table.clear(animationClipOrder)
+end
+
+local function loadAnimationClip(assetId: string): AnimationClip
+	local cached = animationClipCache[assetId]
+	if cached then
+		return cached:Clone()
+	end
+	local clip
+	for attempt = 1, 3 do
+		local source = game:GetService("AnimationClipProvider")
+			:GetAnimationClipAsync("rbxassetid://" .. assetId)
+		if not source or not (source:IsA("KeyframeSequence") or source:IsA("CurveAnimation")) then
+			error("Roblox did not return a KeyframeSequence or CurveAnimation")
+		end
+		if #source:GetChildren() > 0 then
+			clip = source:Clone()
+			break
+		end
+		if attempt < 3 then
+			task.wait(0.25 * attempt)
+		end
+	end
+	if not clip then
+		error("Roblox returned an empty animation clip; the original Animation was preserved")
+	end
+	clip.Archivable = true
+	if #animationClipOrder >= 64 then
+		local oldest = table.remove(animationClipOrder, 1)
+		animationClipCache[oldest]:Destroy()
+		animationClipCache[oldest] = nil
+	end
+	animationClipCache[assetId] = clip
+	table.insert(animationClipOrder, assetId)
+	return clip:Clone()
+end
+
+local function replaceAnimationClip(obj: Instance, patch: Patch): (boolean, string?)
+	if patch.animationMode ~= "clip_parent" and patch.animationMode ~= "clip_replace" then
+		return false, "Invalid animation clip mode"
+	end
+	local assetId = normalizeAssetId(patch.value)
+	if not assetId then
+		return false, "Invalid animation asset ID"
+	end
+	if obj:IsA("AnimationClip") and obj:GetAttribute("TrapSpooferClipAssetId") == assetId then
+		return true, nil
+	end
+	if not obj:IsA("Animation") then
+		return false, "Target is not an Animation; scan again"
+	end
+	local originalParent = obj.Parent
+	local oldId = obj.AnimationId
+	local expected = normalizeAssetId(patch.expectedValue)
+	if expected and normalizeAssetId(oldId) ~= expected and normalizeAssetId(oldId) ~= assetId then
+		return false, "Animation changed since the scan; scan again"
+	end
+	local previousClip = if originalParent
+			and originalParent:IsA("AnimationClip")
+			and originalParent:GetAttribute("TrapSpooferClipContainer") == true
+		then originalParent
+		else nil
+	if
+		previousClip
+		and previousClip:GetAttribute("TrapSpooferClipAssetId") == assetId
+		and patch.animationMode == "clip_parent"
+	then
+		obj.AnimationId = "rbxassetid://" .. assetId
+		return true, nil
+	end
+	local clip = loadAnimationClip(assetId)
+	if obj.Parent ~= originalParent or obj.AnimationId ~= oldId then
+		clip:Destroy()
+		return false, "Animation changed while loading its clip; scan again"
+	end
+	local parent = if previousClip then previousClip.Parent else originalParent
+	local moved = {}
+	local ok, err = pcall(function()
+		clip.Name = if previousClip then previousClip.Name else obj.Name
+		for _, child in ipairs(clip:GetChildren()) do
+			child:SetAttribute("TrapSpooferImportedClipData", true)
+		end
+		if previousClip then
+			for key, value in pairs(previousClip:GetAttributes()) do
+				clip:SetAttribute(key, value)
+			end
+		end
+		for key, value in pairs(obj:GetAttributes()) do
+			clip:SetAttribute(key, value)
+		end
+		for _, tag in ipairs(CollectionService:GetTags(obj)) do
+			CollectionService:AddTag(clip, tag)
+		end
+		clip:SetAttribute("TrapSpooferClipAssetId", assetId)
+		clip:SetAttribute("TrapSpooferClipContainer", patch.animationMode == "clip_parent")
+		clip.Parent = parent
+		if patch.animationMode == "clip_parent" then
+			obj.AnimationId = "rbxassetid://" .. assetId
+			obj.Parent = clip
+		else
+			for _, child in ipairs(obj:GetChildren()) do
+				table.insert(moved, { child = child, parent = obj })
+				child.Parent = clip
+			end
+		end
+		if previousClip then
+			for _, child in ipairs(previousClip:GetChildren()) do
+				if child ~= obj and child:GetAttribute("TrapSpooferImportedClipData") ~= true then
+					table.insert(moved, { child = child, parent = previousClip })
+					child.Parent = clip
+				end
+			end
+		end
+	end)
+	if not ok then
+		obj.Parent = originalParent
+		obj.AnimationId = oldId
+		for _, entry in ipairs(moved) do
+			entry.child.Parent = entry.parent
+		end
+		clip:Destroy()
+		return false, tostring(err)
+	end
+	if patch.animationMode == "clip_replace" then
+		replaceRegisteredObject(patch.token, clip)
+		obj:Destroy()
+	end
+	if previousClip then
+		previousClip:Destroy()
+	end
+	return true, nil
+end
+
 local function applyPatch(patch: Patch): (boolean, string?)
 	local obj = getRegisteredObject(patch.token)
 	if not obj then
@@ -266,7 +411,9 @@ local function applyPatch(patch: Patch): (boolean, string?)
 		return false, "Studio object was destroyed or deparented before patching"
 	end
 
-	if patch.action == "setProperty" then
+	if patch.action == "replaceAnimationClip" then
+		return replaceAnimationClip(obj, patch)
+	elseif patch.action == "setProperty" then
 		if string.sub(patch.property, 1, 14) == "__Attribute__:" then
 			local attr = string.sub(patch.property, 15)
 			local okProperty, propertyErr = validatePropertyName(attr)
@@ -535,6 +682,7 @@ local function applyPatches(patches: any)
 		return
 	end
 
+	local operationId = patches[1] and patches[1].operationId
 	patchRunning = true
 	setPluginGuiStatus(string.format("Applying %d replacement(s)...", #patches))
 	local recording: any = nil
@@ -557,6 +705,7 @@ local function applyPatches(patches: any)
 			recording = nil
 		end
 		patchRunning = false
+		clearAnimationClipCache()
 	end
 
 	local currentBatchSize = math.clamp(manualBatchSize, 10, 500)
@@ -678,7 +827,8 @@ local function applyPatches(patches: any)
 				lastProgressPost = now
 				pcall(function()
 					postJson("/patch-progress", {
-						current = index,
+						operationId = operationId,
+						current = succeeded + failed,
 						total = #patches,
 					})
 				end)
@@ -705,14 +855,15 @@ local function applyPatches(patches: any)
 		waitForMeshSlot(0)
 		pcall(function()
 			postJson("/patch-progress", {
-				current = #patches,
+				operationId = operationId,
+				current = succeeded + failed,
 				total = #patches,
 			})
 		end)
 	end
 
 	if not batchOk then
-		failed += 1
+		failed = #patches - succeeded
 		logToPlugin("[Warning] " .. "[TrapSpoofer] Patch batch failed: " .. tostring(batchErr))
 	end
 
@@ -728,6 +879,7 @@ local function applyPatches(patches: any)
 
 	pcall(function()
 		postJson("/patch-results", {
+			operationId = operationId,
 			failedPatches = failedPatchesList,
 			succeeded = succeeded,
 			failed = failed,

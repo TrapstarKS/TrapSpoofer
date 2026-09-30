@@ -1,7 +1,8 @@
+use super::upload_auth::UploadAuth;
 use super::{
-    apply_upload_auth, emit_transfer_update, is_valid_numeric_id, patch_asset_permissions,
-    sanitize_filename, set_rate_limit, wait_rate_limit, AppHandle, Manager, PublishResult,
-    RateLimitBucket, RobloxOperationResponse, TransferUpdate, Value,
+    emit_transfer_update, is_valid_numeric_id, patch_asset_permissions, sanitize_filename,
+    set_rate_limit, wait_rate_limit, AppHandle, Manager, PublishResult, RateLimitBucket,
+    RobloxOperationResponse, TransferUpdate, Value,
 };
 use serde::Serialize;
 use tauri::Emitter;
@@ -83,16 +84,13 @@ async fn poll_roblox_operation(
     app: &AppHandle,
     client: &reqwest::Client,
     operation_path: &str,
-    api_key: &str,
+    auth: &UploadAuth,
     transfer_id: &str,
     name: &str,
     original_asset_id: Option<&str>,
     poll_interval_ms: Option<u32>,
 ) -> Result<String, String> {
-    let path = operation_path.trim_start_matches('/');
-    let path =
-        if path.starts_with("assets/v1/") { path.to_string() } else { format!("assets/v1/{path}") };
-    let url = format!("https://apis.roblox.com/{path}");
+    let url = auth.operation_url(operation_path)?;
     let target_interval = u64::from(poll_interval_ms.unwrap_or(250).clamp(100, 2000));
     for attempt in 0..150 {
         if attempt > 0 {
@@ -106,7 +104,7 @@ async fn poll_roblox_operation(
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
         wait_rate_limit(RateLimitBucket::OperationPoll).await;
-        let resp = match apply_upload_auth(client.get(&url), api_key).send().await {
+        let resp = match auth.apply(client.get(&url)).send().await {
             Ok(r) => r,
             Err(e) => return Err(format!("Operation poll request failed: {e}")),
         };
@@ -114,7 +112,10 @@ async fn poll_roblox_operation(
             crate::commands::spoofer::record_explicit_rate_limit(wait_ms);
         }
         if !resp.status().is_success() {
-            if resp.status() == 429 || resp.status() == 403 {
+            if resp.status() == 401 || resp.status() == 403 {
+                return Err(auth.authorization_error(resp.status().as_u16()));
+            }
+            if resp.status() == 429 {
                 let retry_after_ms = crate::utils::extract_retry_after(&resp, None).unwrap_or(2000);
                 if resp.status() == 429 {
                     crate::commands::spoofer::record_adaptive_rate_limit(Some(retry_after_ms));
@@ -168,7 +169,7 @@ async fn poll_roblox_operation(
             }
         }
     }
-    Err("Asset processing timed out after 120 seconds. Roblox may still be processing the asset in the background.".into())
+    Err("Asset processing timed out. Roblox may still be processing this upload; check Creator Hub before uploading it again.".into())
 }
 
 struct UploadKind {
@@ -473,32 +474,7 @@ pub async fn publish_asset_with_hooks(
     let mut final_asset_id = None;
 
     {
-        let upload_api_key = match &api_key {
-            Some(k) if !k.trim().is_empty() => k.clone(),
-            _ => {
-                let msg = "Uploading assets requires an Open Cloud API key. Please configure your API key in Settings or Accounts.".to_string();
-                emit_transfer_update(
-                    &app,
-                    TransferUpdate {
-                        id: transfer_id.clone(),
-                        status: Some("error".into()),
-                        error: Some(msg.clone()),
-                        progress: Some(0),
-                        name: None,
-                        original_asset_id: None,
-                        direction: None,
-                        size: None,
-                        new_asset_id: None,
-                    },
-                );
-                return Ok(PublishResult {
-                    success: false,
-                    error: Some(msg),
-                    asset_id: None,
-                    replaced_id: None,
-                });
-            }
-        };
+        let mut upload_auth = UploadAuth::new(api_key.as_deref(), &cookie, &csrf_token)?;
 
         let creator = if let Some(gid) = &group_id {
             UploadMetadataCreator { group_id: Some(gid.clone()), user_id: None }
@@ -541,7 +517,7 @@ pub async fn publish_asset_with_hooks(
         };
 
         let client = crate::utils::get_http_client_with_proxy(proxy_url.as_deref());
-        let url = "https://apis.roblox.com/assets/v1/assets";
+        let url = upload_auth.upload_url();
 
         let mut meta_json = serde_json::to_string(&request_metadata)?;
 
@@ -551,6 +527,7 @@ pub async fn publish_asset_with_hooks(
 
         let mut tried_type_fallback = false;
         let mut tried_name_fallback = false;
+        let mut csrf_retries = 0;
 
         for attempt in 0..300 {
             wait_rate_limit(RateLimitBucket::Upload).await;
@@ -570,11 +547,7 @@ pub async fn publish_asset_with_hooks(
                 .text("request", meta_json.clone())
                 .part("fileContent", file_part);
 
-            let resp = match apply_upload_auth(client.post(url), &upload_api_key)
-                .multipart(form)
-                .send()
-                .await
-            {
+            let resp = match upload_auth.apply(client.post(&url)).multipart(form).send().await {
                 Ok(r) => r,
                 Err(e) => {
                     upload_error = Some(e.to_string());
@@ -589,15 +562,15 @@ pub async fn publish_asset_with_hooks(
             let status = resp.status();
             let status_code = status.as_u16();
 
-            if status_code == 401 {
-                return Err(
-                    "Your Open Cloud API key is invalid or unauthorized (HTTP 401). Please verify your key in Accounts."
-                        .into(),
-                );
+            if matches!(&upload_auth, UploadAuth::Cookie { .. }) {
+                crate::utils::check_for_roblosecurity_update(&app, &resp, &cookie);
             }
-
-            if status_code == 403 {
-                return Err("Upload rejected (HTTP 403). Ensure your Open Cloud API key has 'Assets' write permissions and that your IP address (or 0.0.0.0/0) is allowed in Creator Hub.".into());
+            if csrf_retries < 2 && upload_auth.refresh_csrf(&resp) {
+                csrf_retries += 1;
+                continue;
+            }
+            if status_code == 401 || status_code == 403 {
+                return Err(upload_auth.authorization_error(status_code).into());
             }
 
             if (500..600).contains(&status_code) {
@@ -847,7 +820,7 @@ pub async fn publish_asset_with_hooks(
                 &app,
                 &client,
                 &op_path,
-                &upload_api_key,
+                &upload_auth,
                 &transfer_id,
                 &name,
                 original_asset_id.as_deref(),
@@ -886,6 +859,11 @@ pub async fn publish_asset_with_hooks(
     }
 
     if let Some(id) = final_asset_id {
+        if let Some(group_id) = &group_id {
+            crate::domain::asset_owners::remember(&id, "Group", group_id, Some(name.clone()));
+        } else if let Some(user_id) = &user_id {
+            crate::domain::asset_owners::remember(&id, "User", user_id, Some(name.clone()));
+        }
         if upload_kind.needs_universe_permissions {
             if let Some(uid) = universe_id.filter(|value| !value.trim().is_empty()) {
                 if let Some(sink) = hooks.permission_sink.as_ref() {
@@ -905,8 +883,8 @@ pub async fn publish_asset_with_hooks(
                 status: Some("completed".into()),
                 new_asset_id: Some(id.clone()),
                 name: None,
-                original_asset_id: None,
-                direction: None,
+                original_asset_id,
+                direction: Some("upload".into()),
                 error: None,
                 size: None,
             },

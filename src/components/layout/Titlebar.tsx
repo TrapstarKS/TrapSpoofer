@@ -20,6 +20,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useStudioConnectionState } from '../../contexts/StudioConnectionContext';
 import { cn } from '../../lib/utils';
 import { useSpooferStore } from '../../stores/spooferStore';
+import { useUpdaterStore } from '../../stores/updaterStore';
 import { useActiveTarget } from '../app/hooks';
 import { goTo, normalizeTab, setConsoleOpen } from '../app/nav';
 import { PluginActions } from '../app/StudioHelp';
@@ -32,7 +33,17 @@ const pill =
 
 function StudioPill() {
   const { t } = useLanguage();
-  const { studioConnected, studioPlaceName, scanStatus } = useStudioConnectionState();
+  const {
+    studioConnected,
+    studioPlaceName,
+    scanStatus,
+    studioSessions,
+    selectedStudioSessionId,
+    selectStudioSession,
+  } = useStudioConnectionState();
+  const selectionLocked = useSpooferStore(
+    (state) => state.isScanningStudio || state.isReplacing || state.isPreparingJob,
+  );
   const scanning = Boolean(scanStatus?.scanning);
   const label = studioConnected
     ? studioPlaceName?.trim() || t('shell.studio.connected')
@@ -68,6 +79,36 @@ function StudioPill() {
               : t('shell.studio.connectedHelp')
             : t('shell.studio.disconnectedHelp')}
         </p>
+        <label className="flex flex-col gap-1.5 text-xs text-text-secondary">
+          {t('shell.studio.selectWindow')}
+          <select
+            className="w-full rounded-md border border-border-subtle bg-bg-base p-2 text-text-primary"
+            value={selectedStudioSessionId ?? ''}
+            disabled={selectionLocked}
+            onChange={(event) => selectStudioSession(event.target.value)}
+          >
+            <option value="" disabled>
+              {t('shell.studio.selectWindow')}
+            </option>
+            {selectedStudioSessionId &&
+              !studioSessions.some((session) => session.sessionId === selectedStudioSessionId) && (
+                <option value={selectedStudioSessionId} disabled>
+                  {t('shell.studio.disconnected')}
+                </option>
+              )}
+            {studioSessions.map((session) => (
+              <option
+                key={session.sessionId}
+                value={session.sessionId}
+                disabled={!session.synced || session.sessionId === 'legacy'}
+              >
+                {session.studioPlaceName || t('shell.studio.untitled')} ·{' '}
+                {session.studioPlaceId || '0'} · {session.sessionId.slice(0, 8)}
+                {session.synced ? '' : ` (${t('shell.studio.disconnected')})`}
+              </option>
+            ))}
+          </select>
+        </label>
         {!studioConnected && <PluginActions />}
       </PopoverContent>
     </Popover>
@@ -205,6 +246,9 @@ export default function Titlebar() {
   const tab = normalizeTab(config.ui.activeTab);
   const consoleOpen = Boolean(config.debug?.debugMode);
   const [isPinned, setIsPinned] = useState(false);
+  const updateReady = useUpdaterStore(
+    (state) => state.status === 'ready' || state.status === 'installed',
+  );
 
   const togglePin = async () => {
     const next = !isPinned;
@@ -248,6 +292,11 @@ export default function Titlebar() {
       <div className="min-w-4 flex-1 self-stretch" data-tauri-drag-region />
 
       <div className="flex min-w-0 items-center gap-1.5" data-tauri-drag-region={false}>
+        {updateReady && (
+          <button className={pill} onClick={() => goTo('settings')}>
+            {t('prefs.updates.ready')}
+          </button>
+        )}
         <JobPill />
         <StudioPill />
         <ProfilePill />

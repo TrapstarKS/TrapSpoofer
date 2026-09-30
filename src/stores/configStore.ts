@@ -10,6 +10,7 @@ export const AppConfigSchema = z.object({
     telemetryEnabled: z.boolean().default(false),
     autoApplyResults: z.boolean().default(true),
     mcpEnabled: z.boolean().default(true),
+    autoUpdate: z.boolean().default(true),
   }),
   advanced: z.object({
     autoCookieStudio: z.boolean().default(false),
@@ -54,6 +55,10 @@ export const AppConfigSchema = z.object({
     downloadPath: z.string().default(''),
     extraAssetIds: z.string().default(''),
     preserveMetadata: z.boolean().default(true),
+    animationMode: z
+      .enum(['animation', 'clip_replace', 'clip_parent'])
+      .catch('animation')
+      .default('animation'),
   }),
   permissions: z.object({
     enabled: z.boolean().default(false),
@@ -99,6 +104,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     telemetryEnabled: false,
     autoApplyResults: true,
     mcpEnabled: true,
+    autoUpdate: true,
   },
   advanced: {
     autoCookieStudio: false,
@@ -142,6 +148,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     downloadPath: '',
     extraAssetIds: '',
     preserveMetadata: true,
+    animationMode: 'animation',
   },
   permissions: {
     enabled: false,

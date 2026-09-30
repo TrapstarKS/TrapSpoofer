@@ -24,7 +24,7 @@ export const en = {
     },
     checklist: {
       title: 'Setup checklist',
-      subtitle: 'Three quick things and you are ready to spoof.',
+      subtitle: 'Connect your account and Studio to get started.',
       done: 'Done',
       pending: 'Pending',
       account: 'Roblox account connected',
@@ -91,7 +91,7 @@ export const pt = {
     },
     checklist: {
       title: 'Checklist de configuração',
-      subtitle: 'Três coisinhas rápidas e você já pode spoofar.',
+      subtitle: 'Conecte sua conta e o Studio para começar.',
       done: 'Feito',
       pending: 'Pendente',
       account: 'Conta Roblox conectada',

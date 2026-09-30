@@ -1,28 +1,22 @@
+import { invoke } from '@tauri-apps/api/core';
+
+import { useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { addDebugLog } from './debugLogger';
-import { findPluginBridgePort } from './pluginBridge';
 import { isTauriRuntime } from './tauriRuntime';
 
-export async function getStudioPlaceIdFallback(): Promise<string> {
+export async function getStudioPlaceIdFallback(
+  sessionId = useStudioSessionsStore.getState().selectedSessionId,
+): Promise<string> {
+  if (!sessionId) return '';
   try {
-    const cached = window.localStorage.getItem('TrapSpoofer_LastStudioPlaceId') || '';
-    if (/^\d+$/.test(cached) && cached !== '0') return cached;
-  } catch (e) {
-    addDebugLog('warn', ['Failed to read cached Studio place ID', e]);
-  }
-
-  try {
-    const activePort = await findPluginBridgePort();
-    if (!activePort) return '';
-    const response = await fetch(`http://localhost:${activePort}/studio-health?t=${Date.now()}`, {
-      signal: AbortSignal.timeout(800),
-      cache: 'no-store',
-    });
-    if (!response.ok) return '';
-    const result = (await response.json()) as { studioPlaceId?: string };
-    const placeId = String(result.studioPlaceId || '').trim();
-    return /^\d+$/.test(placeId) && placeId !== '0' ? placeId : '';
-  } catch (e) {
-    addDebugLog('warn', ['Failed to ping Studio for fallback placeId', e]);
+    const health = await invoke<{ synced: boolean; studioPlaceId?: string | null }>(
+      'get_studio_health_status',
+      { sessionId },
+    );
+    const placeId = String(health.studioPlaceId ?? '');
+    return health.synced && /^\d+$/.test(placeId) && placeId !== '0' ? placeId : '';
+  } catch (error) {
+    addDebugLog('warn', ['Failed to get the selected Studio place ID', error]);
     return '';
   }
 }

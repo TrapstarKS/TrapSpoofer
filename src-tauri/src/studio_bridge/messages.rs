@@ -36,6 +36,14 @@ impl AssetStore {
 
 #[derive(Debug)]
 pub struct AssetServerStateData {
+    pub completing_scan: bool,
+    pub active_scan_id: Option<String>,
+    pub completed_scan_id: Option<String>,
+    pub requested_scan_id: Option<String>,
+    pub pending_patch_id: Option<String>,
+    pub completed_patch_id: Option<String>,
+    pub animation_mode: String,
+
     pub request_sounds: bool,
     pub request_animations: bool,
     pub request_images: bool,
@@ -66,6 +74,13 @@ pub struct AssetServerStateData {
 impl Default for AssetServerStateData {
     fn default() -> Self {
         Self {
+            completing_scan: false,
+            active_scan_id: None,
+            completed_scan_id: None,
+            requested_scan_id: None,
+            pending_patch_id: None,
+            completed_patch_id: None,
+            animation_mode: "animation".into(),
             request_sounds: false,
             request_animations: false,
             request_images: false,
@@ -560,7 +575,9 @@ pub fn analyze_records(
 
     let mut category_id_indices: HashMap<(&'static str, String, String), usize> = HashMap::new();
 
-    for record in records {
+    for record in
+        records.iter().filter(|record| record.property != "__Attribute__:TrapSpooferClipAssetId")
+    {
         if record.property == "KeyframeSequence" {
             if seen.insert(("kf".into(), record.token.clone(), record.full_name.clone())) {
                 script_refs.assets.push(json!({
@@ -1054,7 +1071,9 @@ pub fn plan_patches(records: &[StudioRecord], mappings: &[Value]) -> Vec<Value> 
         })
         .collect();
 
-    for record in records {
+    for record in
+        records.iter().filter(|record| record.property != "__Attribute__:TrapSpooferClipAssetId")
+    {
         if matches!(
             record.property.as_str(),
             "Source" | "__Tags__" | "__Emotes__" | "__Accessories__"

@@ -13,7 +13,6 @@ type AuthUserCache = dashmap::DashMap<String, u64>;
 type UserGroupsCache = dashmap::DashMap<u64, Vec<(u64, Option<u64>)>>;
 type UserFriendsCache = dashmap::DashMap<u64, Vec<u64>>;
 type CreatorGamesCache = dashmap::DashMap<(String, u64), Vec<String>>;
-type CreatorInfoCache = dashmap::DashMap<String, (String, u64)>;
 type SocialGraphCache = dashmap::DashMap<u64, Vec<String>>;
 
 type GroupOwnerCache = dashmap::DashMap<u64, Option<u64>>;
@@ -22,7 +21,6 @@ static AUTH_USER_ID_CACHE: OnceLock<AuthUserCache> = OnceLock::new();
 static USER_GROUPS_CACHE: OnceLock<UserGroupsCache> = OnceLock::new();
 static USER_FRIENDS_CACHE: OnceLock<UserFriendsCache> = OnceLock::new();
 static CREATOR_GAMES_CACHE: OnceLock<CreatorGamesCache> = OnceLock::new();
-static CREATOR_INFO_CACHE: OnceLock<CreatorInfoCache> = OnceLock::new();
 static SOCIAL_GRAPH_CACHE: OnceLock<SocialGraphCache> = OnceLock::new();
 static GROUP_OWNER_CACHE: OnceLock<GroupOwnerCache> = OnceLock::new();
 
@@ -38,9 +36,6 @@ fn user_friends_cache() -> &'static UserFriendsCache {
 fn creator_games_cache() -> &'static CreatorGamesCache {
     CREATOR_GAMES_CACHE.get_or_init(dashmap::DashMap::new)
 }
-fn creator_info_cache() -> &'static CreatorInfoCache {
-    CREATOR_INFO_CACHE.get_or_init(dashmap::DashMap::new)
-}
 fn social_graph_cache() -> &'static SocialGraphCache {
     SOCIAL_GRAPH_CACHE.get_or_init(dashmap::DashMap::new)
 }
@@ -52,12 +47,16 @@ pub fn prewarm_creator_info_cache<I>(entries: I)
 where
     I: IntoIterator<Item = (String, (String, u64))>,
 {
-    let cache = creator_info_cache();
     for (asset_id, (creator_type, creator_id)) in entries {
         if creator_id == 0 || creator_type.is_empty() {
             continue;
         }
-        cache.insert(asset_id, (creator_type, creator_id));
+        crate::domain::asset_owners::remember(
+            &asset_id,
+            &creator_type,
+            &creator_id.to_string(),
+            None,
+        );
     }
 }
 
@@ -514,11 +513,6 @@ pub async fn attempt_social_graph_place_id_discovery(
     asset_id: &str,
     cookie_header: &str,
 ) -> Vec<String> {
-    if let Some((_, creator_id_only)) = creator_info_cache().get(asset_id).map(|v| v.clone()) {
-        if let Some(cached) = social_graph_cache().get(&creator_id_only) {
-            return cached.clone();
-        }
-    }
     let client = crate::utils::get_http_client();
 
     let auth_key = cookie_header.to_string();
@@ -541,49 +535,26 @@ pub async fn attempt_social_graph_place_id_discovery(
         }
     }
 
-    let (creator_type, creator_id) = if let Some(entry) = creator_info_cache().get(asset_id) {
-        entry.clone()
-    } else {
-        let details_url = format!("https://economy.roblox.com/v2/assets/{asset_id}/details");
-        let details_resp = client
-            .get(&details_url)
-            .header(reqwest::header::COOKIE, cookie_header)
-            .header(reqwest::header::USER_AGENT, "RobloxStudio/WinInet")
-            .send()
-            .await;
-
-        let mut c_type = String::new();
-        let mut c_id = 0u64;
-
-        if let Ok(resp) = details_resp {
-            if resp.status().is_success() {
-                if let Ok(data) = resp.json::<serde_json::Value>().await {
-                    if let Some(creator) = data.get("Creator") {
-                        let extracted_type = creator
-                            .get("CreatorType")
-                            .or_else(|| creator.get("Type"))
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("User");
-                        let extracted_id = creator
-                            .get("CreatorTargetId")
-                            .or_else(|| creator.get("TargetId"))
-                            .or_else(|| creator.get("Id"))
-                            .and_then(serde_json::Value::as_u64)
-                            .unwrap_or(0);
-
-                        if extracted_id != 0 {
-                            c_type = extracted_type.to_string();
-                            c_id = extracted_id;
-                        }
-                    }
-                }
-            }
-        }
-        if c_id != 0 {
-            creator_info_cache().insert(asset_id.to_string(), (c_type.clone(), c_id));
-        }
-        (c_type, c_id)
+    let owner = crate::domain::roblox_api::resolve_asset_creators(
+        vec![crate::domain::roblox_api::ResolverAsset {
+            asset_id: asset_id.to_string(),
+            name: None,
+            creator: None,
+            creator_id: None,
+            creator_type: None,
+        }],
+        cookie_header.to_string(),
+        |_| {},
+        |_, _| {},
+    )
+    .await
+    .ok()
+    .and_then(|assets| assets.into_iter().next());
+    let Some(owner) = owner else {
+        return Vec::new();
     };
+    let creator_type = owner.creator_type.unwrap_or_default();
+    let creator_id = owner.creator_id.and_then(|id| id.parse::<u64>().ok()).unwrap_or_default();
 
     if creator_id == 0 {
         return vec![];

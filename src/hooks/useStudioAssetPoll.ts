@@ -1,9 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef } from 'react';
 
-import type { PluginAsset, PluginAssetStore } from '../utils/pluginBridge';
+import { useStudioSessionsStore } from '../stores/studioSessionsStore';
+import type { PluginAssetStore } from '../utils/pluginBridge';
 
 export type StudioScanBundle = {
+  sessionId?: string;
+  scanId?: string;
   anims: PluginAssetStore;
   sounds: PluginAssetStore;
   images: PluginAssetStore;
@@ -15,30 +18,20 @@ export function useStudioAssetPoll(
   studioConnected: boolean,
   onComplete: (bundle: StudioScanBundle) => void,
 ) {
+  const sessionId = useStudioSessionsStore((state) => state.selectedSessionId);
   const onCompleteRef = useRef(onComplete);
   useEffect(() => {
     onCompleteRef.current = onComplete;
   }, [onComplete]);
 
   useEffect(() => {
-    if (!studioConnected) return;
+    if (!studioConnected || !sessionId) return;
 
     let cancelled = false;
     let idle = false;
     let inFlight = false;
     let lastSnapshot = '';
     let intervalId: ReturnType<typeof setInterval> | undefined;
-
-    const hashAssets = (assets?: PluginAsset[]) => {
-      if (!assets || assets.length === 0) return '0';
-
-      const first = assets[0].assetId || assets[0].name || '';
-      const last = assets[assets.length - 1].assetId || assets[assets.length - 1].name || '';
-      return `${assets.length}:${first}:${last}`;
-    };
-
-    const bundleSnapshot = (bundle: StudioScanBundle) =>
-      `${hashAssets(bundle.anims.assets)}-${hashAssets(bundle.sounds.assets)}-${hashAssets(bundle.images.assets)}-${hashAssets(bundle.meshes.assets)}-${hashAssets(bundle.scriptRefs.assets)}`;
 
     const schedulePoll = (delayMs: number) => {
       if (intervalId) clearInterval(intervalId);
@@ -50,8 +43,13 @@ export function useStudioAssetPoll(
       inFlight = true;
 
       try {
-        const bundle = await invoke<StudioScanBundle>('get_studio_asset_snapshots');
-        if (cancelled) return;
+        const bundle = await invoke<StudioScanBundle>('get_studio_asset_snapshots', { sessionId });
+        if (
+          cancelled ||
+          bundle.sessionId !== sessionId ||
+          useStudioSessionsStore.getState().selectedSessionId !== sessionId
+        )
+          return;
 
         const { anims, sounds, images, meshes, scriptRefs } = bundle;
         const stores = [anims, sounds, images, meshes, scriptRefs];
@@ -70,7 +68,7 @@ export function useStudioAssetPoll(
           return;
         }
 
-        const snapshot = bundleSnapshot(bundle);
+        const snapshot = bundle.scanId ?? '';
         if (snapshot === lastSnapshot) {
           if (!idle) {
             idle = true;
@@ -97,5 +95,5 @@ export function useStudioAssetPoll(
       idle = true;
       if (intervalId) clearInterval(intervalId);
     };
-  }, [studioConnected]);
+  }, [studioConnected, sessionId]);
 }

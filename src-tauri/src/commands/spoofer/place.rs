@@ -60,11 +60,11 @@ pub async fn should_skip_asset_for_spoofing(
         return false;
     }
 
+    if let Some(group_id) = group_id.filter(|id| !id.is_empty()) {
+        return creator_type == "group" && group_id == creator_id;
+    }
     if creator_type == "user" {
         return account_id.is_some_and(|id| id == creator_id);
-    }
-    if creator_type == "group" {
-        return group_id.is_some_and(|id| id == creator_id);
     }
 
     false
@@ -328,17 +328,7 @@ pub async fn get_place_ids_for_asset_creator(
     Ok(place_ids)
 }
 
-static CREATOR_CACHE: std::sync::OnceLock<dashmap::DashMap<String, (String, String)>> =
-    std::sync::OnceLock::new();
-
-fn get_creator_cache() -> &'static dashmap::DashMap<String, (String, String)> {
-    CREATOR_CACHE.get_or_init(dashmap::DashMap::new)
-}
-
 pub fn clear_place_caches(app: Option<&AppHandle>) {
-    if let Some(cache) = CREATOR_CACHE.get() {
-        cache.clear();
-    }
     if let Some(cache) = CREATOR_WORKING_PLACE_CACHE.get() {
         cache.clear();
     }
@@ -358,105 +348,28 @@ pub async fn get_asset_creator_for_asset(
     if !is_valid_numeric_id(&asset_id) {
         return Err("Invalid Roblox asset id.".into());
     }
-
-    let cache = get_creator_cache();
-    if let Some(cached) = cache.get(&asset_id) {
-        return Ok(cached.value().clone());
-    }
-
-    let cookie_header = build_roblox_cookie_header(&cookie);
-    if cookie_header.is_empty() {
-        return Err(crate::error::AppError::Custom(
-            "Missing or invalid ROBLOSECURITY cookie".into(),
-        ));
-    }
-
-    let client = crate::utils::get_http_client();
-    let url = format!("https://apis.roblox.com/assets/user-auth/v1/assets/{asset_id}");
-    let resp = tokio::time::timeout(
-        Duration::from_secs(8),
-        client
-            .get(&url)
-            .header(reqwest::header::COOKIE, &cookie_header)
-            .header(reqwest::header::USER_AGENT, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36")
-            .header(reqwest::header::ACCEPT, "*/*")
-            .header("Origin", "https://create.roblox.com")
-            .header("Referer", "https://create.roblox.com/")
-            .send()
-    )
-    .await
-    .map_err(|_| crate::error::AppError::Custom("Request timed out".into()))??;
-
-    crate::utils::check_for_roblosecurity_update(&app, &resp, &cookie_header);
-
-    if !resp.status().is_success() {
-        return get_asset_creator_from_economy(&asset_id, &cookie_header).await.ok_or_else(|| {
-            crate::error::AppError::Custom(format!(
-                "Failed to resolve asset creator: {}",
-                resp.status()
-            ))
-        });
-    }
-
-    let data: Value = resp.json().await?;
-    let creator = data.get("creationContext").and_then(|ctx| ctx.get("creator"));
-    let (creator_type, creator_id) = if let Some(user_id) =
-        creator.and_then(|c| c.get("userId")).and_then(value_to_string)
-    {
-        ("user".to_string(), user_id)
-    } else if let Some(group_id) = creator.and_then(|c| c.get("groupId")).and_then(value_to_string)
-    {
-        ("group".to_string(), group_id)
-    } else if let Some(fallback) = get_asset_creator_from_economy(&asset_id, &cookie_header).await {
-        fallback
-    } else {
-        return Err(crate::error::AppError::Custom(
-            "Asset creator was not present in Roblox response.".into(),
-        ));
+    let asset = crate::domain::roblox_api::ResolverAsset {
+        asset_id,
+        name: None,
+        creator: None,
+        creator_id: None,
+        creator_type: None,
     };
-
-    cache.insert(asset_id, (creator_type.clone(), creator_id.clone()));
-    Ok((creator_type, creator_id))
-}
-
-async fn get_asset_creator_from_economy(
-    asset_id: &str,
-    cookie_header: &str,
-) -> Option<(String, String)> {
-    let client = crate::utils::get_http_client();
-    let url = format!("https://economy.roblox.com/v2/assets/{asset_id}/details");
-    let resp = tokio::time::timeout(
-        Duration::from_secs(8),
-        client
-            .get(&url)
-            .header(reqwest::header::COOKIE, cookie_header)
-            .header(reqwest::header::USER_AGENT, "RobloxStudio/WinInet")
-            .send(),
+    let assets = crate::domain::roblox_api::resolve_asset_creators(
+        vec![asset],
+        cookie,
+        |_| {},
+        move |response, cookie_header| {
+            crate::utils::check_for_roblosecurity_update(&app, response, cookie_header);
+        },
     )
-    .await
-    .ok()?
-    .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-
-    let data: Value = resp.json().await.ok()?;
-    let creator = data.get("Creator")?;
-    let creator_id = creator.get("CreatorTargetId").and_then(value_to_string)?;
-    let creator_type = creator
-        .get("CreatorType")
-        .or_else(|| creator.get("creatorType"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    if creator_type.contains("group") {
-        Some(("group".to_string(), creator_id))
-    } else if creator_type.contains("user") {
-        Some(("user".to_string(), creator_id))
-    } else {
-        None
-    }
+    .await?;
+    assets
+        .into_iter()
+        .find_map(|asset| Some((asset.creator_type?.to_ascii_lowercase(), asset.creator_id?)))
+        .ok_or_else(|| {
+            "Could not resolve the asset owner. Check your Roblox session and try again.".into()
+        })
 }
 
 fn value_to_string(value: &Value) -> Option<String> {
@@ -526,12 +439,10 @@ pub async fn get_place_id_from_creator(
                     } else {
                         format!("https://games.roblox.com/v2/groups/{creator_id}/games?sortOrder={sort_order}&limit={limit}")
                     }
+                } else if let Some(filter) = filter_opt {
+                    format!("https://games.roblox.com/v2/users/{creator_id}/games?accessFilter={filter}&limit={limit}&sortOrder={sort_order}")
                 } else {
-                    if let Some(filter) = filter_opt {
-                        format!("https://games.roblox.com/v2/users/{creator_id}/games?accessFilter={filter}&limit={limit}&sortOrder={sort_order}")
-                    } else {
-                        format!("https://games.roblox.com/v2/users/{creator_id}/games?limit={limit}&sortOrder={sort_order}")
-                    }
+                    format!("https://games.roblox.com/v2/users/{creator_id}/games?limit={limit}&sortOrder={sort_order}")
                 };
 
                 if !cursor.is_empty() {

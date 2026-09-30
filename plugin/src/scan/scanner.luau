@@ -44,7 +44,7 @@ local function scanAttributeRecords(records: { Record }, obj: Instance)
 	end
 
 	for key, value in pairs(attrs) do
-		if type(key) == "string" then
+		if type(key) == "string" and key ~= "TrapSpooferClipAssetId" then
 			local normalized = contentValueToString(value)
 			if normalized then
 				if isAssetFormat(value) or stringContainsAssetReference(normalized) then
@@ -299,6 +299,7 @@ local function processScannedObject(records: { Record }, obj: Instance)
 end
 
 local function scanAssets(): ()
+	ACTIVE_SCAN_ID = ACTIVE_SCAN_ID or HttpService:GenerateGUID(false)
 	local bundledAssetClasses = countBundledClasses(ASSET_PROPERTIES)
 	local bundledStringClasses = countBundledClasses(STRING_SCAN_PROPERTIES)
 
@@ -336,7 +337,7 @@ local function scanAssets(): ()
 		pcall(function()
 			postJson("/scan-abort", {})
 		end)
-		return
+		error("The desktop app rejected this scan. Check the selected Studio window.")
 	end
 
 	resetObjectRegistry()
@@ -554,4 +555,5 @@ local function scan(): ()
 		logToPlugin("[Warning] " .. "[TrapSpoofer] Scan failed: " .. tostring(err))
 		setPluginGuiStatus("Scan Failed. Waiting for scan or replacements...")
 	end
+	ACTIVE_SCAN_ID = nil
 end

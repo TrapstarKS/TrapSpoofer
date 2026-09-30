@@ -5,8 +5,10 @@ import { useEffect, useState } from 'react';
 
 import { useConfigStore } from '../stores/configStore';
 import { isTauriRuntime } from '../utils/tauriRuntime';
+import { useAppUpdates } from './useAppUpdates';
 
 export function useAppInitialization() {
+  useAppUpdates();
   const [isRobloxApiDown, setIsRobloxApiDown] = useState(false);
 
   useEffect(() => {

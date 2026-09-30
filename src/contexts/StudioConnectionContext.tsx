@@ -1,13 +1,8 @@
 import { createContext, useContext } from 'react';
 
-import { type ScanStatus, useStudioConnection } from '../hooks/useStudioConnection';
+import { useStudioConnection } from '../hooks/useStudioConnection';
 
-type StudioConnectionContextValue = {
-  studioConnected: boolean;
-  scanStatus: ScanStatus | null;
-  studioPlaceId: string;
-  studioPlaceName: string | null;
-};
+type StudioConnectionContextValue = ReturnType<typeof useStudioConnection>;
 
 const StudioConnectionContext = createContext<StudioConnectionContextValue | undefined>(undefined);
 

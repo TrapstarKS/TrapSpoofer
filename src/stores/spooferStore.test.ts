@@ -1,20 +1,19 @@
-import * as tauriCore from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useConfigStore } from './configStore';
+import { pushToStudio } from '../services/spoofer';
+import { performStudioReplacement } from '../utils/studioReplacementTask';
 import { applyReplacements, useSpooferStore } from './spooferStore';
+import { useStudioSessionsStore } from './studioSessionsStore';
 
 vi.mock('../utils/tauriRuntime', () => ({
-  isTauriRuntime: vi.fn().mockReturnValue(true),
+  isTauriRuntime: () => true,
 }));
 
 vi.mock('../utils/notifyError', () => ({
   notifyError: vi.fn(),
 }));
 
-vi.mock('../utils/studioBridge', () => ({
-  queueStudioReplacements: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('../utils/studioReplacementTask', () => ({ performStudioReplacement: vi.fn() }));
 
 describe('spooferStore', () => {
   beforeEach(() => {
@@ -74,62 +73,143 @@ describe('spooferStore', () => {
 
 describe('applyReplacements', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    useSpooferStore.getState().setSpoofingLogs([]);
-    useSpooferStore.getState().setIsReplacing(false);
-    useSpooferStore.getState().setReplaceError(false);
+    vi.resetAllMocks();
+    useSpooferStore.setState({
+      spoofingLogs: [],
+      isReplacing: false,
+      replaceError: false,
+      targetPathsMap: {},
+      lastJobTarget: null,
+      lastAssetResults: [],
+    });
+    useStudioSessionsStore.setState({
+      selectedSessionId: 'one',
+      sessions: [
+        {
+          sessionId: 'one',
+          synced: true,
+          studioPlaceId: '123',
+          studioPlaceName: 'First',
+          scanStatus: null,
+        },
+      ],
+    });
   });
 
-  it('bails out early if no replacements are provided', async () => {
+  it('does not create a replacement job for an empty selection', async () => {
     await applyReplacements({});
-    const store = useSpooferStore.getState();
-    expect(store.isReplacing).toBe(false);
-    expect(store.spoofingLogs.join('')).toContain('No replacements were generated');
+    expect(useSpooferStore.getState().isReplacing).toBe(false);
+    expect(performStudioReplacement).not.toHaveBeenCalled();
   });
 
-  it('queues replacements to studio bridge when memory injection is disabled', async () => {
-    useConfigStore.getState().updateConfig('advanced', 'memoryInjectionEnabled', false);
-
-    await applyReplacements({ '123': '456' });
-    const store = useSpooferStore.getState();
-
-    expect(store.replaceError).toBe(false);
-    expect(store.isReplacing).toBe(false);
-    expect(store.spoofingLogs.join('')).toContain('Queued replacements to plugin bridge');
-    expect(store.lastReplacements).toEqual({ '123': '456' });
+  it('stays busy until Studio confirms the specific operation', async () => {
+    let complete: (value: { succeeded: number; failed: number; total: number }) => void = () => {};
+    vi.mocked(performStudioReplacement).mockReturnValue(
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+    );
+    const pending = applyReplacements({ '123': '456' }, false, 'one', 'clip_parent');
+    expect(useSpooferStore.getState().isReplacing).toBe(true);
+    expect(performStudioReplacement).toHaveBeenCalledWith(
+      { '123': '456' },
+      {},
+      {
+        sessionId: 'one',
+        operationId: expect.any(String),
+        animationMode: 'clip_parent',
+      },
+    );
+    await expect(applyReplacements({ '777': '888' })).rejects.toThrow(/already in progress/);
+    complete({ succeeded: 3, failed: 0, total: 3 });
+    await pending;
+    expect(useSpooferStore.getState().isReplacing).toBe(false);
+    expect(useSpooferStore.getState().replaceCurrentCount).toBe(3);
+    expect(useSpooferStore.getState().lastReplacements).toEqual({ '123': '456' });
   });
 
-  it('uses memory injection if enabled and studio process is found', async () => {
-    useConfigStore.getState().updateConfig('advanced', 'memoryInjectionEnabled', true);
+  it('reports partial failure and clears the busy state', async () => {
+    vi.mocked(performStudioReplacement).mockResolvedValue({ succeeded: 2, failed: 1, total: 3 });
+    await expect(applyReplacements({ '123': '456' })).rejects.toThrow(/1 failed/);
+    expect(useSpooferStore.getState().replaceError).toBe(true);
+    expect(useSpooferStore.getState().isReplacing).toBe(false);
+  });
 
-    (tauriCore.invoke as any).mockImplementation((cmd: string) => {
-      if (cmd === 'find_studio_process') return Promise.resolve(1234);
-      if (cmd === 'scan_and_replace_multiple_strings')
-        return Promise.resolve({
-          '123': { total_replaced: 5 },
-        });
-      return Promise.resolve(null);
+  it('rejects a disconnected captured target before queueing', async () => {
+    await expect(applyReplacements({ '123': '456' }, true, 'missing')).rejects.toThrow(
+      /disconnected/,
+    );
+    expect(performStudioReplacement).not.toHaveBeenCalled();
+  });
+
+  it('pushes implicit last-job mappings to the captured window and mode', async () => {
+    useStudioSessionsStore.setState({
+      selectedSessionId: 'one',
+      sessions: [
+        {
+          sessionId: 'one',
+          synced: true,
+          studioPlaceId: '123',
+          studioPlaceName: 'First',
+          scanStatus: null,
+        },
+        {
+          sessionId: 'captured',
+          synced: true,
+          studioPlaceId: '123',
+          studioPlaceName: 'Second',
+          scanStatus: null,
+        },
+      ],
+    });
+    useSpooferStore.setState({
+      lastJobTarget: { studioSessionId: 'captured', animationMode: 'clip_replace' },
+      lastAssetResults: [
+        { id: '123', name: 'Animation', type: 'animation', success: true, newId: '456' },
+      ],
+    });
+    vi.mocked(performStudioReplacement).mockResolvedValue({ succeeded: 1, failed: 0, total: 1 });
+
+    await expect(pushToStudio()).resolves.toBe(1);
+    expect(performStudioReplacement).toHaveBeenCalledWith(
+      { '123': '456' },
+      {},
+      {
+        sessionId: 'captured',
+        operationId: expect.any(String),
+        animationMode: 'clip_replace',
+      },
+    );
+  });
+
+  it('does not redirect implicit last-job mappings when the captured window disconnects', async () => {
+    useSpooferStore.setState({
+      lastJobTarget: { studioSessionId: 'captured', animationMode: 'clip_parent' },
+      lastAssetResults: [
+        { id: '123', name: 'Animation', type: 'animation', success: true, newId: '456' },
+      ],
     });
 
-    await applyReplacements({ '123': '456' });
-    const store = useSpooferStore.getState();
-
-    expect(store.replaceError).toBe(false);
-    expect(store.spoofingLogs.join('')).toContain('Patched 5 exact matches in memory');
+    await expect(pushToStudio()).rejects.toThrow(/disconnected/);
+    expect(performStudioReplacement).not.toHaveBeenCalled();
   });
 
-  it('handles memory injection failure gracefully if process is not found', async () => {
-    useConfigStore.getState().updateConfig('advanced', 'memoryInjectionEnabled', true);
-
-    (tauriCore.invoke as any).mockImplementation((cmd: string) => {
-      if (cmd === 'find_studio_process') return Promise.resolve(null);
-      return Promise.resolve(null);
+  it('uses the selected window for explicit mappings and clears the old captured target', async () => {
+    useSpooferStore.setState({
+      lastJobTarget: { studioSessionId: 'captured', animationMode: 'clip_parent' },
     });
+    vi.mocked(performStudioReplacement).mockResolvedValue({ succeeded: 1, failed: 0, total: 1 });
 
-    await applyReplacements({ '123': '456' });
-    const store = useSpooferStore.getState();
-
-    expect(store.replaceError).toBe(false);
-    expect(store.spoofingLogs.join('')).toContain("Studio isn't running");
+    await expect(pushToStudio({ '777': '888' })).resolves.toBe(1);
+    expect(useSpooferStore.getState().lastJobTarget).toBeNull();
+    expect(performStudioReplacement).toHaveBeenCalledWith(
+      { '777': '888' },
+      {},
+      {
+        sessionId: 'one',
+        operationId: expect.any(String),
+        animationMode: expect.any(String),
+      },
+    );
   });
 });

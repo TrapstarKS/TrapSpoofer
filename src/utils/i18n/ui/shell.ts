@@ -15,6 +15,8 @@ export const en = {
     },
     studio: {
       title: 'Roblox Studio status',
+      selectWindow: 'Select a Studio window',
+      untitled: 'Unsaved place',
       connected: 'Studio connected',
       disconnected: 'Studio offline',
       connectedTitle: 'Studio plugin connected',
@@ -78,6 +80,8 @@ export const pt = {
     },
     studio: {
       title: 'Status do Roblox Studio',
+      selectWindow: 'Selecionar janela do Studio',
+      untitled: 'Place não salvo',
       connected: 'Studio conectado',
       disconnected: 'Studio desconectado',
       connectedTitle: 'Plugin do Studio conectado',

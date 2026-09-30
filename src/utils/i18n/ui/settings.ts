@@ -1,6 +1,25 @@
 /** Settings (Configurações) page — `prefs` namespace. */
 export const en = {
   prefs: {
+    updates: {
+      title: 'Updates',
+      desc: 'Keep the app and its bundled Studio plugin up to date.',
+      automatic: 'Download updates automatically',
+      automaticDesc:
+        'Checks on startup and every 6 hours. Downloads signed updates; you choose when to restart.',
+      idle: 'No update available',
+      checking: 'Checking for updates…',
+      available: 'Update available',
+      downloading: 'Downloading update…',
+      ready: 'Update ready',
+      installing: 'Installing update…',
+      installed: 'Installed; restart required',
+      error: 'Update failed',
+      busy: 'Finish scans, uploads and replacements before restarting.',
+      check: 'Check now',
+      download: 'Download',
+      restart: 'Install and restart',
+    },
     title: 'Settings',
     subtitle: 'Adjust the app to your liking. The defaults work well for most people.',
     nav: {
@@ -47,6 +66,12 @@ export const en = {
     },
     upload: {
       title: 'Upload behavior',
+      animationMode: 'Animation replacement in Studio',
+      animationModeDesc:
+        'Keep the Animation ID, replace the instance with its native KeyframeSequence/CurveAnimation, or add the clip as its parent. The original clip format is preserved. Native clips are editable animation data; existing game code may need adapting.',
+      animationId: 'Update Animation ID',
+      clipReplace: 'Replace with native clip',
+      clipParent: 'Native clip as parent',
       desc: 'What happens to each asset during the spoof.',
       skipOwned: 'Skip assets you already own',
       skipOwnedDesc:
@@ -118,7 +143,7 @@ export const en = {
       debugMode: 'Debug console',
       debugModeDesc: 'Shows a floating console with detailed logs.',
       cache: 'Asset cache',
-      cacheDesc: 'Keeps downloaded files on disk to speed up repeated spoofs.',
+      cacheDesc: 'Keeps downloaded files and asset owners on disk to speed up repeated runs.',
       clearCache: 'Clear cache',
       openLogs: 'Open logs folder',
       cacheCleared: 'Cache cleared.',
@@ -142,6 +167,25 @@ export const en = {
 
 export const pt = {
   prefs: {
+    updates: {
+      title: 'Atualizações',
+      desc: 'Mantenha o app e o plugin do Studio atualizados.',
+      automatic: 'Baixar atualizações automaticamente',
+      automaticDesc:
+        'Verifica ao abrir e a cada 6 horas. Baixa atualizações assinadas; você escolhe quando reiniciar.',
+      idle: 'Nenhuma atualização disponível',
+      checking: 'Verificando atualizações…',
+      available: 'Atualização disponível',
+      downloading: 'Baixando atualização…',
+      ready: 'Atualização pronta',
+      installing: 'Instalando atualização…',
+      installed: 'Instalada; reinicie o app',
+      error: 'Falha na atualização',
+      busy: 'Conclua varreduras, uploads e substituições antes de reiniciar.',
+      check: 'Verificar agora',
+      download: 'Baixar',
+      restart: 'Instalar e reiniciar',
+    },
     title: 'Configurações',
     subtitle: 'Ajuste o app do seu jeito. Os padrões funcionam bem para a maioria das pessoas.',
     nav: {
@@ -189,6 +233,12 @@ export const pt = {
     },
     upload: {
       title: 'Comportamento do envio',
+      animationMode: 'Substituição de animações no Studio',
+      animationModeDesc:
+        'Atualize o ID da Animation, substitua pelo KeyframeSequence/CurveAnimation original ou adicione o clip como pai. O formato original é preservado. Clips são dados editáveis de animação; o código do jogo pode precisar de adaptação.',
+      animationId: 'Atualizar ID da Animation',
+      clipReplace: 'Substituir pelo clip nativo',
+      clipParent: 'Clip nativo como pai',
       desc: 'O que acontece com cada asset durante o spoof.',
       skipOwned: 'Pular assets que já são seus',
       skipOwnedDesc:
@@ -261,7 +311,7 @@ export const pt = {
       debugMode: 'Console de depuração',
       debugModeDesc: 'Mostra um console flutuante com logs detalhados.',
       cache: 'Cache de assets',
-      cacheDesc: 'Guarda os arquivos baixados no disco para acelerar spoofs repetidos.',
+      cacheDesc: 'Guarda arquivos baixados e owners no disco para acelerar novas execuções.',
       clearCache: 'Limpar cache',
       openLogs: 'Abrir pasta de logs',
       cacheCleared: 'Cache limpo.',

@@ -72,41 +72,21 @@ pub(crate) fn parse_replacements_map(
 #[specta::specta]
 pub async fn push_to_studio(
     replacements_map: crate::commands::AnyValue,
-    plugin_port: Option<String>,
-) -> crate::error::Result<String> {
-    log::info!("push_to_studio called with replacements_map: {:?}", replacements_map);
+    session_id: Option<String>,
+    operation_id: String,
+    animation_mode: Option<String>,
+) -> Result<crate::commands::AnyValue, String> {
     let mappings = parse_replacements_map(&replacements_map);
-
-    if mappings.is_empty() {
-        log::error!("push_to_studio: no valid mappings after parsing");
-        return Ok("empty_mappings".into());
-    }
-
-    if crate::studio_bridge::queue_replace_mappings_internal(mappings.clone()).await {
-        log::info!("push_to_studio: queued {} mappings via internal bridge", mappings.len());
-        return Ok("ok".into());
-    }
-
-    log::warn!("push_to_studio: internal bridge unavailable, trying direct HTTP fallback");
-    let port = plugin_port.and_then(|value| value.parse::<u16>().ok()).unwrap_or(14285);
-    let url = format!("http://127.0.0.1:{port}/replace-ids");
-    let send_result = crate::utils::get_local_http_client()
-        .post(&url)
-        .json(&serde_json::json!({ "mappings": mappings }))
-        .send()
-        .await;
-
-    match send_result {
-        Ok(response) if response.status().is_success() => Ok("ok".into()),
-        Ok(response) => {
-            log::error!("push_to_studio: fallback returned HTTP {}", response.status());
-            Ok("bridge_unavailable".into())
-        }
-        Err(e) => {
-            log::error!("push_to_studio: fallback HTTP failed: {}", e);
-            Ok("plugin_not_connected".into())
-        }
-    }
+    let session_id = crate::studio_bridge::queue_replace_mappings_internal(
+        mappings,
+        session_id.as_deref(),
+        &operation_id,
+        animation_mode.as_deref().unwrap_or("animation"),
+    )
+    .await?;
+    Ok(crate::commands::AnyValue(
+        serde_json::json!({"sessionId": session_id, "operationId": operation_id}),
+    ))
 }
 
 #[tauri::command]

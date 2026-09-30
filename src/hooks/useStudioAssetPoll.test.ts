@@ -1,11 +1,14 @@
 import * as tauriCore from '@tauri-apps/api/core';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { useStudioAssetPoll } from './useStudioAssetPoll';
 
 describe('useStudioAssetPoll', () => {
   const defaultBundle = {
+    sessionId: 'one',
+    scanId: 'scan',
     anims: { assets: [], scanning: false, complete: false },
     sounds: { assets: [], scanning: false, complete: false },
     images: { assets: [], scanning: false, complete: false },
@@ -16,10 +19,35 @@ describe('useStudioAssetPoll', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    useStudioSessionsStore.setState({ selectedSessionId: 'one' });
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('ignores the old window response after switching windows', async () => {
+    const onComplete = vi.fn();
+    let resolve: (value: unknown) => void = () => {};
+    vi.mocked(tauriCore.invoke).mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const { unmount } = renderHook(() => useStudioAssetPoll(true, onComplete));
+    act(() => useStudioSessionsStore.setState({ selectedSessionId: 'two' }));
+    await act(async () => {
+      resolve({
+        ...defaultBundle,
+        anims: { complete: true },
+        sounds: { complete: true },
+        images: { complete: true },
+        meshes: { complete: true },
+        scriptRefs: { complete: true },
+      });
+    });
+    expect(onComplete).not.toHaveBeenCalled();
+    unmount();
   });
 
   it('does not poll if studioConnected is false', async () => {
@@ -55,6 +83,8 @@ describe('useStudioAssetPoll', () => {
   it('calls onComplete when all stores are complete', async () => {
     const onComplete = vi.fn();
     const completeBundle = {
+      sessionId: 'one',
+      scanId: 'scan',
       anims: { assets: [{ name: 'anim1' }], scanning: false, complete: true },
       sounds: { assets: [], scanning: false, complete: true },
       images: { assets: [], scanning: false, complete: true },
@@ -77,9 +107,11 @@ describe('useStudioAssetPoll', () => {
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
-  it('does not call onComplete twice if bundle hash is unchanged', async () => {
+  it('does not deliver the same completed scan twice', async () => {
     const onComplete = vi.fn();
     const completeBundle = {
+      sessionId: 'one',
+      scanId: 'scan',
       anims: { assets: [{ name: 'anim1' }], scanning: false, complete: true },
       sounds: { assets: [], scanning: false, complete: true },
       images: { assets: [], scanning: false, complete: true },

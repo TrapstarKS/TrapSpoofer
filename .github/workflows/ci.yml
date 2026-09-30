@@ -47,6 +47,7 @@ jobs:
       - run: bun run typecheck
       - run: bun run lint
       - run: bun run test
+      - run: node --test scripts/updater-manifest.node.mjs
 
   rust-check:
     name: Rust clippy & tests
@@ -99,7 +100,7 @@ jobs:
           else
             NOTES="$(git log -1 --format=%B)"
             printf '%s\n\n### Download\n\n| Platform | File |\n| --- | --- |\n| Windows | `TrapSpoofer_*_x64-setup.exe` |\n| macOS (Apple Silicon) | `TrapSpoofer_*_aarch64.dmg` |\n| Linux | `TrapSpoofer_*_amd64.AppImage` |\n\nThe Studio plugin is installed automatically by the app (`TrapSpoofer.rbxmx` is also attached for manual install).\n' "$NOTES" > notes.md
-            gh release create "$TAG" --title "TrapSpoofer $TAG" --notes-file notes.md --draft
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "TrapSpoofer $TAG" --notes-file notes.md --draft
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
@@ -180,8 +181,8 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [prepare, build]
-    if: always() && needs.prepare.outputs.skip == 'false' && needs.build.result != 'cancelled'
+    needs: [prepare, build, checks]
+    if: always() && needs.prepare.outputs.skip == 'false' && needs.build.result == 'success' && needs.checks.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -193,7 +194,7 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           mkdir -p sigs
-          gh release download "$TAG" --dir sigs --pattern '*.sig' || true
+          gh release download "$TAG" --dir sigs --pattern '*.sig'
           node scripts/updater-manifest.mjs "$TAG" sigs > latest.json
           cat latest.json
           gh release upload "$TAG" latest.json --clobber

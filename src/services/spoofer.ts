@@ -8,9 +8,12 @@ import { invoke } from '@tauri-apps/api/core';
 import { useConfigStore } from '../stores/configStore';
 import { isOwnedBy, useSessionStore } from '../stores/sessionStore';
 import { applyReplacements, useSpooferStore } from '../stores/spooferStore';
+import { requireStudioSession, useStudioSessionsStore } from '../stores/studioSessionsStore';
+import { assertAppIsNotUpdating } from '../stores/updaterStore';
 import { getStudioPlaceIdFallback } from '../utils/apiClient';
 import { addDebugLog } from '../utils/debugLogger';
 import { serviceText } from '../utils/i18n/serviceText';
+import { countJobResults, jobReplacements } from '../utils/jobProgress';
 import {
   loadCachedGroups,
   loadCachedUsers,
@@ -78,12 +81,19 @@ function syncExplorer(assets: SpoofAsset[], label: string, filePath?: string) {
 
 async function adoptStores(
   stores: AssetStores,
-  source: { kind: 'studio' | 'file'; label: string; filePath?: string; placeId?: string | null },
+  source: {
+    kind: 'studio' | 'file';
+    label: string;
+    filePath?: string;
+    placeId?: string | null;
+    studioSessionId?: string;
+  },
 ): Promise<SpoofAsset[]> {
   const session = useSessionStore.getState();
   session.setScanPhase('resolving');
   const scriptTypes = await resolveScriptRefs(stores);
   const assets = buildAssetList(stores, scriptTypes);
+  useSpooferStore.setState({ lastJobTarget: null });
   session.setSource({ ...source, scannedAt: Date.now() }, assets);
   session.setScanPhase('done');
   syncExplorer(assets, source.label, source.filePath);
@@ -97,11 +107,19 @@ export interface StudioScanOptions {
 }
 
 export async function scanStudio(options: StudioScanOptions = {}): Promise<SpoofAsset[]> {
+  assertAppIsNotUpdating();
   const session = useSessionStore.getState();
   const spoofer = useSpooferStore.getState();
-  if (session.scanPhase === 'scanning' || session.scanPhase === 'resolving') {
+  if (
+    spoofer.isPreparingJob ||
+    spoofer.isSpoofing ||
+    spoofer.isReplacing ||
+    session.scanPhase === 'scanning' ||
+    session.scanPhase === 'resolving'
+  ) {
     throw new Error(serviceText('scanBusy'));
   }
+  const sessionId = requireStudioSession();
   const types = options.types?.length
     ? Array.from(new Set(options.types.map((t) => SCAN_TYPE_KEYS[t])))
     : ['animations', 'sounds', 'images', 'meshes'];
@@ -111,10 +129,20 @@ export async function scanStudio(options: StudioScanOptions = {}): Promise<Spoof
   spoofer.setIsScanningStudio(true);
   log('[INFO] Scanning Roblox Studio for assets...');
   try {
-    await triggerStudioScan({ scanTypes: types, scanPath: options.scanPath });
-    const stores = await invoke<AssetStores>('get_studio_asset_snapshots');
+    const scanId = await triggerStudioScan({
+      scanTypes: types,
+      scanPath: options.scanPath,
+      sessionId,
+    });
+    const stores = await invoke<AssetStores & { sessionId: string; scanId: string }>(
+      'get_studio_asset_snapshots',
+      { sessionId },
+    );
+    if (stores.sessionId !== sessionId || stores.scanId !== scanId)
+      throw new Error('The Studio scan changed before its results could be loaded.');
     const health = await invoke<{ studioPlaceId?: string | null; studioPlaceName?: string | null }>(
       'get_studio_health_status',
+      { sessionId },
     ).catch(() => ({}) as { studioPlaceId?: string | null; studioPlaceName?: string | null });
     const label =
       health.studioPlaceName?.trim() ||
@@ -123,6 +151,7 @@ export async function scanStudio(options: StudioScanOptions = {}): Promise<Spoof
         : 'Roblox Studio');
     const assets = await adoptStores(stores, {
       kind: 'studio',
+      studioSessionId: sessionId,
       label,
       placeId: health.studioPlaceId ?? null,
     });
@@ -155,6 +184,7 @@ export const displayPath = (path: string) => path.replace(/^\\\\\?\\/, '');
 export async function scanFile(
   path: string,
 ): Promise<{ assets: SpoofAsset[]; info: FileScanResult }> {
+  assertAppIsNotUpdating();
   const session = useSessionStore.getState();
   session.setScanPhase('scanning');
   useSpooferStore.getState().setParsingFileName(path.split(/[\\/]/).pop() ?? path);
@@ -205,6 +235,7 @@ export async function addManualIds(text: string): Promise<SpoofAsset[]> {
         : 'animation';
     return { id, type, name: `Asset ${id}`, usages: [], fromScript: false };
   });
+  useSpooferStore.setState({ lastJobTarget: null });
   useSessionStore.getState().addManualAssets(assets);
   const all = useSessionStore.getState().assets;
   syncExplorer(all, useSessionStore.getState().source?.label ?? 'IDs');
@@ -326,9 +357,12 @@ let ownersRun = 0;
 export async function resolveOwners(): Promise<void> {
   const session = useSessionStore.getState();
   const { cookie } = getActiveTarget();
-  const missing = session.assets.filter((a) => !session.owners[a.id]).map((a) => a.id);
-  if (!isTauriRuntime() || !cookie || missing.length === 0) return;
   const run = ++ownersRun;
+  const missing = session.assets.filter((a) => !session.owners[a.id]).map((a) => a.id);
+  if (!isTauriRuntime() || missing.length === 0) {
+    session.setOwnersLoading(false);
+    return;
+  }
   session.setOwnersLoading(true);
   try {
     const resolved = await invoke<
@@ -345,7 +379,9 @@ export async function resolveOwners(): Promise<void> {
     });
     if (run !== ownersRun) return;
     const owners: Record<string, AssetOwner> = {};
-    for (const r of resolved) owners[r.assetId] = r;
+    for (const r of resolved) {
+      if (r.creatorId && /^(user|group)$/i.test(r.creatorType ?? '')) owners[r.assetId] = r;
+    }
     useSessionStore.getState().setOwners(owners);
     // Real names beat "Asset 123" placeholders.
     useSessionStore.setState((state) => ({
@@ -444,6 +480,23 @@ export function selectedAssetIds(): string[] {
 }
 
 export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
+  try {
+    assertAppIsNotUpdating();
+  } catch (error) {
+    return { ok: false, reason: 'busy', message: String(error) };
+  }
+  const state = useSpooferStore.getState();
+  if (state.isPreparingJob || state.isSpoofing || state.isReplacing || state.isScanningStudio)
+    return { ok: false, reason: 'busy', message: serviceText('jobBusy') };
+  useSpooferStore.setState({ isPreparingJob: true });
+  try {
+    return await startSpoof(options);
+  } finally {
+    useSpooferStore.setState({ isPreparingJob: false });
+  }
+}
+
+async function startSpoof(options: RunOptions): Promise<RunResult> {
   const spoofer = useSpooferStore.getState();
   const { config, accountSecrets } = useConfigStore.getState();
   const session = useSessionStore.getState();
@@ -462,7 +515,15 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
     };
   }
   try {
-    await validateCookieProfile(target.cookie);
+    const profile = await validateCookieProfile(target.cookie);
+    if (String(profile.user.id) !== target.userId) {
+      return {
+        ok: false,
+        reason: 'bad_cookie',
+        message:
+          'The Roblox session belongs to a different account. Select that account or sign in again.',
+      };
+    }
   } catch {
     return {
       ok: false,
@@ -472,16 +533,15 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
   }
 
   const downloadOnly = options.downloadOnly ?? config.spoofing.downloadOnly;
-  if (!downloadOnly && target.apiKey.length < 20) {
-    return {
-      ok: false,
-      reason: 'no_api_key',
-      message: serviceText('noApiKey'),
-    };
-  }
-
   const ids = Array.from(
-    new Set((options.assetIds ?? selectedAssetIds()).filter((id) => /^\d{5,20}$/.test(id))),
+    new Set(
+      (
+        options.assetIds ??
+        session.assets
+          .filter((asset) => session.selected.has(asset.id) && session.typeFilter.has(asset.type))
+          .map((asset) => asset.id)
+      ).filter((id) => /^\d{5,20}$/.test(id)),
+    ),
   );
   if (ids.length === 0) {
     return {
@@ -520,7 +580,7 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
     }
   }
 
-  if (!downloadOnly && isTauriRuntime()) {
+  if (!downloadOnly && target.apiKey.trim() && isTauriRuntime()) {
     try {
       const owner = await invoke<ApiKeyOwner>('detect_opencloud_api_key_owner', {
         key: target.apiKey,
@@ -547,6 +607,31 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
     }
   }
 
+  const jobId = crypto.randomUUID();
+  useSpooferStore.setState({
+    activeSpooferJobId: jobId,
+    assetStatuses: {},
+    lastAssetResults: [],
+    isJobPaused: false,
+    spoofStartTime: Date.now(),
+    lastJobTarget: null,
+    jobTarget: {
+      source: session.source,
+      studioSessionId:
+        session.source?.kind === 'file'
+          ? null
+          : (session.source?.studioSessionId ??
+            useStudioSessionsStore.getState().selectedSessionId),
+      animationMode: config.spoofing.animationMode,
+      autoApply: session.autoApplyOverride ?? config.general.autoApplyResults,
+      userId: target.userId,
+      groupId: target.groupId,
+      cookie: target.cookie,
+      apiKey: target.apiKey,
+      permissions: { ...config.permissions },
+    },
+  });
+  useSessionStore.setState({ autoApplyOverride: null });
   spoofer.setAssetMetadataMap(
     Object.fromEntries(payload.map((p) => [p.id, { name: p.name, type: p.type }])),
   );
@@ -559,7 +644,7 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
   spoofer.setSpoofTotalCount(payload.length);
   spoofer.setSpoofCurrentCount(0);
   for (const item of payload) {
-    spoofer.setAssetStatus(item.id, { stage: 'downloading', message: 'Na fila...' });
+    spoofer.setAssetStatus(item.id, { stage: 'queued', message: 'Na fila...' });
   }
 
   try {
@@ -608,6 +693,7 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
     const adv = config.advanced;
     await invoke('run_spoofer_action', {
       data: {
+        jobId,
         assets: JSON.stringify(payload),
         cookie: target.cookie,
         fallbackCookies: fallbackCookies.length ? fallbackCookies : null,
@@ -638,8 +724,24 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
     });
     return { ok: true, count: payload.length, warnings };
   } catch (err) {
-    useSpooferStore.getState().setIsSpoofing(false);
     const message = err instanceof Error ? err.message : String(err);
+    if (useSpooferStore.getState().activeSpooferJobId === jobId) {
+      useSpooferStore.setState({
+        isSpoofing: false,
+        activeSpooferJobId: null,
+        jobTarget: null,
+        assetStatuses: Object.fromEntries(
+          payload.map((asset) => [asset.id, { stage: 'error', message }]),
+        ),
+        lastAssetResults: payload.map((asset) => ({
+          ...asset,
+          success: false,
+          errorReason: message,
+        })),
+        spoofCurrentCount: payload.length,
+        spoofProgress: 100,
+      });
+    }
     logIsm('error', serviceText('launchFailed', { error: message }), true);
     return { ok: false, reason: 'launch_failed', message };
   }
@@ -675,6 +777,7 @@ export async function forceReset() {
   spoofer.setIsSpoofing(false);
   spoofer.setActiveSpooferJobId(null);
   spoofer.setIsJobPaused(false);
+  useSpooferStore.setState({ jobTarget: null, lastJobTarget: null });
 }
 
 /** Resolves true when no job is running (or false on timeout). */
@@ -698,7 +801,8 @@ export function waitForJob(timeoutMs: number): Promise<boolean> {
 export function jobSnapshot() {
   const s = useSpooferStore.getState();
   const results = s.lastAssetResults;
-  const failed = results.filter((r) => !r.success && !r.skipped);
+  const counts = countJobResults(results);
+  const failed = results.filter((r) => !r.success && !r.skipped && !r.cancelled);
   return {
     running: s.isSpoofing,
     paused: s.isJobPaused,
@@ -710,14 +814,15 @@ export function jobSnapshot() {
     lastResult: s.isSpoofing
       ? null
       : {
-          succeeded: results.filter((r) => r.success).length,
-          skipped: results.filter((r) => r.skipped).length,
+          succeeded: counts.completed,
+          skipped: counts.skipped,
+          cancelled: counts.cancelled,
           failed: failed.map((r) => ({
             id: String(r.id ?? ''),
             reason: r.errorReason || r.reason || 'Failed',
           })),
         },
-    mappings: s.lastReplacements,
+    mappings: currentReplacements(),
     recentLog: s.spoofingLogs.slice(-15),
   };
 }
@@ -741,14 +846,29 @@ export async function retryFailed(): Promise<RunResult> {
 /* Applying results                                                    */
 /* ------------------------------------------------------------------ */
 
-/** Queue replacements for the Studio plugin. Explicit mappings are not saved as job history unless `persist`. */
+function currentReplacements() {
+  const state = useSpooferStore.getState();
+  return jobReplacements(
+    state.lastAssetResults,
+    state.lastReplacements,
+    useSessionStore.getState().assets.map((asset) => asset.id),
+  );
+}
+
 export async function pushToStudio(
   mappings?: Record<string, string>,
   options: { persist?: boolean } = {},
 ) {
-  const map = mappings ?? useSpooferStore.getState().lastReplacements;
+  const map = mappings ?? currentReplacements();
   if (Object.keys(map).length === 0) throw new Error('Nenhum mapeamento para aplicar ainda.');
-  await applyReplacements(map, !(options.persist ?? false) || !mappings);
+  if (mappings) {
+    await applyReplacements(map, !(options.persist ?? false));
+  } else {
+    const target = useSpooferStore.getState().lastJobTarget;
+    if (!target)
+      throw new Error('The last Studio job target is no longer available. Run the job again.');
+    await applyReplacements(map, true, target.studioSessionId, target.animationMode);
+  }
   return Object.keys(map).length;
 }
 
@@ -757,10 +877,11 @@ export async function writeSpoofedFile(options: {
   outputPath?: string;
   mappings?: Record<string, string>;
 }) {
+  assertAppIsNotUpdating();
   const source = useSessionStore.getState().source;
   const path = options.path ?? source?.filePath;
   if (!path) throw new Error(serviceText('noFileLoaded'));
-  const mappings = options.mappings ?? useSpooferStore.getState().lastReplacements;
+  const mappings = options.mappings ?? currentReplacements();
   if (Object.keys(mappings).length === 0) {
     throw new Error(serviceText('noMappings'));
   }

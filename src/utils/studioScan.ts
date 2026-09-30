@@ -1,96 +1,58 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import { fetchPluginBridge } from './pluginBridge';
-
-const SCAN_STALL_MS = 300_000;
-const SCAN_POLL_MS = 1500;
-
-async function waitForStudioScanComplete(): Promise<void> {
-  let lastProgressScanned: number | undefined;
-  let lastProgressTime = Date.now();
-  let lastSyncedTime = Date.now();
-  while (Date.now() - lastProgressTime < SCAN_STALL_MS) {
-    try {
-      const health = await invoke<{
-        scanStatus?: { scanning?: boolean; scanned?: number } | null;
-        synced?: boolean;
-      }>('get_studio_health_status');
-      if (!health.scanStatus || !health.scanStatus.scanning) {
-        return;
-      }
-
-      const scanned = health.scanStatus.scanned;
-      if (scanned !== undefined && scanned !== lastProgressScanned) {
-        lastProgressScanned = scanned;
-        lastProgressTime = Date.now();
-      }
-      if (health.synced) {
-        lastSyncedTime = Date.now();
-      } else if (Date.now() - lastSyncedTime > 5000) {
-        throw new Error(
-          'Roblox Studio is not connected or the TrapSpoofer plugin is disabled. Please open Studio and try again.',
-        );
-      }
-    } catch (e) {
-      throw e instanceof Error ? e : new Error(String(e));
-    }
-    await new Promise((resolve) => setTimeout(resolve, SCAN_POLL_MS));
-  }
-  throw new Error(
-    'Studio scan stalled — no progress for 5 minutes. Open Roblox Studio and check that the TrapSpoofer plugin is connected, then try again. Very large places may need to be scanned manually from the plugin panel.',
-  );
-}
+import { requireStudioSession } from '../stores/studioSessionsStore';
+import { fetchPluginBridge, findPluginBridgePort } from './pluginBridge';
 
 export interface ScanOptions {
   scanTypes: string[];
   scanPath?: string;
+  sessionId?: string;
 }
 
-export async function triggerStudioScan(options?: ScanOptions): Promise<void> {
-  const { findPluginBridgePort } = await import('./pluginBridge');
-  const activePort = await findPluginBridgePort();
-
-  if (!activePort) {
-    const pid = await invoke<number | null>('find_studio_process').catch(() => null);
-    if (!pid) {
-      throw new Error('Please open Roblox Studio to connect the plugin.');
-    } else {
-      throw new Error(
-        'Roblox Studio is open, but the TrapSpoofer plugin is not connected. Please enable the plugin in Studio.',
-      );
-    }
-  }
-
-  const port = activePort;
-
-  if (options) {
-    await fetchPluginBridge('/scan-options', port, {
+export async function triggerStudioScan(options?: ScanOptions): Promise<string> {
+  const sessionId = requireStudioSession(options?.sessionId);
+  const port = await findPluginBridgePort();
+  if (!port)
+    throw new Error('The TrapSpoofer bridge is unavailable. Reopen the app and try again.');
+  const response = await fetchPluginBridge(
+    '/request-scan',
+    port,
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(options),
-    });
-  }
-
-  const allTypes = options?.scanTypes ?? ['sounds', 'animations', 'images', 'meshes', 'scripts'];
-  const endpointMap: Record<string, string> = {
-    sounds: '/request-sounds',
-    animations: '/request-animations',
-    images: '/request-images',
-    meshes: '/request-meshes',
-    scripts: '/request-script-refs',
-  };
-  const endpoints = allTypes.map((t) => endpointMap[t]).filter(Boolean);
-
-  for (const endpoint of endpoints) {
-    const startResponse = await fetchPluginBridge(endpoint, port, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    });
-    if (!startResponse.ok) {
-      throw new Error('Could not start a Studio scan. Is the plugin connected?');
+      body: JSON.stringify(options ?? {}),
+    },
+    sessionId,
+  );
+  if (!response.ok) throw new Error('Could not start a Studio scan in the selected window.');
+  const started = (await response.json()) as { success: boolean; scanId?: string; error?: string };
+  if (!started.success || !started.scanId)
+    throw new Error(started.error || 'Could not start a Studio scan.');
+  const scanId = started.scanId;
+  let lastProgress = -1;
+  let progressAt = Date.now();
+  while (Date.now() - progressAt < 300_000) {
+    const health = await invoke<{
+      sessionId?: string;
+      synced: boolean;
+      completedScanId?: string;
+      activeScanId?: string;
+      requestedScanId?: string;
+      scanStatus?: { scanned?: number } | null;
+    }>('get_studio_health_status', { sessionId });
+    if (!health.synced || health.sessionId !== sessionId)
+      throw new Error('The selected Studio window disconnected during its scan.');
+    if (health.completedScanId === scanId) return scanId;
+    if (health.activeScanId !== scanId && health.requestedScanId !== scanId)
+      throw new Error('The Studio scan was aborted or replaced.');
+    const scanned = health.scanStatus?.scanned ?? 0;
+    if (scanned !== lastProgress) {
+      lastProgress = scanned;
+      progressAt = Date.now();
     }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
   }
-
-  await waitForStudioScanComplete();
+  throw new Error(
+    'The selected Studio scan made no progress for 5 minutes. Check the plugin before retrying.',
+  );
 }

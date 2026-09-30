@@ -157,13 +157,6 @@ pub fn run() {
     }
 
     app_builder
-        .on_window_event(|window, event| {
-            if window.label() == "main"
-                && matches!(event, tauri::WindowEvent::CloseRequested { .. })
-            {
-                crate::commands::startup::uninstall_roblox_plugin();
-            }
-        })
         .setup(|app| {
             #[cfg(any(windows, target_os = "linux"))]
             {
@@ -175,6 +168,13 @@ pub fn run() {
                 tauri_plugin_log::Builder::default().level(log::LevelFilter::Info).build(),
             )?;
 
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                if let Err(error) =
+                    crate::domain::asset_owners::initialize(&data_dir.join("metadata-cache"))
+                {
+                    log::warn!("Could not initialize asset owner cache: {error}");
+                }
+            }
             tauri::async_runtime::spawn(crate::studio_bridge::start_server(app.handle().clone()));
             tauri::async_runtime::spawn(crate::mcp::start_server(app.handle().clone()));
 

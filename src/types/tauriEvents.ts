@@ -4,7 +4,7 @@ export type TauriEventPayload<T> = {
 
 export type SpooferProgressPayload = {
   jobId?: string;
-  progress: number;
+  progress?: number;
   message?: string;
   current?: number;
   total?: number;
@@ -23,9 +23,13 @@ export type SpooferAssetResult = {
   name?: string;
   success?: boolean;
   newId?: string;
+  newAssetId?: string;
+  new_asset_id?: string;
   stage?: string;
   errorReason?: string;
   skipped?: boolean;
+  cancelled?: boolean;
+  localPath?: string;
   reason?: string;
 };
 
@@ -33,6 +37,7 @@ export type SpooferResultPayload = {
   jobId?: string;
   success?: boolean;
   partial?: boolean;
+  cancelled?: boolean;
   error?: string;
   output?: string;
   assetResults?: SpooferAssetResult[];

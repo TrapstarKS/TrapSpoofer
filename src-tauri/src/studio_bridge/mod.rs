@@ -1,6 +1,8 @@
+mod animation;
 pub mod messages;
 pub mod middleware;
 pub mod server;
+pub mod sessions;
 
 use crate::commands::AnyValue;
 use axum::{
@@ -39,7 +41,7 @@ const PLUGIN_PORT_START: u16 = 14285;
 const PLUGIN_PORT_END: u16 = 14289;
 
 const PLUGIN_PORT_FALLBACK_END: u16 = 14320;
-const STUDIO_PROTOCOL_VERSION: u8 = 3;
+const STUDIO_PROTOCOL_VERSION: u8 = 4;
 const MAX_STUDIO_RECORDS: usize = 2_000_000;
 const MAX_SCRIPT_SOURCE_BYTES: usize = 8_000_000;
 
@@ -73,34 +75,79 @@ fn port_diagnostic() -> &'static RwLock<Value> {
 pub async fn set_bridge_skip_owned_check(skip_owned: bool) -> bool {
     if let Some(data) = bridge_data() {
         data.write().await.skip_owned_check = skip_owned;
-        return true;
     }
-    false
+    for (_, data) in sessions::registry().snapshots().await {
+        data.write().await.skip_owned_check = skip_owned;
+    }
+    true
 }
 
-#[must_use]
-pub async fn queue_replace_mappings_internal(mappings: Vec<Value>) -> bool {
-    let Some(data) = bridge_data() else {
-        return false;
-    };
-    if mappings.is_empty() {
-        return false;
+pub async fn queue_replace_mappings_internal(
+    mappings: Vec<Value>,
+    session_id: Option<&str>,
+    operation_id: &str,
+    animation_mode: &str,
+) -> Result<String, String> {
+    let (session_id, data) = sessions::registry().resolve(session_id, true).await?;
+    if session_id == "legacy" {
+        return Err("Update the Studio plugin before applying replacements.".into());
     }
-    let records = std::sync::Arc::clone(&data.read().await.studio_records);
-    let records_empty = records.is_empty();
-    let patches = if records_empty { Vec::new() } else { plan_patches(&records, &mappings) };
+    if mappings.is_empty() || mappings.len() > 5_000 {
+        return Err("Select between 1 and 5000 valid replacements.".into());
+    }
+    if uuid::Uuid::parse_str(operation_id).is_err() {
+        return Err("Invalid replacement operation ID.".into());
+    }
+    if !matches!(animation_mode, "animation" | "clip_replace" | "clip_parent") {
+        return Err("Invalid animation replacement mode.".into());
+    }
     let mut guard = data.write().await;
+    if guard.completed_patch_id.as_deref() == Some(operation_id)
+        || guard.pending_patch_id.as_deref() == Some(operation_id)
+    {
+        return Ok(session_id);
+    }
+    if guard.pending_patch_id.is_some()
+        || guard.active_scan_id.is_some()
+        || guard.requested_scan_id.is_some()
+    {
+        return Err(
+            "The selected Studio window is busy. Wait for its current operation to finish.".into(),
+        );
+    }
+    let patches = plan_patches(&guard.studio_records, &mappings);
+    if !guard.studio_records.is_empty() && patches.is_empty() {
+        return Err(
+            "No matching assets were found in this Studio window. Scan it again before applying."
+                .into(),
+        );
+    }
+    let patches = animation::annotate_patches(
+        patches,
+        &guard.studio_records,
+        Some(operation_id),
+        animation_mode,
+    );
+    guard.pending_patch_id = Some(operation_id.to_string());
+    guard.animation_mode = animation_mode.to_string();
     guard.stored_mappings = mappings;
     guard.stored_patches = patches;
-    if records_empty {
+    if guard.studio_records.is_empty() {
         guard.request_sounds = true;
-        guard.request_animations = true;
-        guard.request_images = true;
-        guard.request_meshes = true;
-        guard.request_script_refs = true;
+        guard.requested_scan_id = Some(uuid::Uuid::new_v4().to_string());
+        guard.scan_types = vec![
+            "sounds".into(),
+            "animations".into(),
+            "images".into(),
+            "meshes".into(),
+            "scripts".into(),
+        ];
+        guard.scan_path = None;
+        guard.scan_status =
+            Some(json!({"scanning": true, "current_service": "Pending", "scanned": 0, "total": 0}));
     }
     guard.notify.notify_waiters();
-    true
+    Ok(session_id)
 }
 
 use messages::AssetServerStateData;
@@ -111,6 +158,8 @@ pub struct AppState {
     pub bridge_port: u16,
     pub started_at: u128,
     pub app_handle: AppHandle,
+    pub session_id: String,
+    pub scan_id: Option<String>,
 }
 
 pub async fn start_server(app_handle: AppHandle) {
@@ -156,6 +205,8 @@ pub async fn start_server(app_handle: AppHandle) {
         bridge_port: bound_port,
         started_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
         app_handle: app_handle.clone(),
+        session_id: String::new(),
+        scan_id: None,
     };
     *active_bridge_port().write().await = Some(bound_port);
 
@@ -180,7 +231,12 @@ pub async fn start_server(app_handle: AppHandle) {
             },
         ))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderName::from_static("x-trapspoofer-session"),
+            axum::http::HeaderName::from_static("x-trapspoofer-scan"),
+        ])
         .allow_private_network(true);
 
     let app = Router::new()
@@ -233,6 +289,7 @@ pub async fn start_server(app_handle: AppHandle) {
         .route("/patch-progress", post(handle_patch_progress))
         .route("/batch-size", post(handle_set_batch_size))
         .route("/scan-options", post(set_scan_options))
+        .route("/request-scan", post(server::request_scan))
         .layer(axum_middleware::from_fn(require_json_for_post))
         .layer(RequestBodyLimitLayer::new(64 * 1024 * 1024))
         .layer(DefaultBodyLimit::disable())
@@ -372,21 +429,19 @@ fn process_image_name(pid: u32) -> String {
 fn port_owners(ports: &[u16]) -> std::collections::HashMap<u16, String> {
     use std::process::Command;
     let mut map = std::collections::HashMap::new();
-    let (lo, hi) = match (ports.iter().min(), ports.iter().max()) {
-        (Some(&lo), Some(&hi)) => (lo, hi),
-        _ => return map,
+    let (Some(&lo), Some(&hi)) = (ports.iter().min(), ports.iter().max()) else {
+        return map;
     };
 
     let filter = format!("-iTCP:{lo}-{hi}");
-    let out = match Command::new("lsof").args(["-nP", filter.as_str(), "-sTCP:LISTEN"]).output() {
-        Ok(o) => o,
-        Err(_) => return map,
+    let Ok(out) = Command::new("lsof").args(["-nP", filter.as_str(), "-sTCP:LISTEN"]).output()
+    else {
+        return map;
     };
     let stdout = String::from_utf8_lossy(&out.stdout);
     for line in stdout.lines().skip(1) {
-        let cmd = match line.split_whitespace().next() {
-            Some(c) => c,
-            None => continue,
+        let Some(cmd) = line.split_whitespace().next() else {
+            continue;
         };
         if let Some(port) = extract_listen_port(line) {
             if ports.contains(&port) {
@@ -402,7 +457,7 @@ fn extract_listen_port(line: &str) -> Option<u16> {
     let idx = line.find("(LISTEN)")?;
     let before = &line[..idx];
     let colon = before.rfind(':')?;
-    let num: String = before[colon + 1..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    let num: String = before[colon + 1..].chars().take_while(char::is_ascii_digit).collect();
     num.parse().ok()
 }
 
@@ -433,50 +488,58 @@ pub async fn get_port_diagnostic() -> AnyValue {
 #[tauri::command]
 #[specta::specta]
 #[must_use]
-pub async fn get_studio_health_status() -> AnyValue {
-    let Some(data) = bridge_data() else {
-        return AnyValue(
-            json!({ "synced": false, "protocolVersion": STUDIO_PROTOCOL_VERSION, "scanStatus": null, "studioPlaceId": null, "studioPlaceName": null }),
-        );
+pub async fn get_studio_health_status(session_id: Option<String>) -> AnyValue {
+    let mut sessions_list = Vec::new();
+    for (id, data) in sessions::registry().snapshots().await {
+        let guard = data.read().await;
+        sessions_list.push(json!({
+            "sessionId": id, "synced": sessions::connected(&guard),
+            "studioPlaceId": guard.studio_place_id, "studioPlaceName": guard.studio_place_name,
+            "scanStatus": guard.scan_status,
+            "completedScanId": guard.completed_scan_id,
+        }));
+    }
+    sessions_list.sort_by(|a, b| a["sessionId"].as_str().cmp(&b["sessionId"].as_str()));
+    let mut response = match sessions::registry().resolve(session_id.as_deref(), false).await {
+        Ok((id, data)) => {
+            let guard = data.read().await;
+            json!({
+                "sessionId": id, "synced": sessions::connected(&guard),
+                "scanStatus": guard.scan_status, "studioPlaceId": guard.studio_place_id,
+                "studioPlaceName": guard.studio_place_name, "completedScanId": guard.completed_scan_id,
+                "activeScanId": guard.active_scan_id, "requestedScanId": guard.requested_scan_id,
+                "pendingPatchId": guard.pending_patch_id,
+            })
+        }
+        Err(error) => {
+            json!({"synced": false, "scanStatus": null, "studioPlaceId": null, "studioPlaceName": null, "error": error})
+        }
     };
-    let guard = data.read().await;
-    let synced = guard
-        .last_plugin_poll_time
-        .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(30));
-    AnyValue(json!({
-        "synced": synced,
-        "protocolVersion": STUDIO_PROTOCOL_VERSION,
-        "scanStatus": guard.scan_status,
-        "studioPlaceId": guard.studio_place_id,
-        "studioPlaceName": guard.studio_place_name
-    }))
+    response["sessions"] = json!(sessions_list);
+    response["protocolVersion"] = json!(STUDIO_PROTOCOL_VERSION);
+    AnyValue(response)
 }
 
 #[tauri::command]
 #[specta::specta]
-#[must_use]
-pub async fn get_studio_asset_snapshots() -> AnyValue {
-    let Some(data) = bridge_data() else {
-        return AnyValue(json!({
-            "anims": { "assets": [], "scanning": false, "complete": false },
-            "sounds": { "assets": [], "scanning": false, "complete": false },
-            "images": { "assets": [], "scanning": false, "complete": false },
-            "meshes": { "assets": [], "scanning": false, "complete": false },
-            "scriptRefs": { "assets": [], "scanning": false, "complete": false }
-        }));
-    };
+pub async fn get_studio_asset_snapshots(session_id: Option<String>) -> Result<AnyValue, String> {
+    let (session_id, data) = sessions::registry().resolve(session_id.as_deref(), true).await?;
     let guard = data.read().await;
-    AnyValue(json!({
+    Ok(AnyValue(json!({
+        "sessionId": session_id, "scanId": guard.completed_scan_id,
         "anims": guard.last_animations,
         "sounds": guard.last_sounds,
         "images": guard.last_images,
         "meshes": guard.last_meshes,
         "scriptRefs": guard.last_script_refs
-    }))
+    })))
 }
 
 pub async fn set_batch_size(size: u32) {
     if let Some(data) = bridge_data() {
-        data.write().await.batch_size = Some(size);
+        data.write().await.batch_size = Some(size.clamp(1, 1_000));
+    }
+    for (_, data) in sessions::registry().snapshots().await {
+        data.write().await.batch_size = Some(size.clamp(1, 1_000));
     }
 }

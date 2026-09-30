@@ -10,6 +10,8 @@ local gui = nil
 local statusText = nil
 local logsScrollingFrame = nil
 local connectionStatusText = nil
+local lastGuiStatus = "Waiting for Desktop App..."
+local lastConnectionStatus = false
 
 local logCounter = 0
 
@@ -36,6 +38,7 @@ local function createPluginGui()
 
 	gui = Instance.new("ScreenGui")
 	gui.Name = "TrapSpooferPluginGui"
+	gui.Enabled = false
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 	local success = pcall(function()
@@ -837,9 +840,7 @@ function logToPlugin(text)
 end
 
 local function setPluginGuiStatus(text: string, silent: boolean?)
-	if not gui then
-		createPluginGui()
-	end
+	lastGuiStatus = text
 	if statusText then
 		statusText.Text = text
 	end
@@ -868,6 +869,8 @@ end
 function togglePluginGui()
 	if not gui then
 		createPluginGui()
+		setPluginGuiStatus(lastGuiStatus, true)
+		setConnectionStatus(lastConnectionStatus)
 	end
 	if gui then
 		gui.Enabled = not gui.Enabled
@@ -875,9 +878,7 @@ function togglePluginGui()
 end
 
 function setConnectionStatus(isConnected)
-	if not gui then
-		createPluginGui()
-	end
+	lastConnectionStatus = isConnected
 	if connectionStatusText then
 		if isConnected then
 			connectionStatusText.Text = "Connected to Desktop App"

@@ -1,5 +1,7 @@
+import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { fetchTelemetry, getStudioPlaceIdFallback } from './apiClient';
 import * as pluginBridge from './pluginBridge';
 import * as tauriRuntime from './tauriRuntime';
@@ -27,38 +29,26 @@ describe('apiClient', () => {
   });
 
   describe('getStudioPlaceIdFallback', () => {
-    it('returns cached valid place id if present', async () => {
+    it('uses the explicitly selected live window', async () => {
+      vi.mocked(invoke).mockResolvedValue({ synced: true, studioPlaceId: '987654' });
+      expect(await getStudioPlaceIdFallback('selected')).toBe('987654');
+      expect(invoke).toHaveBeenCalledWith('get_studio_health_status', { sessionId: 'selected' });
+    });
+    it('ignores the old global place cache when no window is selected', async () => {
+      useStudioSessionsStore.setState({ selectedSessionId: null });
       mockLocalStorage.getItem.mockReturnValue('123456');
-      const result = await getStudioPlaceIdFallback();
-      expect(result).toBe('123456');
+      expect(await getStudioPlaceIdFallback()).toBe('');
     });
-
-    it('ignores invalid or zero cached place id', async () => {
-      mockLocalStorage.getItem.mockReturnValue('0');
-      const result = await getStudioPlaceIdFallback();
-      expect(result).toBe('');
+    it('returns no place for offline and unsaved windows', async () => {
+      vi.mocked(invoke)
+        .mockResolvedValueOnce({ synced: false, studioPlaceId: '123' })
+        .mockResolvedValueOnce({ synced: true, studioPlaceId: '0' });
+      expect(await getStudioPlaceIdFallback('one')).toBe('');
+      expect(await getStudioPlaceIdFallback('one')).toBe('');
     });
-
-    it('pings plugin bridge if cache is invalid or missing', async () => {
-      vi.spyOn(pluginBridge, 'findPluginBridgePort').mockResolvedValue('55056');
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: true,
-          json: () => Promise.resolve({ studioPlaceId: '987654' }),
-        }),
-      );
-
-      const result = await getStudioPlaceIdFallback();
-      expect(result).toBe('987654');
-    });
-
-    it('returns empty string if plugin bridge ping fails', async () => {
-      vi.spyOn(pluginBridge, 'findPluginBridgePort').mockResolvedValue('55056');
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
-
-      const result = await getStudioPlaceIdFallback();
-      expect(result).toBe('');
+    it('returns no place when the bridge fails', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Bridge unavailable'));
+      expect(await getStudioPlaceIdFallback('one')).toBe('');
     });
   });
 
