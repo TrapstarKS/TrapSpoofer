@@ -87,11 +87,13 @@ The Roblox Studio plugin (`TrapSpoofer.rbxmx`) ships with every release. The app
 
 ## Quick start
 
-1. **Accounts** — add a Roblox account using its `.ROBLOSECURITY` cookie. The app can detect the Studio/browser cookie. Uploads can use this session, including for a selected group where the account has asset creation permission. An Open Cloud API key remains optional; when provided, the app uses that key for supported uploads.
+1. **Accounts** — the app can automatically import the accounts signed in to Roblox Studio on this computer. Each session is validated before it becomes a profile. Uploads can use this session, including for a selected group where the account has asset creation permission. An Open Cloud API key remains optional; when provided, the app uses that key for supported uploads.
 2. **Source** — select a connected Studio window and scan it, open a `.rbxl`/`.rbxm` file, or paste IDs.
 3. **Review** — pick the assets to spoof (assets you already own are flagged).
 4. **Upload** — hit _Start spoof_. Each asset is downloaded and re-uploaded.
 5. **Apply** — the new IDs are pushed into Studio (or into a new file, in file mode). Save your place.
+
+**Studio accounts:** Automatic connection is enabled in Settings → General. The app checks Studio's saved sessions on startup, imports valid accounts without duplicates, and signs in with the current Studio account when no valid profile is already selected. An existing profile and its upload group stay selected. Accounts → Import Studio accounts repeats detection after adding or reconnecting an account in Studio. Expired or rejected sessions are skipped, and cookies are saved in the system credential store rather than displayed in the interface. Manual cookie entry remains available.
 
 Asset owners are cached on disk for seven days, up to 50,000 entries. Successful uploads immediately add the new asset's creator to the cache. Repeated runs reuse that information, while failed owner lookups remain eligible for retry. Clear it through the existing cache controls in Settings.
 

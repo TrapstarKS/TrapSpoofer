@@ -11,6 +11,7 @@ import {
 import { useEffect, useState } from 'react';
 
 import { useLanguage } from '../../../contexts/LanguageContext';
+import { importStudioAccounts } from '../../../services/studioAccounts';
 import { useConfigStore } from '../../../stores/configStore';
 import { loadCachedUsers, normalizeId } from '../../../utils/robloxProfiles';
 import { Button } from '../../ui/button';
@@ -115,6 +116,7 @@ export default function AccountsView() {
   const selectedUser = useConfigStore((s) => s.config.spoofing.selectedUser);
   const [dialog, setDialog] = useState<'add' | 'reconnect' | null>(null);
   const [checkingAll, setCheckingAll] = useState(false);
+  const [importingStudio, setImportingStudio] = useState(false);
 
   useEffect(() => {
     const open = () => setDialog('add');
@@ -144,6 +146,33 @@ export default function AccountsView() {
     }
   };
 
+  const importFromStudio = async () => {
+    setImportingStudio(true);
+    try {
+      const result = await importStudioAccounts();
+      if (result.importedCount > 0) {
+        window.ismLog?.(
+          'success',
+          tf('profiles.toast.imported', { count: result.importedCount }),
+          true,
+        );
+      } else {
+        window.ismLog?.(
+          'warn',
+          tf('profiles.toast.importNone', {
+            rejected: result.rejectedCount,
+            failed: result.failedCount,
+          }),
+          true,
+        );
+      }
+    } catch (error) {
+      window.ismLog?.('warn', error instanceof Error ? error.message : String(error), true);
+    } finally {
+      setImportingStudio(false);
+    }
+  };
+
   return (
     <div className="h-full w-full overflow-y-auto">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-6 pb-16 lg:p-8">
@@ -157,6 +186,14 @@ export default function AccountsView() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              disabled={importingStudio}
+              onClick={() => void importFromStudio()}
+            >
+              <RefreshCw className={importingStudio ? 'animate-spin' : undefined} />
+              {t('profiles.importStudio')}
+            </Button>
             {accounts.length > 0 && (
               <Button variant="outline" disabled={checkingAll} onClick={() => void checkAll()}>
                 <RefreshCw className={checkingAll ? 'animate-spin' : undefined} />

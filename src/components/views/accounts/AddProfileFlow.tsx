@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { cn } from '../../../lib/utils';
 import { activateProfile } from '../../../services/spoofer';
+import { importStudioAccounts } from '../../../services/studioAccounts';
 import { useConfigStore } from '../../../stores/configStore';
 import { normalizeId, type RobloxUserInfo } from '../../../utils/robloxProfiles';
 import { Button } from '../../ui/button';
@@ -23,7 +24,6 @@ import { Label } from '../../ui/label';
 import { Switch } from '../../ui/switch';
 import {
   API_KEY_DASHBOARD_URL,
-  detectStudioSession,
   openExternal,
   saveProfileApiKey,
   saveProfileGroupKey,
@@ -134,12 +134,22 @@ export default function AddProfileFlow({
     setNotFound(false);
     setCookieError(null);
     try {
-      const result = await detectStudioSession();
-      if (!result) {
+      const result = await importStudioAccounts();
+      const id = result.currentAccountId ?? result.importedIds[0] ?? null;
+      if (!id) {
         setNotFound(true);
         return;
       }
-      await acceptSession(result);
+      const importedUser =
+        result.users.find((item) => normalizeId(item.id) === normalizeId(id)) ?? null;
+      setUser(importedUser);
+      setProfileId(id);
+      const existingKey = useConfigStore.getState().accountSecrets[id]?.apiKey ?? '';
+      setApiKey(existingKey);
+      const existingGroupKey = useConfigStore.getState().accountSecrets[id]?.groupApiKey ?? '';
+      setGroupKey(existingGroupKey);
+      setGroupOpen(Boolean(existingGroupKey));
+      setStep('done');
     } catch {
       setNotFound(true);
     } finally {

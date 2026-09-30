@@ -11,6 +11,7 @@ export const AppConfigSchema = z.object({
     autoApplyResults: z.boolean().default(true),
     mcpEnabled: z.boolean().default(true),
     autoUpdate: z.boolean().default(true),
+    autoConnectStudio: z.boolean().default(true),
   }),
   advanced: z.object({
     autoCookieStudio: z.boolean().default(false),
@@ -105,6 +106,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     autoApplyResults: true,
     mcpEnabled: true,
     autoUpdate: true,
+    autoConnectStudio: true,
   },
   advanced: {
     autoCookieStudio: false,
@@ -192,6 +194,8 @@ interface ConfigState {
   accountSecrets: Record<string, { cookie?: string; apiKey?: string; groupApiKey?: string }>;
 
   secretsLoaded: boolean;
+  secretsLoadFailed: boolean;
+  importingStudioAccounts: boolean;
   updateConfig: <C extends keyof AppConfig, K extends keyof AppConfig[C]>(
     c: C,
     k: K,
@@ -201,6 +205,7 @@ interface ConfigState {
   resetConfig: () => void;
   loadSecrets: () => Promise<void>;
   saveSecrets: () => Promise<void>;
+  persistSecrets: () => Promise<void>;
   updateAccountSecret: (
     accountId: string,
     cookie?: string,
@@ -211,6 +216,7 @@ interface ConfigState {
 }
 
 export const useConfigStore = create<ConfigState>((set, get) => {
+  let secretsLoadFlight: Promise<void> | null = null;
   let saved: string | null = null;
   try {
     saved =
@@ -288,6 +294,8 @@ export const useConfigStore = create<ConfigState>((set, get) => {
     config: initConfig,
     accountSecrets: {},
     secretsLoaded: false,
+    secretsLoadFailed: false,
+    importingStudioAccounts: false,
     updateConfig: (cat, key, val) => {
       set((state) => {
         const n = {
@@ -342,74 +350,88 @@ export const useConfigStore = create<ConfigState>((set, get) => {
         set({ secretsLoaded: true });
         return;
       }
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        interface ProfileSecrets {
-          cookie?: string;
-          apiKey?: string;
-          groupApiKey?: string;
-          profileCookies?: Record<string, string>;
-          accountSecrets?: Record<
-            string,
-            { cookie?: string; apiKey?: string; groupApiKey?: string }
-          >;
-        }
-        const s: ProfileSecrets = await invoke('load_profile_secrets');
-        set((state) => {
-          const selectedUser = state.config.spoofing.selectedUser;
-          const profileCookie =
-            selectedUser !== 'none' && typeof s.profileCookies?.[selectedUser] === 'string'
-              ? s.profileCookies[selectedUser]
-              : '';
-          return {
-            accountSecrets: s.accountSecrets || {},
-            secretsLoaded: true,
-            config: {
-              ...state.config,
-              spoofing: {
-                ...state.config.spoofing,
-                cookie:
-                  profileCookie ||
-                  (typeof s.cookie === 'string' ? s.cookie : state.config.spoofing.cookie),
-                apiKey: typeof s.apiKey === 'string' ? s.apiKey : state.config.spoofing.apiKey,
-                groupApiKey:
-                  typeof s.groupApiKey === 'string'
-                    ? s.groupApiKey
-                    : state.config.spoofing.groupApiKey,
+      if (secretsLoadFlight) return secretsLoadFlight;
+      secretsLoadFlight = (async () => {
+        set({ secretsLoaded: false, secretsLoadFailed: false });
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          interface ProfileSecrets {
+            cookie?: string;
+            apiKey?: string;
+            groupApiKey?: string;
+            profileCookies?: Record<string, string>;
+            accountSecrets?: Record<
+              string,
+              { cookie?: string; apiKey?: string; groupApiKey?: string }
+            >;
+          }
+          const s: ProfileSecrets = await invoke('load_profile_secrets');
+          set((state) => {
+            const selectedUser = state.config.spoofing.selectedUser;
+            const profileCookie =
+              selectedUser !== 'none' && typeof s.profileCookies?.[selectedUser] === 'string'
+                ? s.profileCookies[selectedUser]
+                : '';
+            return {
+              accountSecrets: s.accountSecrets || {},
+              secretsLoaded: true,
+              secretsLoadFailed: false,
+              config: {
+                ...state.config,
+                spoofing: {
+                  ...state.config.spoofing,
+                  cookie:
+                    profileCookie ||
+                    (typeof s.cookie === 'string' ? s.cookie : state.config.spoofing.cookie),
+                  apiKey: typeof s.apiKey === 'string' ? s.apiKey : state.config.spoofing.apiKey,
+                  groupApiKey:
+                    typeof s.groupApiKey === 'string'
+                      ? s.groupApiKey
+                      : state.config.spoofing.groupApiKey,
+                },
               },
-            },
-          };
-        });
-      } catch (e) {
-        console.warn('Failed to load profile secrets from backend', e);
+            };
+          });
+        } catch (e) {
+          console.warn('Failed to load profile secrets from backend', e);
 
-        set({ secretsLoaded: true });
-      }
+          set({ secretsLoaded: true, secretsLoadFailed: true });
+        }
+      })().finally(() => {
+        secretsLoadFlight = null;
+      });
+      return secretsLoadFlight;
     },
     saveSecrets: async () => {
       if (!isTauriRuntime()) return;
 
-      if (!get().secretsLoaded) return;
+      if (!get().secretsLoaded || get().secretsLoadFailed) return;
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const state = get();
-        const c = state.config.spoofing;
-        const profileCookies: Record<string, string> = {};
-        if (c.selectedUser !== 'none' && c.cookie) {
-          profileCookies[c.selectedUser] = c.cookie;
-        }
-        await invoke('save_profile_secrets', {
-          data: {
-            cookie: c.cookie,
-            apiKey: c.apiKey,
-            groupApiKey: c.groupApiKey,
-            profileCookies,
-            accountSecrets: state.accountSecrets,
-          },
-        });
+        await get().persistSecrets();
       } catch (e) {
         console.error('Failed to save secrets:', e);
       }
+    },
+    persistSecrets: async () => {
+      if (!isTauriRuntime()) return;
+      if (!get().secretsLoaded || get().secretsLoadFailed)
+        throw new Error(
+          'The account vault could not be loaded. Reopen the app before importing accounts.',
+        );
+      const { invoke } = await import('@tauri-apps/api/core');
+      const state = get();
+      const c = state.config.spoofing;
+      const profileCookies: Record<string, string> = {};
+      if (c.selectedUser !== 'none' && c.cookie) profileCookies[c.selectedUser] = c.cookie;
+      await invoke('save_profile_secrets', {
+        data: {
+          cookie: c.cookie,
+          apiKey: c.apiKey,
+          groupApiKey: c.groupApiKey,
+          profileCookies,
+          accountSecrets: state.accountSecrets,
+        },
+      });
     },
     updateAccountSecret: async (
       accountId: string,

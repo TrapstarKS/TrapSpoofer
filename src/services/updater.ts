@@ -15,6 +15,7 @@ export function appWorkInProgress(): boolean {
   const state = useSpooferStore.getState();
   const phase = useSessionStore.getState().scanPhase;
   return (
+    useConfigStore.getState().importingStudioAccounts ||
     state.isPreparingJob ||
     state.isSpoofing ||
     state.isScanningStudio ||

@@ -51,6 +51,12 @@ export default function BehaviorCard() {
         onCheckedChange={(v) => void handleNotifications(v)}
       />
       <SettingSwitchRow
+        label={t('prefs.behavior.autoConnectStudio')}
+        description={t('prefs.behavior.autoConnectStudioDesc')}
+        checked={config.general.autoConnectStudio}
+        onCheckedChange={(v) => updateConfig('general', 'autoConnectStudio', v)}
+      />
+      <SettingSwitchRow
         label={t('prefs.behavior.tray')}
         description={t('prefs.behavior.trayDesc')}
         checked={config.general.hideToTrayOnClose}

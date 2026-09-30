@@ -23,7 +23,9 @@ describe('configStore', () => {
     vi.stubGlobal('localStorage', mockLocalStorage);
     localStorage.clear();
     useConfigStore.getState().resetConfig();
+    useConfigStore.setState({ secretsLoadFailed: false, importingStudioAccounts: false });
     vi.clearAllMocks();
+    vi.mocked(tauriCore.invoke).mockReset().mockResolvedValue(undefined);
   });
 
   it('initializes with default config', () => {
@@ -119,5 +121,40 @@ describe('configStore', () => {
     await useConfigStore.getState().saveSecrets();
 
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('shares an in-flight vault load between concurrent startup calls', async () => {
+    let resolveLoad: (value: object) => void = () => {};
+    const pending = new Promise<object>((resolve) => {
+      resolveLoad = resolve;
+    });
+    vi.mocked(tauriCore.invoke).mockImplementation(async () => pending);
+    const first = useConfigStore.getState().loadSecrets();
+    const second = useConfigStore.getState().loadSecrets();
+    resolveLoad({ accountSecrets: {} });
+    await Promise.all([first, second]);
+    expect(
+      vi
+        .mocked(tauriCore.invoke)
+        .mock.calls.filter(([command]) => command === 'load_profile_secrets'),
+    ).toHaveLength(1);
+    expect(useConfigStore.getState().secretsLoadFailed).toBe(false);
+  });
+
+  it('blocks vault writes after loading fails and permits a successful retry', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.mocked(tauriCore.invoke).mockRejectedValueOnce(new Error('vault locked'));
+    await useConfigStore.getState().loadSecrets();
+    expect(useConfigStore.getState().secretsLoadFailed).toBe(true);
+    await expect(useConfigStore.getState().persistSecrets()).rejects.toThrow(/could not be loaded/);
+    expect(
+      vi
+        .mocked(tauriCore.invoke)
+        .mock.calls.some(([command]) => command === 'save_profile_secrets'),
+    ).toBe(false);
+    vi.mocked(tauriCore.invoke).mockResolvedValueOnce({ accountSecrets: {} });
+    await useConfigStore.getState().loadSecrets();
+    expect(useConfigStore.getState().secretsLoadFailed).toBe(false);
+    warning.mockRestore();
   });
 });

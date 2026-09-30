@@ -43,7 +43,7 @@ export function profileNeedsAttention(profile: Profile): boolean {
   const secrets = useConfigStore.getState().accountSecrets[profile.id];
   const s = sessionStatus(profile, secrets?.cookie);
   const k = keyStatus(profile, secrets?.apiKey);
-  return s === 'expired' || s === 'missing' || k === 'invalid' || k === 'missing';
+  return s === 'expired' || s === 'missing' || k === 'invalid';
 }
 
 export async function openExternal(url: string) {
@@ -210,7 +210,6 @@ export async function revalidateProfile(accountId: string): Promise<boolean> {
     if (check.state === 'invalid') ok = false;
   } else {
     patch.apiKeyValidated = undefined;
-    ok = false;
   }
 
   patchProfile(accountId, patch);

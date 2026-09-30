@@ -3,12 +3,13 @@ export const en = {
   profiles: {
     title: 'Profiles',
     subtitle:
-      'A profile is the Roblox account that receives the re-uploaded assets. It needs a session (your login) and an Open Cloud API key.',
+      'A profile is the Roblox account that receives the re-uploaded assets. Your Studio session is enough for supported uploads; an Open Cloud API key is optional.',
     add: 'Add profile',
+    importStudio: 'Import Studio accounts',
     revalidateAll: 'Check all',
     empty: {
       title: 'No profiles yet',
-      body: 'Add your Roblox account to start. It takes about a minute: we reuse your Roblox Studio login and you paste an API key.',
+      body: 'Import your valid Roblox Studio logins automatically, or add an account manually.',
     },
     legacy: {
       title: 'Session in use: {name}',
@@ -19,7 +20,7 @@ export const en = {
       session: 'Session',
       sessionDesc: 'Lets the app download the original assets on your behalf.',
       apiKey: 'API key',
-      apiKeyDesc: 'Authorizes uploading the new copies to your account or group.',
+      apiKeyDesc: 'Optional Open Cloud credential for workflows that use it.',
       target: 'Upload to',
       targetDesc: 'Your personal account or a group you manage.',
     },
@@ -95,11 +96,11 @@ export const en = {
       groupKeyToggle: 'I also want to upload to a group',
       groupKeyLabel: 'Group API key (optional)',
       skip: 'Skip for now',
-      skipHint: 'Without a key the profile can only download assets.',
+      skipHint: 'The API key is optional for supported session-based uploads.',
       doneTitle: 'Profile ready!',
       doneBody:
         '{name} was saved. You can change where uploads go on the profile card at any time.',
-      doneNoKey: 'Remember to add the API key before spoofing: it is required to upload.',
+      doneNoKey: 'No API key was added. Supported uploads can use the saved Roblox session.',
       useNow: 'Use this profile now',
       finish: 'Finish',
       back: 'Back',
@@ -110,6 +111,8 @@ export const en = {
       removed: 'Profile removed.',
       checked: 'Check finished: {ok} ok, {bad} with problems.',
       targetChanged: 'Uploads will go to {target}.',
+      imported: 'Imported {count} Studio account(s).',
+      importNone: 'No valid Studio accounts imported ({rejected} rejected, {failed} failed).',
     },
     popup: {
       label: 'Active profile',
@@ -128,12 +131,13 @@ export const pt = {
   profiles: {
     title: 'Perfis',
     subtitle:
-      'Um perfil é a conta Roblox que recebe os assets reenviados. Ele precisa de uma sessão (seu login) e de uma API Key do Open Cloud.',
+      'Um perfil é a conta Roblox que recebe os assets reenviados. A sessão do Studio basta para envios compatíveis; a API Key do Open Cloud é opcional.',
     add: 'Adicionar perfil',
+    importStudio: 'Importar contas do Studio',
     revalidateAll: 'Verificar todos',
     empty: {
       title: 'Nenhum perfil ainda',
-      body: 'Adicione sua conta Roblox para começar. Leva cerca de um minuto: reaproveitamos o login do seu Roblox Studio e você cola uma API Key.',
+      body: 'Importe automaticamente os logins válidos do Roblox Studio ou adicione uma conta manualmente.',
     },
     legacy: {
       title: 'Sessão em uso: {name}',
@@ -144,7 +148,7 @@ export const pt = {
       session: 'Sessão',
       sessionDesc: 'Permite que o app baixe os assets originais em seu nome.',
       apiKey: 'API Key',
-      apiKeyDesc: 'Autoriza o envio das novas cópias para sua conta ou grupo.',
+      apiKeyDesc: 'Credencial opcional do Open Cloud para fluxos que usam essa chave.',
       target: 'Enviar para',
       targetDesc: 'Sua conta pessoal ou um grupo que você gerencia.',
     },
@@ -222,12 +226,12 @@ export const pt = {
       groupKeyToggle: 'Também quero enviar para um grupo',
       groupKeyLabel: 'API Key do grupo (opcional)',
       skip: 'Pular por enquanto',
-      skipHint: 'Sem a chave, o perfil só consegue baixar assets.',
+      skipHint: 'A API Key é opcional para envios compatíveis usando a sessão.',
       doneTitle: 'Perfil pronto!',
       doneBody:
         '{name} foi salvo. Você pode trocar para onde os envios vão no cartão do perfil quando quiser.',
       doneNoKey:
-        'Lembre-se de adicionar a API Key antes de fazer o spoof: ela é necessária para enviar.',
+        'Nenhuma API Key foi adicionada. Envios compatíveis podem usar a sessão Roblox salva.',
       useNow: 'Usar este perfil agora',
       finish: 'Concluir',
       back: 'Voltar',
@@ -238,6 +242,9 @@ export const pt = {
       removed: 'Perfil removido.',
       checked: 'Verificação concluída: {ok} ok, {bad} com problemas.',
       targetChanged: 'Os envios vão para {target}.',
+      imported: '{count} conta(s) do Studio importada(s).',
+      importNone:
+        'Nenhuma conta válida do Studio foi importada ({rejected} recusada(s), {failed} falha(s)).',
     },
     popup: {
       label: 'Perfil ativo',

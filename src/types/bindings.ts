@@ -25,6 +25,8 @@ export const commands = {
     typedError<string | null, AppError>(
       __TAURI_INVOKE('get_cookie_from_roblox_studio', { userId }),
     ),
+  detectStudioAccounts: () =>
+    typedError<StudioAccountsResult, AppError>(__TAURI_INVOKE('detect_studio_accounts')),
   getCookieFromAutoDetect: (userId: string | null) =>
     typedError<string | null, AppError>(__TAURI_INVOKE('get_cookie_from_auto_detect', { userId })),
   deleteSavedRobloxProfileCookie: (userId: string) =>
@@ -419,6 +421,18 @@ export type SpooferActionRequest = {
   preserveMetadata: boolean | null;
   enableArchiveRecovery: boolean | null;
   proxyUrl: string | null;
+};
+
+export type StudioAccount = {
+  user: RobloxUserInfo;
+  cookie: string;
+  isCurrent: boolean;
+};
+
+export type StudioAccountsResult = {
+  accounts: StudioAccount[];
+  rejectedCount: number;
+  failedCount: number;
 };
 
 /* Tauri Specta runtime */

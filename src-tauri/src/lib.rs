@@ -16,6 +16,7 @@ macro_rules! specta_commands {
             crate::commands::assets::fetch_roblox_thumbnail,
             crate::commands::assets::fetch_animation_xml,
             crate::commands::auth::get_cookie_from_roblox_studio,
+            crate::commands::auth::studio_accounts::detect_studio_accounts,
             crate::commands::auth::get_cookie_from_auto_detect,
             crate::commands::auth::delete_saved_roblox_profile_cookie,
             crate::commands::auth::get_csrf_token,

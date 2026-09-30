@@ -1,4 +1,6 @@
 pub mod cookies;
+pub mod studio_accounts;
+mod studio_cookies;
 pub mod validation;
 
 use crate::utils::check_for_roblosecurity_update;

@@ -1,7 +1,9 @@
 import * as tauriCore from '@tauri-apps/api/core';
 import { act, renderHook } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { importStudioAccounts } from '../services/studioAccounts';
 import { DEFAULT_APP_CONFIG, useConfigStore } from '../stores/configStore';
 import { useAppInitialization } from './useAppInitialization';
 
@@ -11,6 +13,10 @@ vi.mock('@tauri-apps/plugin-http', () => ({
 
 vi.mock('../utils/tauriRuntime', () => ({
   isTauriRuntime: vi.fn(() => true),
+}));
+
+vi.mock('../services/studioAccounts', () => ({
+  importStudioAccounts: vi.fn().mockResolvedValue({ importedCount: 0 }),
 }));
 
 vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
@@ -23,7 +29,7 @@ describe('useAppInitialization', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    useConfigStore.setState({ config: DEFAULT_APP_CONFIG });
+    useConfigStore.setState({ config: DEFAULT_APP_CONFIG, secretsLoaded: false });
     (tauriCore.invoke as any).mockImplementation((command: string) => {
       if (command === 'check_roblox_api_status') return Promise.resolve(true);
       return Promise.resolve(null);
@@ -82,5 +88,14 @@ describe('useAppInitialization', () => {
     expect(tauriCore.invoke).toHaveBeenCalledWith('set_proxy_url', {
       url: 'socks5://127.0.0.1:9050',
     });
+  });
+
+  it('imports Studio accounts once after secrets load even under StrictMode', async () => {
+    useConfigStore.setState({ secretsLoaded: true });
+    renderHook(() => useAppInitialization(), { wrapper: StrictMode });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(importStudioAccounts).toHaveBeenCalledTimes(1);
   });
 });

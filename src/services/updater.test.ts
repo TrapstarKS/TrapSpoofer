@@ -7,6 +7,7 @@ import { checkAppUpdate, downloadAppUpdate, installAppUpdate } from './updater';
 
 const fixtures = vi.hoisted(() => ({
   configuration: { general: { autoUpdate: true } },
+  importingStudioAccounts: false,
   work: { isSpoofing: false, isReplacing: false, isPreparingJob: false },
   update: { version: '3.0.1', download: vi.fn(), install: vi.fn(), close: vi.fn() },
 }));
@@ -15,7 +16,12 @@ vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-updater', () => ({ check: vi.fn() }));
 vi.mock('../utils/tauriRuntime', () => ({ isTauriRuntime: () => true }));
 vi.mock('../stores/configStore', () => ({
-  useConfigStore: { getState: () => ({ config: fixtures.configuration }) },
+  useConfigStore: {
+    getState: () => ({
+      config: fixtures.configuration,
+      importingStudioAccounts: fixtures.importingStudioAccounts,
+    }),
+  },
 }));
 vi.mock('../stores/spooferStore', () => ({ useSpooferStore: { getState: () => fixtures.work } }));
 vi.mock('../stores/sessionStore', () => ({
@@ -29,6 +35,7 @@ describe('application updates', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     fixtures.configuration.general.autoUpdate = true;
+    fixtures.importingStudioAccounts = false;
     fixtures.work.isSpoofing = false;
     fixtures.work.isReplacing = false;
     fixtures.work.isPreparingJob = false;
@@ -81,6 +88,16 @@ describe('application updates', () => {
     resolve(null);
     await Promise.all([first, second]);
     expect(check).toHaveBeenCalledOnce();
+  });
+
+  it('waits for the account import to finish before installation', async () => {
+    await checkAppUpdate(true);
+    fixtures.importingStudioAccounts = true;
+    await installAppUpdate();
+    expect(fixtures.update.install).not.toHaveBeenCalled();
+    fixtures.importingStudioAccounts = false;
+    await installAppUpdate();
+    expect(fixtures.update.install).toHaveBeenCalledOnce();
   });
 
   it('does not make failed downloads installable and supports retry', async () => {

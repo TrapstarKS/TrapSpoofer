@@ -3,13 +3,32 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isRegistered, register, unregister } from '@tauri-apps/plugin-global-shortcut';
 import { useEffect, useState } from 'react';
 
+import { importStudioAccounts } from '../services/studioAccounts';
 import { useConfigStore } from '../stores/configStore';
 import { isTauriRuntime } from '../utils/tauriRuntime';
 import { useAppUpdates } from './useAppUpdates';
 
+let studioAutoConnectStarted = false;
+
 export function useAppInitialization() {
   useAppUpdates();
   const [isRobloxApiDown, setIsRobloxApiDown] = useState(false);
+  const secretsLoaded = useConfigStore((s) => s.secretsLoaded);
+  const secretsLoadFailed = useConfigStore((s) => s.secretsLoadFailed);
+  const autoConnectStudio = useConfigStore((s) => s.config.general.autoConnectStudio);
+
+  useEffect(() => {
+    if (
+      !secretsLoaded ||
+      secretsLoadFailed ||
+      !autoConnectStudio ||
+      !isTauriRuntime() ||
+      studioAutoConnectStarted
+    )
+      return;
+    studioAutoConnectStarted = true;
+    void importStudioAccounts().catch(() => undefined);
+  }, [secretsLoaded, secretsLoadFailed, autoConnectStudio]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;

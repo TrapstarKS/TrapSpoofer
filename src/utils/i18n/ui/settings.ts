@@ -56,6 +56,9 @@ export const en = {
       notificationsOn: 'Notifications turned on.',
       notificationsOff: 'Notifications turned off.',
       notificationsFailed: 'Could not show a notification. Check the system permissions.',
+      autoConnectStudio: 'Import Roblox Studio accounts automatically',
+      autoConnectStudioDesc:
+        'On startup, import every valid Roblox Studio login found on this computer.',
       tray: 'Keep running in the tray',
       trayDesc: 'Closing the window hides the app instead of quitting.',
       telemetry: 'Send anonymous error reports',
@@ -223,6 +226,9 @@ export const pt = {
       notificationsOff: 'Notificações desativadas.',
       notificationsFailed:
         'Não foi possível mostrar a notificação. Confira as permissões do sistema.',
+      autoConnectStudio: 'Importar contas do Roblox Studio automaticamente',
+      autoConnectStudioDesc:
+        'Ao iniciar, importa todos os logins válidos do Roblox Studio encontrados neste computador.',
       tray: 'Continuar rodando na bandeja',
       trayDesc: 'Fechar a janela esconde o app em vez de encerrá-lo.',
       telemetry: 'Enviar relatórios de erro anônimos',

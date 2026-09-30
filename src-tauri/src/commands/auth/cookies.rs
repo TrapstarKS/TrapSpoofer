@@ -13,24 +13,15 @@ use rusqlite::Connection;
 #[cfg(not(target_os = "windows"))]
 use std::io::Read;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "windows")]
-use std::process::Command;
 use std::sync::OnceLock;
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::LocalFree;
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Security::Credentials::{
-    CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC,
-};
-#[cfg(target_os = "windows")]
 use windows_sys::Win32::Security::Cryptography::{
     CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
 
-#[cfg(target_os = "windows")]
-pub const ROBLOX_STUDIO_COOKIE_TARGET: &str =
-    "https://www.roblox.com:RobloxStudioAuth.ROBLOSECURITY";
 #[cfg(not(target_os = "windows"))]
 pub const BROWSER_COOKIE_SCAN_BYTES: u64 = 25 * 1024 * 1024;
 
@@ -236,40 +227,6 @@ fn decrypt_dpapi(data: &[u8]) -> crate::error::Result<Vec<u8>> {
             std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
         LocalFree(out_blob.pbData.cast());
         Ok(decrypted)
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn read_windows_credential_cookie(target: &str) -> Option<String> {
-    let mut target_wide = target.encode_utf16().collect::<Vec<_>>();
-    target_wide.push(0);
-
-    unsafe {
-        let mut credential: *mut CREDENTIALW = std::ptr::null_mut();
-        let ok = CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential);
-        if ok == 0 || credential.is_null() {
-            return None;
-        }
-
-        let credential_ref = &*credential;
-        let bytes = std::slice::from_raw_parts(
-            credential_ref.CredentialBlob,
-            credential_ref.CredentialBlobSize as usize,
-        );
-        let utf8 = String::from_utf8_lossy(bytes);
-        let cookie = extract_roblox_cookie(&utf8).or_else(|| {
-            if bytes.len() % 2 != 0 {
-                return None;
-            }
-            let utf16 = bytes
-                .chunks_exact(2)
-                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                .collect::<Vec<_>>();
-            String::from_utf16(&utf16).ok().and_then(|text| extract_roblox_cookie(&text))
-        });
-
-        CredFree(credential as _);
-        cookie
     }
 }
 
@@ -485,88 +442,16 @@ pub fn get_cookie_from_browser_profiles() -> Option<String> {
 }
 
 pub fn get_cookie_from_roblox_studio_inner(
-    #[allow(unused_variables)] user_id: Option<String>,
+    user_id: Option<String>,
 ) -> crate::error::Result<Option<String>> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let output =
-            Command::new("cmdkey").arg("/list").creation_flags(CREATE_NO_WINDOW).output()?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        let requested_user_id =
-            user_id.unwrap_or_default().chars().filter(char::is_ascii_digit).collect::<String>();
-
-        let mut targets: Vec<String> = stdout
-            .lines()
-            .filter_map(|line| {
-                if let Some(idx) = line.find("LegacyGeneric:target=") {
-                    let target_str = line[idx + 21..].trim();
-                    return Some(target_str.to_string());
-                }
-                None
-            })
-            .filter(|target| target.contains(ROBLOX_STUDIO_COOKIE_TARGET))
-            .collect();
-
-        targets.sort_by(|a, b| {
-            let a_includes_user =
-                i32::from(!requested_user_id.is_empty() && a.contains(&requested_user_id));
-            let b_includes_user =
-                i32::from(!requested_user_id.is_empty() && b.contains(&requested_user_id));
-            if a_includes_user != b_includes_user {
-                return b_includes_user.cmp(&a_includes_user);
-            }
-
-            let num_a =
-                a.split("ROBLOSECURITY").nth(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-            let num_b =
-                b.split("ROBLOSECURITY").nth(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-            num_b.cmp(&num_a)
-        });
-
-        for target in targets {
-            if let Some(cookie) = read_windows_credential_cookie(&target) {
-                return Ok(Some(cookie));
-            }
-        }
+    let requested = user_id.filter(|id| !id.trim().is_empty() && id != "none");
+    if requested.as_ref().is_some_and(|id| !id.bytes().all(|byte| byte.is_ascii_digit())) {
+        return Err("Invalid Roblox user ID.".into());
     }
-
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let cookie_file = std::path::PathBuf::from(home)
-            .join("Library/HTTPStorages/com.Roblox.RobloxStudio.binarycookies");
-
-        if let Ok(bytes) = std::fs::read(&cookie_file) {
-            let data = String::from_utf8_lossy(&bytes);
-            if let Some(cookie) = extract_roblox_cookie(&data) {
-                return Ok(Some(cookie));
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let possible_paths = vec![
-            std::path::PathBuf::from(&home).join(".config/roblox-studio/cookies"),
-            std::path::PathBuf::from(&home).join(".local/share/roblox-studio/cookies"),
-        ];
-
-        for path in possible_paths {
-            if let Ok(bytes) = std::fs::read(&path) {
-                let data = String::from_utf8_lossy(&bytes);
-                if let Some(cookie) = extract_roblox_cookie(&data) {
-                    return Ok(Some(cookie));
-                }
-            }
-        }
-    }
-
-    Ok(None)
+    Ok(super::studio_cookies::read_studio_cookies()?
+        .into_iter()
+        .find(|session| requested.as_ref().map_or(true, |id| session.user_id.as_ref() == Some(id)))
+        .map(|session| session.cookie))
 }
 
 pub fn profile_cookie_entry(user_id: &str) -> crate::error::Result<Entry> {
