@@ -81,9 +81,9 @@ export const en = {
         'Assets that already belong to the active account or group are not uploaded again. Saves time and quota.',
       preserveMetadata: 'Keep original name and description',
       preserveMetadataDesc: 'The new copy gets the same name and description as the original.',
-      archiveRecovery: 'Try to recover deleted assets (slow)',
-      archiveRecoveryDesc:
-        'Searches web archives when an animation is private or deleted. Can add 10–30 s per failed asset.',
+      failedRecovery: 'Failed asset recovery',
+      failedRecoveryDesc:
+        'Available in the final results when assets fail. Recovery starts only when you choose it there.',
     },
     permissions: {
       title: 'Automatic permissions',
@@ -251,9 +251,9 @@ export const pt = {
         'Assets que já pertencem à conta ou ao grupo ativo não são enviados de novo. Economiza tempo e cota.',
       preserveMetadata: 'Manter nome e descrição originais',
       preserveMetadataDesc: 'A nova cópia recebe o mesmo nome e a mesma descrição do original.',
-      archiveRecovery: 'Tentar recuperar assets apagados (lento)',
-      archiveRecoveryDesc:
-        'Procura em arquivos da web quando uma animação é privada ou foi apagada. Pode levar de 10 a 30 s a mais por asset com falha.',
+      failedRecovery: 'Recuperação de assets com falha',
+      failedRecoveryDesc:
+        'Disponível no resultado final quando algum asset falha. A recuperação só começa quando você a escolhe lá.',
     },
     permissions: {
       title: 'Permissões automáticas',

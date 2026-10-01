@@ -1,5 +1,9 @@
 use super::is_valid_numeric_id;
 
+#[path = "discovery_cache.rs"]
+mod discovery_cache;
+
+use discovery_cache::{collect_discoveries, DiscoveryCache, DiscoveryKey};
 use reqwest::header::{COOKIE, USER_AGENT};
 use std::collections::HashSet;
 use std::sync::OnceLock;
@@ -10,12 +14,12 @@ const MAX_GROUP_FRIEND_CRAWL_LIMIT: usize = 8;
 const MAX_FRIEND_CRAWL_LIMIT: usize = 15;
 
 type AuthUserCache = dashmap::DashMap<String, u64>;
-type UserGroupsCache = dashmap::DashMap<u64, Vec<(u64, Option<u64>)>>;
-type UserFriendsCache = dashmap::DashMap<u64, Vec<u64>>;
-type CreatorGamesCache = dashmap::DashMap<(String, u64), Vec<String>>;
-type SocialGraphCache = dashmap::DashMap<u64, Vec<String>>;
+type UserGroupsCache = DiscoveryCache<Vec<(u64, Option<u64>)>>;
+type UserFriendsCache = DiscoveryCache<Vec<u64>>;
+type CreatorGamesCache = DiscoveryCache<Vec<String>>;
+type SocialGraphCache = DiscoveryCache<Vec<String>>;
 
-type GroupOwnerCache = dashmap::DashMap<u64, Option<u64>>;
+type GroupOwnerCache = DiscoveryCache<Option<u64>>;
 
 static AUTH_USER_ID_CACHE: OnceLock<AuthUserCache> = OnceLock::new();
 static USER_GROUPS_CACHE: OnceLock<UserGroupsCache> = OnceLock::new();
@@ -23,24 +27,25 @@ static USER_FRIENDS_CACHE: OnceLock<UserFriendsCache> = OnceLock::new();
 static CREATOR_GAMES_CACHE: OnceLock<CreatorGamesCache> = OnceLock::new();
 static SOCIAL_GRAPH_CACHE: OnceLock<SocialGraphCache> = OnceLock::new();
 static GROUP_OWNER_CACHE: OnceLock<GroupOwnerCache> = OnceLock::new();
+static DISCOVERY_REQUESTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
 
 fn auth_user_id_cache() -> &'static AuthUserCache {
     AUTH_USER_ID_CACHE.get_or_init(dashmap::DashMap::new)
 }
 fn user_groups_cache() -> &'static UserGroupsCache {
-    USER_GROUPS_CACHE.get_or_init(dashmap::DashMap::new)
+    USER_GROUPS_CACHE.get_or_init(DiscoveryCache::new)
 }
 fn user_friends_cache() -> &'static UserFriendsCache {
-    USER_FRIENDS_CACHE.get_or_init(dashmap::DashMap::new)
+    USER_FRIENDS_CACHE.get_or_init(DiscoveryCache::new)
 }
 fn creator_games_cache() -> &'static CreatorGamesCache {
-    CREATOR_GAMES_CACHE.get_or_init(dashmap::DashMap::new)
+    CREATOR_GAMES_CACHE.get_or_init(DiscoveryCache::new)
 }
 fn social_graph_cache() -> &'static SocialGraphCache {
-    SOCIAL_GRAPH_CACHE.get_or_init(dashmap::DashMap::new)
+    SOCIAL_GRAPH_CACHE.get_or_init(DiscoveryCache::new)
 }
 fn group_owner_cache() -> &'static GroupOwnerCache {
-    GROUP_OWNER_CACHE.get_or_init(dashmap::DashMap::new)
+    GROUP_OWNER_CACHE.get_or_init(DiscoveryCache::new)
 }
 
 pub fn prewarm_creator_info_cache<I>(entries: I)
@@ -360,86 +365,104 @@ pub async fn attempt_asset_usage_place_id_discovery(
     place_ids
 }
 
-pub async fn get_groups_for_user(user_id: u64, cookie_header: &str) -> Vec<(u64, Option<u64>)> {
-    if let Some(cached) = user_groups_cache().get(&user_id) {
-        return cached.clone();
-    }
+async fn discovery_json(url: &str, cookie_header: &str) -> Option<serde_json::Value> {
+    let _permit = DISCOVERY_REQUESTS.acquire().await.ok()?;
     let client = crate::utils::get_http_client();
-    let url = format!("https://groups.roblox.com/v1/users/{user_id}/groups/roles");
-    let mut results = Vec::new();
+    client
+        .get(url)
+        .header(COOKIE, cookie_header)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+}
 
-    if let Ok(resp) = client.get(&url).header(reqwest::header::COOKIE, cookie_header).send().await {
-        if resp.status().is_success() {
-            if let Ok(data) = resp.json::<serde_json::Value>().await {
-                if let Some(groups) = data.get("data").and_then(|d| d.as_array()) {
-                    for entry in groups {
-                        if let Some(group) = entry.get("group") {
-                            if let Some(group_id) =
-                                group.get("id").and_then(serde_json::Value::as_u64)
-                            {
-                                let owner_id = group
-                                    .get("owner")
-                                    .and_then(|o| o.get("userId"))
-                                    .and_then(serde_json::Value::as_u64);
-                                results.push((group_id, owner_id));
-                            }
+pub async fn get_groups_for_user(user_id: u64, cookie_header: &str) -> Vec<(u64, Option<u64>)> {
+    let Some(key) = DiscoveryKey::new("user", user_id, cookie_header) else {
+        return Vec::new();
+    };
+    user_groups_cache()
+        .get_or_fetch(
+            key,
+            async {
+                let url = format!("https://groups.roblox.com/v1/users/{user_id}/groups/roles");
+                let mut results = Vec::new();
+                let Some(data) = discovery_json(&url, cookie_header).await else {
+                    return results;
+                };
+                if let Some(groups) = data.get("data").and_then(serde_json::Value::as_array) {
+                    for group in groups.iter().filter_map(|entry| entry.get("group")) {
+                        if let Some(group_id) =
+                            group.get("id").and_then(serde_json::Value::as_u64).filter(|id| *id > 0)
+                        {
+                            let owner_id = group
+                                .get("owner")
+                                .and_then(|owner| owner.get("userId"))
+                                .and_then(serde_json::Value::as_u64)
+                                .filter(|id| *id > 0);
+                            results.push((group_id, owner_id));
                         }
                     }
                 }
-            }
-        }
-    }
-    user_groups_cache().insert(user_id, results.clone());
-    results
+                results
+            },
+            |results| !results.is_empty(),
+        )
+        .await
 }
 
 pub async fn get_group_owner(group_id: u64, cookie_header: &str) -> Option<u64> {
-    if let Some(cached) = group_owner_cache().get(&group_id) {
-        return *cached;
-    }
-    let client = crate::utils::get_http_client();
-    let url = format!("https://groups.roblox.com/v1/groups/{group_id}");
-    let mut owner_id: Option<u64> = None;
-
-    if let Ok(resp) = client.get(&url).header(reqwest::header::COOKIE, cookie_header).send().await {
-        if resp.status().is_success() {
-            if let Ok(data) = resp.json::<serde_json::Value>().await {
-                owner_id = data
+    let key = DiscoveryKey::new("group", group_id, cookie_header)?;
+    group_owner_cache()
+        .get_or_fetch(
+            key,
+            async {
+                let url = format!("https://groups.roblox.com/v1/groups/{group_id}");
+                discovery_json(&url, cookie_header)
+                    .await?
                     .get("owner")
-                    .and_then(|o| o.get("userId"))
-                    .and_then(serde_json::Value::as_u64);
-            }
-        }
-    }
-    group_owner_cache().insert(group_id, owner_id);
-    owner_id
+                    .and_then(|owner| owner.get("userId"))
+                    .and_then(serde_json::Value::as_u64)
+                    .filter(|id| *id > 0)
+            },
+            Option::is_some,
+        )
+        .await
 }
 
 pub async fn get_friends_for_user(user_id: u64, cookie_header: &str) -> Vec<u64> {
-    if let Some(cached) = user_friends_cache().get(&user_id) {
-        return cached.clone();
-    }
-    let client = crate::utils::get_http_client();
-    let url = format!("https://friends.roblox.com/v1/users/{user_id}/friends");
-    let mut results = Vec::new();
-
-    if let Ok(resp) = client.get(&url).header(reqwest::header::COOKIE, cookie_header).send().await {
-        if resp.status().is_success() {
-            if let Ok(data) = resp.json::<serde_json::Value>().await {
-                if let Some(friends) = data.get("data").and_then(|d| d.as_array()) {
+    let Some(key) = DiscoveryKey::new("user", user_id, cookie_header) else {
+        return Vec::new();
+    };
+    user_friends_cache()
+        .get_or_fetch(
+            key,
+            async {
+                let url = format!("https://friends.roblox.com/v1/users/{user_id}/friends");
+                let mut results = Vec::new();
+                let Some(data) = discovery_json(&url, cookie_header).await else {
+                    return results;
+                };
+                if let Some(friends) = data.get("data").and_then(serde_json::Value::as_array) {
                     for friend in friends {
-                        if let Some(friend_id) =
-                            friend.get("id").and_then(serde_json::Value::as_u64)
+                        if let Some(friend_id) = friend
+                            .get("id")
+                            .and_then(serde_json::Value::as_u64)
+                            .filter(|id| *id > 0)
                         {
                             results.push(friend_id);
                         }
                     }
                 }
-            }
-        }
-    }
-    user_friends_cache().insert(user_id, results.clone());
-    results
+                results
+            },
+            |results| !results.is_empty(),
+        )
+        .await
 }
 
 pub async fn get_games_for_creator(
@@ -447,66 +470,45 @@ pub async fn get_games_for_creator(
     creator_id: u64,
     cookie_header: &str,
 ) -> Vec<String> {
-    let cache_key = (creator_type.to_string(), creator_id);
-    if let Some(cached) = creator_games_cache().get(&cache_key) {
-        return cached.clone();
-    }
-    let client = crate::utils::get_http_client();
-    let mut results: Vec<String> = Vec::new();
-
-    let build_url = |filter: u8| -> String {
-        if creator_type.eq_ignore_ascii_case("user") {
-            format!("https://games.roblox.com/v2/users/{creator_id}/games?accessFilter={filter}&limit=50")
-        } else {
-            format!("https://games.roblox.com/v2/groups/{creator_id}/games?accessFilter={filter}&limit=50")
-        }
+    let Some(key) = DiscoveryKey::new(creator_type, creator_id, cookie_header) else {
+        return Vec::new();
     };
-
-    let fetch_games = |url: String| {
-        let client = client.clone();
-        let header = cookie_header.to_string();
-        async move {
-            let mut out: Vec<String> = Vec::new();
-            if let Ok(resp) = client.get(&url).header(reqwest::header::COOKIE, header).send().await
-            {
-                if resp.status().is_success() {
-                    if let Ok(data) = resp.json::<serde_json::Value>().await {
-                        if let Some(games) = data.get("data").and_then(|d| d.as_array()) {
-                            for game in games {
-                                if let Some(root_place_id) = game
-                                    .get("rootPlace")
-                                    .and_then(|p| p.get("id"))
-                                    .and_then(serde_json::Value::as_u64)
-                                {
-                                    out.push(root_place_id.to_string());
+    creator_games_cache()
+        .get_or_fetch(
+            key,
+            async {
+                let mut results = Vec::new();
+                let namespace =
+                    if creator_type.trim().eq_ignore_ascii_case("user") { "users" } else { "groups" };
+                for filter in [2, 1] {
+                    let url = format!("https://games.roblox.com/v2/{namespace}/{creator_id}/games?accessFilter={filter}&limit=50");
+                    let Some(data) = discovery_json(&url, cookie_header).await else {
+                        continue;
+                    };
+                    if let Some(games) = data.get("data").and_then(serde_json::Value::as_array) {
+                        for game in games {
+                            if let Some(root_place_id) = game
+                                .get("rootPlace")
+                                .and_then(|place| place.get("id"))
+                                .and_then(serde_json::Value::as_u64)
+                                .filter(|id| *id > 0)
+                            {
+                                let place_id = root_place_id.to_string();
+                                if !results.contains(&place_id) {
+                                    results.push(place_id);
                                 }
                             }
                         }
                     }
+                    if !results.is_empty() {
+                        break;
+                    }
                 }
-            }
-            out
-        }
-    };
-
-    let public_games = fetch_games(build_url(2)).await;
-    for pid in &public_games {
-        if !results.contains(pid) {
-            results.push(pid.clone());
-        }
-    }
-
-    if results.is_empty() {
-        let private_games = fetch_games(build_url(1)).await;
-        for pid in private_games {
-            if !results.contains(&pid) {
-                results.push(pid);
-            }
-        }
-    }
-
-    creator_games_cache().insert(cache_key, results.clone());
-    results
+                results
+            },
+            |results| !results.is_empty(),
+        )
+        .await
 }
 
 pub async fn attempt_social_graph_place_id_discovery(
@@ -553,24 +555,36 @@ pub async fn attempt_social_graph_place_id_discovery(
     let Some(owner) = owner else {
         return Vec::new();
     };
-    let creator_type = owner.creator_type.unwrap_or_default();
+    let creator_type = owner.creator_type.unwrap_or_default().trim().to_ascii_lowercase();
     let creator_id = owner.creator_id.and_then(|id| id.parse::<u64>().ok()).unwrap_or_default();
 
-    if creator_id == 0 {
-        return vec![];
-    }
+    let Some(key) = DiscoveryKey::new(&creator_type, creator_id, cookie_header) else {
+        return Vec::new();
+    };
+    social_graph_cache()
+        .get_or_fetch(
+            key,
+            discover_social_graph_places(&creator_type, creator_id, auth_user_id, cookie_header),
+            |places| !places.is_empty(),
+        )
+        .await
+}
 
-    if let Some(cached) = social_graph_cache().get(&creator_id) {
-        return cached.clone();
-    }
-
+async fn discover_social_graph_places(
+    creator_type: &str,
+    creator_id: u64,
+    auth_user_id: Option<u64>,
+    cookie_header: &str,
+) -> Vec<String> {
     let mut tasks = vec![];
+    let mut seen_creators = HashSet::from([(creator_type.to_string(), creator_id)]);
 
     let mut queue_games_fetch = |c_type: &str, c_id: u64| {
-        tasks.push((c_type.to_string(), c_id));
+        let creator = (c_type.trim().to_ascii_lowercase(), c_id);
+        if c_id > 0 && seen_creators.insert(creator.clone()) {
+            tasks.push(creator);
+        }
     };
-
-    queue_games_fetch(&creator_type, creator_id);
 
     if let Some(uid) = auth_user_id {
         queue_games_fetch("User", uid);
@@ -636,21 +650,20 @@ pub async fn attempt_social_graph_place_id_discovery(
     let mut ordered_places: Vec<String> = Vec::new();
     let mut seen_places = HashSet::new();
 
-    let creator_places = get_games_for_creator(&creator_type, creator_id, cookie_header).await;
+    let creator_places = get_games_for_creator(creator_type, creator_id, cookie_header).await;
     for place in creator_places {
         if seen_places.insert(place.clone()) {
             ordered_places.push(place);
         }
     }
 
-    let cookie_header_str = cookie_header.to_string();
-    let mut futures = Vec::with_capacity(tasks.len());
-    for (ct, cid) in tasks {
-        let ch = cookie_header_str.clone();
-        futures.push(tokio::spawn(async move { get_games_for_creator(&ct, cid, &ch).await }));
-    }
-    let results = futures::future::join_all(futures).await;
-    for places in results.into_iter().flatten() {
+    let results = collect_discoveries(
+        tasks
+            .into_iter()
+            .map(|(ct, cid)| async move { get_games_for_creator(&ct, cid, cookie_header).await }),
+    )
+    .await;
+    for places in results {
         for place in places {
             if seen_places.insert(place.clone()) {
                 ordered_places.push(place);
@@ -664,7 +677,6 @@ pub async fn attempt_social_graph_place_id_discovery(
         }
     }
 
-    social_graph_cache().insert(creator_id, ordered_places.clone());
     ordered_places
 }
 
@@ -672,83 +684,36 @@ pub async fn attempt_deep_place_id_discovery(
     app: &AppHandle,
     asset_id: &str,
     _cookie_header: &str,
-    friend_limit: u32,
+    place_limit: u32,
+    excluded_place_ids: &[String],
 ) -> crate::error::Result<Vec<String>> {
-    use std::sync::OnceLock;
-
     let _ = crate::commands::ipc::append_log_entry(
         app,
         "info",
         "spoofer",
-        &format!("Wayback Discovery: Searching Wayback Machine for asset {asset_id}..."),
+        &format!("Archive recovery: searching archived delivery URLs for asset {asset_id}..."),
     );
-
-    let client = crate::utils::get_http_client();
-    let mut discovered_place_ids: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-
-    let cdx_asset_url = format!(
-        "https://web.archive.org/cdx/search/cdx?url=assetdelivery.roblox.com/v1/asset/*id%3D{asset_id}*&output=json&limit={limit}&filter=statuscode:200&fl=original&collapse=urlkey",
-        limit = (friend_limit * 5).max(20)
-    );
-    if let Ok(wb_resp) =
-        client.get(&cdx_asset_url).header(reqwest::header::USER_AGENT, "TrapSpoofer").send().await
-    {
-        if let Ok(wb_data) = wb_resp.json::<Vec<Vec<String>>>().await {
-            static CDN_PLACE_RE: OnceLock<regex::Regex> = OnceLock::new();
-            let place_re = CDN_PLACE_RE
-                .get_or_init(|| regex::Regex::new(r"placeId=(\d+)").expect("invalid regex"));
-            let server_re_lock: &OnceLock<regex::Regex> = {
-                static SERVER_RE: OnceLock<regex::Regex> = OnceLock::new();
-                &SERVER_RE
-            };
-            let server_re = server_re_lock
-                .get_or_init(|| regex::Regex::new(r"serverPlaceId=(\d+)").expect("invalid regex"));
-
-            for row in wb_data.into_iter().skip(1) {
-                if let Some(original_url) = row.first() {
-                    for re in &[place_re, server_re] {
-                        if let Some(cap) = re.captures(original_url) {
-                            if let Some(pid) = cap.get(1) {
-                                discovered_place_ids.insert(pid.as_str().to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if discovered_place_ids.is_empty() {
-        let wb_games_url = format!(
-            "https://web.archive.org/cdx/search/cdx?url=roblox.com/games/*&output=json&limit={}&fl=original&collapse=urlkey",
-            friend_limit * 10
+    let hints =
+        super::archive::discover_place_ids(asset_id, place_limit as usize, excluded_place_ids)
+            .await?;
+    for warning in hints.warnings {
+        let _ = crate::commands::ipc::append_log_entry(
+            app,
+            "warn",
+            "spoofer",
+            &format!("Archive recovery for asset {asset_id}: {warning}"),
         );
-        if let Ok(wb_resp) = client
-            .get(&wb_games_url)
-            .header(reqwest::header::USER_AGENT, "TrapSpoofer")
-            .send()
-            .await
-        {
-            if let Ok(wb_data) = wb_resp.json::<Vec<Vec<String>>>().await {
-                static GAMES_RE: OnceLock<regex::Regex> = OnceLock::new();
-                let re = GAMES_RE.get_or_init(|| {
-                    regex::Regex::new(r"roblox\.com/games/(\d+)").expect("invalid regex")
-                });
-                for row in wb_data.into_iter().skip(1) {
-                    if let Some(original_url) = row.first() {
-                        if let Some(cap) = re.captures(original_url) {
-                            if let Some(pid) = cap.get(1) {
-                                discovered_place_ids.insert(pid.as_str().to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
-
-    Ok(discovered_place_ids.into_iter().collect())
+    let _ = crate::commands::ipc::append_log_entry(
+        app,
+        "info",
+        "spoofer",
+        &format!(
+            "Archive recovery for asset {asset_id}: {} candidate Place ID(s) from {} completed search(es). Candidates still require a successful download.",
+            hints.place_ids.len(), hints.queries_completed,
+        ),
+    );
+    Ok(hints.place_ids)
 }
 
 fn json_numeric_id(value: &serde_json::Value) -> Option<String> {

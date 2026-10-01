@@ -171,6 +171,7 @@ export const en = {
       resolving_location: 'Locating…',
       discovering_usage: 'Finding a place…',
       discovering_graph: 'Finding a place…',
+      recovering: 'Recovering…',
       downloading: 'Downloading…',
       uploading: 'Uploading…',
       done: 'Done',
@@ -257,6 +258,9 @@ export const en = {
       failedTitle: '{count} assets failed',
       failedHelp: 'Usually private assets, audio quota or moderation. You can try them again.',
       retry: 'Try again',
+      recoverFailed: 'Recover failed assets',
+      recoveryHelp:
+        'Tries to recover only failed assets. It may take longer and may not succeed. Completed assets are kept.',
       unknownError: 'Unknown error',
       historyHint: 'Everything is also saved in History.',
     },
@@ -451,6 +455,7 @@ export const pt = {
       resolving_location: 'Localizando…',
       discovering_usage: 'Procurando um place…',
       discovering_graph: 'Procurando um place…',
+      recovering: 'Recuperando…',
       downloading: 'Baixando…',
       uploading: 'Enviando…',
       done: 'Concluído',
@@ -539,6 +544,9 @@ export const pt = {
       failedHelp:
         'Geralmente são assets privados, cota de áudio ou moderação. Dá para tentar de novo.',
       retry: 'Tentar de novo',
+      recoverFailed: 'Recuperar assets com falha',
+      recoveryHelp:
+        'Tenta recuperar só os assets que falharam. Pode demorar mais e não funcionar. Os assets concluídos são mantidos.',
       unknownError: 'Erro desconhecido',
       historyHint: 'Tudo também fica salvo no Histórico.',
     },

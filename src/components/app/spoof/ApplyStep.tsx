@@ -11,12 +11,17 @@ import {
   SkipForward,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 
 import { useLanguage } from '../../../contexts/LanguageContext';
 import { useStudioConnectionState } from '../../../contexts/StudioConnectionContext';
 import { cn } from '../../../lib/utils';
-import { pushToStudio, retryFailed, writeSpoofedFile } from '../../../services/spoofer';
+import {
+  pushToStudio,
+  recoverFailed,
+  retryFailed,
+  writeSpoofedFile,
+} from '../../../services/spoofer';
 import { useConfigStore } from '../../../stores/configStore';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { useSpooferStore } from '../../../stores/spooferStore';
@@ -178,7 +183,9 @@ function StudioApply({ mappings }: { mappings: Mapping[] }) {
 
 function FileApply() {
   const { t } = useLanguage();
-  const source = useSessionStore((s) => s.source);
+  const sessionSource = useSessionStore((s) => s.source);
+  const jobSource = useSpooferStore((s) => s.lastJobSource);
+  const source = jobSource ?? sessionSource;
   const lastWrite = useSessionStore((s) => s.lastFileWrite);
   const hasMappings = useJobMappings().length > 0;
   const toast = useSpooferStore((s) => s.showToast);
@@ -374,8 +381,14 @@ function ResultsTable({ mappings }: { mappings: Mapping[] }) {
 function FailedList() {
   const { t } = useLanguage();
   const results = useSpooferStore((s) => s.lastAssetResults);
+  const busy = useSpooferStore((s) => s.isPreparingJob || s.isSpoofing || s.isReplacing);
   const runner = useRunLauncher();
-  const failed = useMemo(() => results.filter((r) => !r.success && !r.skipped), [results]);
+  const recoveryHelpId = useId();
+  const failed = useMemo(
+    () => results.filter((r) => !r.success && !r.skipped && !r.cancelled),
+    [results],
+  );
+  const disabled = busy || runner.launching;
   if (failed.length === 0) return null;
 
   return (
@@ -385,7 +398,7 @@ function FailedList() {
         title={t('flow.apply.failedTitle').replace('{count}', String(failed.length))}
         description={t('flow.apply.failedHelp')}
         actions={
-          <Button onClick={() => void runner.launch(retryFailed)} disabled={runner.launching}>
+          <Button onClick={() => void runner.launch(retryFailed)} disabled={disabled}>
             {runner.launching ? <Loader2 className="animate-spin" /> : <RotateCcw />}
             {t('flow.apply.retry')}
           </Button>
@@ -417,6 +430,20 @@ function FailedList() {
           ))}
         </ul>
       </div>
+      <div className="space-y-2 border-t border-border-subtle/70 px-5 py-4">
+        <Button
+          variant="outline"
+          disabled={disabled}
+          aria-describedby={recoveryHelpId}
+          onClick={() => void runner.launch(recoverFailed)}
+        >
+          <RotateCcw />
+          {t('flow.apply.recoverFailed')}
+        </Button>
+        <p id={recoveryHelpId} className="text-[12.5px] leading-relaxed text-text-muted">
+          {t('flow.apply.recoveryHelp')}
+        </p>
+      </div>
       <QuotaDialog
         quota={runner.quota}
         onConfirm={() => void runner.confirmQuota()}
@@ -428,7 +455,9 @@ function FailedList() {
 
 export default function ApplyStep() {
   const { t } = useLanguage();
-  const sourceKind = useSessionStore((s) => s.source?.kind);
+  const sessionSourceKind = useSessionStore((s) => s.source?.kind);
+  const jobSourceKind = useSpooferStore((s) => s.lastJobSource?.kind);
+  const sourceKind = jobSourceKind ?? sessionSourceKind;
   const downloadOnly = useConfigStore((s) => s.config.spoofing.downloadOnly);
   const mappings = useJobMappings();
 

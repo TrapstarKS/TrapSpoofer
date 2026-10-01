@@ -46,6 +46,17 @@ export function countJobResults(results: SpooferAssetResult[]) {
   return counts;
 }
 
+export function mergeJobResults(
+  previous: SpooferAssetResult[],
+  results: SpooferAssetResult[],
+): SpooferAssetResult[] {
+  const byId = new Map<string, SpooferAssetResult>();
+  for (const result of [...previous, ...results]) {
+    if (result.id) byId.set(result.id, result);
+  }
+  return [...byId.values()];
+}
+
 export function jobReplacements(
   results: SpooferAssetResult[],
   history: Record<string, string> = {},
@@ -84,7 +95,8 @@ export function transferStage(
   if (
     status === 'resolving_location' ||
     status === 'discovering_usage' ||
-    status === 'discovering_graph'
+    status === 'discovering_graph' ||
+    status === 'recovering'
   )
     return status;
   if (status?.startsWith('downloading')) return 'downloading';

@@ -1,4 +1,5 @@
 pub mod api;
+mod archive;
 pub mod resolution;
 pub mod types;
 pub mod validation;
@@ -21,8 +22,12 @@ use crate::commands::spoofer::{
     wait_rate_limit, AsyncWriteExt, BatchAssetRequest, DownloadResult, File, RateLimitBucket,
     TransferUpdate, CONTENT_LENGTH,
 };
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+
+const MAX_ARCHIVE_PLACE_IDS: usize = 20;
+const PERM_FAILURE_BAIL_THRESHOLD: usize = 20;
 
 fn emit_spoofer_log(app: &AppHandle, level: &str, message: &str) {
     let _ = crate::commands::ipc::append_log_entry(app, level, "spoofer", message);
@@ -292,13 +297,15 @@ pub async fn download_asset_with_deferred_places(
         }
     }
 
+    let mut last_error =
+        "Download failed before Roblox returned a usable asset location.".to_string();
     let mut candidate_urls = Vec::new();
     let mut discovery_attempted = false;
     // Fast path: when the batch endpoint already produced a direct URL, try it
     // alone first and only build the expensive fallback list if it fails.
     let mut fallbacks_built = false;
 
-    if let Some(url) = direct_url.clone().filter(|url| !url.trim().is_empty()) {
+    if let Some(url) = direct_url.filter(|url| !url.trim().is_empty()) {
         push_unique_url(&mut candidate_urls, url);
     } else {
         discovery_attempted = extend_with_fallback_candidates(
@@ -313,25 +320,20 @@ pub async fn download_asset_with_deferred_places(
             &mut deferred_place_ids,
             &mut candidate_urls,
         )
-        .await?;
+        .await
+        .unwrap_or_else(|error| {
+            last_error = format!("Fallback location resolution failed: {error}");
+            false
+        });
         fallbacks_built = true;
     }
 
-    let mut universe_id = if let Some(pid) = place_ids.first() {
-        crate::commands::spoofer::get_universe_id_from_place_id(pid.clone(), cookie.clone())
-            .await
-            .ok()
-    } else {
-        None
-    };
-
-    let mut last_error =
-        "Download failed before Roblox returned a usable asset location.".to_string();
+    let mut universes_by_place = HashMap::new();
+    let mut attempts = DownloadAttempts::default();
     let mut attempted_claim = false;
     let user_agents =
         ["RobloxStudio/WinInet", "RobloxApp/WinInet", "Roblox/WinInet", "roblox/9.0.0.0 (WinInet)"];
 
-    const PERM_FAILURE_BAIL_THRESHOLD: usize = 20;
     let mut consecutive_perm_failures: usize = 0;
 
     let mut is_first_url = true;
@@ -376,6 +378,20 @@ pub async fn download_asset_with_deferred_places(
 
             let mut this_url_was_perm_failure = false;
             let is_cdn_url = download_url.contains("rbxcdn.com");
+            let context = resolve_download_context(
+                download_url,
+                place_ids.first().map(String::as_str),
+                &mut universes_by_place,
+                |pid| {
+                    let cookie = cookie_header.clone();
+                    async move {
+                        crate::commands::spoofer::get_universe_id_from_place_id(pid, cookie)
+                            .await
+                            .ok()
+                    }
+                },
+            )
+            .await;
 
             let mut resume_offset = if is_first_url {
                 if let Ok(meta) = tokio::fs::metadata(&file_path).await {
@@ -395,8 +411,6 @@ pub async fn download_asset_with_deferred_places(
                     }
                 }
                 let ua = user_agents[attempt as usize % user_agents.len()];
-                let request_place_id =
-                    extract_place_id_from_url(download_url).or_else(|| place_ids.first().cloned());
                 let cookie_for_req = if is_cdn_url { None } else { Some(cookie_header.as_str()) };
                 wait_rate_limit(RateLimitBucket::AssetDownload).await;
                 let send_result = tokio::time::timeout(
@@ -405,9 +419,9 @@ pub async fn download_asset_with_deferred_places(
                         &client,
                         download_url,
                         cookie_for_req,
-                        request_place_id.as_deref(),
+                        context.place_id.as_deref(),
                         ua,
-                        universe_id.as_deref(),
+                        context.universe_id.as_deref(),
                         resume_offset,
                     ),
                 )
@@ -434,10 +448,9 @@ pub async fn download_asset_with_deferred_places(
 
                 crate::utils::check_for_roblosecurity_update(&app, &download_resp, &cookie_header);
                 let status = download_resp.status();
+                attempts.record_http_status(status);
 
                 if status.is_success() {
-                    crate::commands::spoofer::record_adaptive_success();
-
                     match write_download_response(
                         &app,
                         download_resp,
@@ -450,8 +463,17 @@ pub async fn download_asset_with_deferred_places(
                     )
                     .await
                     {
-                        Ok(mut res) => {
-                            res.resolved_place_id = request_place_id.clone();
+                        Ok(res) => {
+                            let res = match attempts.accept_candidate(res, context.place_id.clone())
+                            {
+                                Ok(res) => res,
+                                Err(error) => {
+                                    last_error = error;
+                                    this_url_was_perm_failure = true;
+                                    break;
+                                }
+                            };
+                            crate::commands::spoofer::record_adaptive_success();
                             emit_transfer_update(
                                 &app,
                                 TransferUpdate {
@@ -596,7 +618,7 @@ pub async fn download_asset_with_deferred_places(
                 consecutive_perm_failures = 0;
             }
 
-            if consecutive_perm_failures >= PERM_FAILURE_BAIL_THRESHOLD {
+            if attempts.should_stop_candidates(consecutive_perm_failures) {
                 emit_spoofer_log(
                 &app,
                 "info",
@@ -625,17 +647,11 @@ pub async fn download_asset_with_deferred_places(
                 &mut deferred_place_ids,
                 &mut candidate_urls,
             )
-            .await?;
-            if universe_id.is_none() {
-                if let Some(pid) = place_ids.first() {
-                    universe_id = crate::commands::spoofer::get_universe_id_from_place_id(
-                        pid.clone(),
-                        cookie.clone(),
-                    )
-                    .await
-                    .ok();
-                }
-            }
+            .await
+            .unwrap_or_else(|error| {
+                last_error = format!("Fallback location resolution failed: {error}");
+                false
+            });
             if candidate_urls.len() > before {
                 consecutive_perm_failures = 0;
                 continue 'phases;
@@ -668,18 +684,13 @@ pub async fn download_asset_with_deferred_places(
                 continue 'phases;
             }
         }
-        break 'phases;
-    }
 
-    if place_ids.is_empty()
-        && (last_error.contains("Permission Denied") || last_error.contains("Conflict"))
-    {
-        if enable_archive_recovery {
+        if attempts.take_archive_recovery(enable_archive_recovery) {
             emit_transfer_update(
                 &app,
                 TransferUpdate {
                     id: transfer_id.clone(),
-                    status: Some("processing".into()),
+                    status: Some("recovering".into()),
                     error: None,
                     progress: Some(0),
                     name: Some(format!("{name} (Wayback Discovery)")),
@@ -690,35 +701,44 @@ pub async fn download_asset_with_deferred_places(
                 },
             );
 
+            let mut excluded_place_ids = place_ids.clone();
+            excluded_place_ids
+                .extend(candidate_urls.iter().filter_map(|url| extract_place_id_from_url(url)));
+            excluded_place_ids.sort();
+            excluded_place_ids.dedup();
             let recovery_error = match attempt_deep_place_id_discovery(
                 &app,
                 &asset_id,
                 &cookie_header,
-                20,
+                MAX_ARCHIVE_PLACE_IDS as u32,
+                &excluded_place_ids,
             )
             .await
             {
                 Ok(recovered_place_ids) => {
                     if recovered_place_ids.is_empty() {
                         "Wayback Archive discovery could not find any archived place IDs for this asset.".to_string()
+                    } else if let Some(start) = append_archive_candidates(
+                        &asset_id,
+                        asset_type.as_deref(),
+                        &recovered_place_ids,
+                        &place_ids,
+                        &mut candidate_urls,
+                    ) {
+                        i = start;
+                        consecutive_perm_failures = 0;
+                        emit_spoofer_log(
+                            &app,
+                            "info",
+                            &format!(
+                                "Wayback Discovery added {} new download candidate(s) for asset {asset_id}.",
+                                candidate_urls.len() - start,
+                            ),
+                        );
+                        continue 'phases;
                     } else {
-                        let _ = crate::commands::ipc::append_log_entry(&app, "info", "spoofer", &format!("Wayback Discovery found {} candidate Place ID(s). Retrying download...", recovered_place_ids.len()));
-
-                        return Box::pin(download_animation_asset_with_progress(
-                            app.clone(),
-                            direct_url,
-                            cookie,
-                            fallback_cookies,
-                            file_path,
-                            transfer_id,
-                            name,
-                            asset_id,
-                            asset_type,
-                            Some(recovered_place_ids.join(",")),
-                            false,
-                            proxy_url.clone(),
-                        ))
-                        .await;
+                        "Wayback Archive discovery found no new place IDs for this asset."
+                            .to_string()
                     }
                 }
                 Err(e) => {
@@ -727,7 +747,13 @@ pub async fn download_asset_with_deferred_places(
             };
             last_error.push_str(&format!(" {recovery_error}"));
         }
+        break 'phases;
+    }
 
+    if place_ids.is_empty()
+        && !candidate_urls.iter().any(|url| extract_place_id_from_url(url).is_some())
+        && (last_error.contains("Permission Denied") || last_error.contains("Conflict"))
+    {
         last_error.push_str(
             " No Place ID was found for place-scoped asset delivery. Try providing a published Place ID under 'Force Place ID(s)' or scanning directly from Studio.",
         );
@@ -767,9 +793,486 @@ fn is_retryable_download_status(status: reqwest::StatusCode) -> bool {
     status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
 }
 
+fn numeric_place_id(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if !is_valid_numeric_id(value) {
+        return None;
+    }
+    value.parse::<u64>().ok().filter(|id| *id > 0)
+}
+
+fn append_archive_candidates(
+    asset_id: &str,
+    asset_type: Option<&str>,
+    recovered_place_ids: &[String],
+    known_place_ids: &[String],
+    candidate_urls: &mut Vec<String>,
+) -> Option<usize> {
+    if !is_valid_numeric_id(asset_id) {
+        return None;
+    }
+    let mut seen: HashSet<u64> =
+        known_place_ids.iter().filter_map(|id| numeric_place_id(id)).collect();
+    for url in candidate_urls.iter() {
+        if let Some(id) = extract_place_id_from_url(url).and_then(|id| numeric_place_id(&id)) {
+            seen.insert(id);
+        }
+    }
+    let fresh_places: Vec<String> = recovered_place_ids
+        .iter()
+        .filter_map(|id| numeric_place_id(id))
+        .filter(|id| seen.insert(*id))
+        .take(MAX_ARCHIVE_PLACE_IDS)
+        .map(|id| id.to_string())
+        .collect();
+    if fresh_places.is_empty() {
+        return None;
+    }
+    let start = candidate_urls.len();
+    for url in build_direct_asset_download_urls(asset_id, asset_type, &fresh_places) {
+        push_unique_url(candidate_urls, url);
+    }
+    (candidate_urls.len() > start).then_some(start)
+}
+
+struct DownloadContext {
+    place_id: Option<String>,
+    universe_id: Option<String>,
+}
+
+async fn resolve_download_context<F, Fut>(
+    download_url: &str,
+    fallback_place_id: Option<&str>,
+    universes_by_place: &mut HashMap<String, Option<String>>,
+    resolve_universe: F,
+) -> DownloadContext
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
+    let place_id = extract_place_id_from_url(download_url)
+        .or_else(|| fallback_place_id.map(str::to_string))
+        .and_then(|id| numeric_place_id(&id))
+        .map(|id| id.to_string());
+    let universe_id = if let Some(ref pid) = place_id {
+        if let Some(cached) = universes_by_place.get(pid) {
+            cached.clone()
+        } else {
+            let resolved = resolve_universe(pid.clone()).await;
+            universes_by_place.insert(pid.clone(), resolved.clone());
+            resolved
+        }
+    } else {
+        None
+    };
+    DownloadContext { place_id, universe_id }
+}
+
+#[derive(Default)]
+struct DownloadAttempts {
+    recoverable_failure: bool,
+    finished: bool,
+    archive_attempted: bool,
+}
+
+impl DownloadAttempts {
+    fn record_http_status(&mut self, status: reqwest::StatusCode) {
+        self.recoverable_failure |= matches!(status.as_u16(), 403 | 404 | 409 | 410);
+        self.finished |= status == reqwest::StatusCode::UNAUTHORIZED;
+    }
+
+    fn accept_candidate(
+        &mut self,
+        mut result: DownloadResult,
+        place_id: Option<String>,
+    ) -> Result<DownloadResult, String> {
+        if !result.success {
+            self.recoverable_failure = true;
+            return Err(result
+                .error
+                .filter(|error| !error.trim().is_empty())
+                .unwrap_or_else(|| "Downloaded asset did not contain usable content.".into()));
+        }
+        self.finished = true;
+        result.resolved_place_id = place_id;
+        Ok(result)
+    }
+
+    const fn should_stop_candidates(&self, consecutive_perm_failures: usize) -> bool {
+        !self.archive_attempted && consecutive_perm_failures >= PERM_FAILURE_BAIL_THRESHOLD
+    }
+
+    fn take_archive_recovery(&mut self, enabled: bool) -> bool {
+        if !enabled || !self.recoverable_failure || self.finished || self.archive_attempted {
+            return false;
+        }
+        self.archive_attempted = true;
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_candidates_append_only_fresh_hints_after_existing_queue() {
+        let asset_id = "123456789";
+        let mut urls = build_direct_asset_download_urls(asset_id, Some("audio"), &[]);
+        urls.extend(build_direct_asset_download_urls(
+            asset_id,
+            Some("audio"),
+            &["123450".into(), "123451".into()],
+        ));
+        let original = urls.clone();
+        let recovered = [
+            "123450",
+            "000123451",
+            "123452",
+            "123460",
+            " 123460 ",
+            "123461",
+            "0",
+            "-1",
+            "1&placeId=2",
+            "18446744073709551616",
+        ]
+        .map(str::to_string);
+        let start = append_archive_candidates(
+            asset_id,
+            Some("audio"),
+            &recovered,
+            &["123452".into()],
+            &mut urls,
+        )
+        .expect("new candidates");
+        assert_eq!(start, original.len());
+        assert_eq!(&urls[..start], original);
+        let new_places: Vec<String> =
+            urls[start..].iter().filter_map(|url| extract_place_id_from_url(url)).collect();
+        assert_eq!(new_places, ["123460", "123460", "123461", "123461"]);
+        for url in &urls[start..] {
+            let parsed = reqwest::Url::parse(url).expect("candidate URL");
+            let query: HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+            assert_eq!(parsed.host_str(), Some("assetdelivery.roblox.com"));
+            assert_eq!(query.get("id").map(String::as_str), Some(asset_id));
+            assert_eq!(query.get("expectedAssetType").map(String::as_str), Some("Audio"));
+        }
+        let appended = urls.clone();
+        assert!(append_archive_candidates(
+            asset_id,
+            Some("audio"),
+            &recovered,
+            &["123452".into()],
+            &mut urls,
+        )
+        .is_none());
+        assert_eq!(urls, appended);
+    }
+
+    #[test]
+    fn archive_candidates_empty_or_known_hints_do_not_replay() {
+        let mut urls =
+            build_direct_asset_download_urls("123456789", Some("animation"), &["123450".into()]);
+        let original = urls.clone();
+        for recovered in [vec![], vec!["123450".into(), "000123450".into(), "0".into()]] {
+            assert!(append_archive_candidates(
+                "123456789",
+                Some("animation"),
+                &recovered,
+                &[],
+                &mut urls,
+            )
+            .is_none());
+            assert_eq!(urls, original);
+        }
+        assert!(append_archive_candidates(
+            "123456789&placeId=1",
+            Some("animation"),
+            &["123451".into()],
+            &[],
+            &mut urls,
+        )
+        .is_none());
+        assert_eq!(urls, original);
+    }
+
+    #[test]
+    fn archive_candidates_bound_fresh_hints_after_deduplication() {
+        let mut recovered = vec!["123450".to_string(); MAX_ARCHIVE_PLACE_IDS * 3];
+        recovered.extend(["0".into(), "bad".into(), "18446744073709551616".into()]);
+        for index in 0..MAX_ARCHIVE_PLACE_IDS + 10 {
+            recovered.push((223450 + index).to_string());
+            recovered.push(format!("00{}", 223450 + index));
+        }
+        let mut urls = Vec::new();
+        assert_eq!(
+            append_archive_candidates(
+                "123456789",
+                Some("animation"),
+                &recovered,
+                &["123450".into()],
+                &mut urls,
+            ),
+            Some(0),
+        );
+        assert_eq!(urls.len(), MAX_ARCHIVE_PLACE_IDS * 2);
+        let places: Vec<String> =
+            urls.iter().filter_map(|url| extract_place_id_from_url(url)).collect();
+        let expected: Vec<String> = (0..MAX_ARCHIVE_PLACE_IDS)
+            .flat_map(|index| [(223450 + index).to_string(), (223450 + index).to_string()])
+            .collect();
+        assert_eq!(places, expected);
+    }
+
+    #[test]
+    fn archive_candidates_keep_their_budget_without_replaying_old_tail() {
+        let old_places: Vec<String> =
+            (0..MAX_ARCHIVE_PLACE_IDS + 10).map(|index| (123450 + index).to_string()).collect();
+        let fresh_places: Vec<String> =
+            (0..MAX_ARCHIVE_PLACE_IDS).map(|index| (223450 + index).to_string()).collect();
+        let mut urls =
+            build_direct_asset_download_urls("123456789", Some("animation"), &old_places);
+        let old_count = urls.len();
+        let mut attempts = DownloadAttempts::default();
+        let mut visited = Vec::new();
+        let mut failures = 0;
+        for url in &urls {
+            visited.push(url.clone());
+            attempts.record_http_status(reqwest::StatusCode::FORBIDDEN);
+            failures += 1;
+            if attempts.should_stop_candidates(failures) {
+                break;
+            }
+        }
+        assert_eq!(visited.len(), PERM_FAILURE_BAIL_THRESHOLD);
+        assert!(visited.len() < old_count);
+        assert!(attempts.take_archive_recovery(true));
+        let start = append_archive_candidates(
+            "123456789",
+            Some("animation"),
+            &fresh_places,
+            &old_places,
+            &mut urls,
+        )
+        .expect("new candidates");
+        failures = 0;
+        for url in &urls[start..] {
+            visited.push(url.clone());
+            attempts.record_http_status(reqwest::StatusCode::FORBIDDEN);
+            failures += 1;
+            if attempts.should_stop_candidates(failures) {
+                break;
+            }
+        }
+        assert_eq!(failures, MAX_ARCHIVE_PLACE_IDS * 2);
+        assert_eq!(visited.len(), PERM_FAILURE_BAIL_THRESHOLD + MAX_ARCHIVE_PLACE_IDS * 2);
+        assert_eq!(visited.iter().collect::<HashSet<_>>().len(), visited.len());
+        assert!(visited[PERM_FAILURE_BAIL_THRESHOLD..].iter().all(|url| {
+            let pid = extract_place_id_from_url(url).expect("place");
+            fresh_places.contains(&pid)
+        }));
+        assert!(!attempts.take_archive_recovery(true));
+    }
+
+    #[tokio::test]
+    async fn download_context_follows_each_candidate_and_reuses_place_cache() {
+        let client = reqwest::Client::new();
+        let mut universes = HashMap::new();
+        let mut lookups = Vec::new();
+        for place_id in ["123450", "223450", "223450", "123450"] {
+            let url = build_direct_asset_download_urls(
+                "123456789",
+                Some("animation"),
+                &[place_id.to_string()],
+            )
+            .remove(0);
+            let context = resolve_download_context(&url, Some("123450"), &mut universes, |pid| {
+                lookups.push(pid.clone());
+                std::future::ready(Some(format!("9{pid}")))
+            })
+            .await;
+            assert_eq!(context.place_id.as_deref(), Some(place_id));
+            assert_eq!(context.universe_id.as_deref(), Some(format!("9{place_id}").as_str()));
+            let request = crate::commands::spoofer::apply_roblox_game_context(
+                client.get(&url),
+                context.place_id.as_deref(),
+                context.universe_id.as_deref(),
+            )
+            .build()
+            .expect("request");
+            assert_eq!(request.headers()["Roblox-Place-Id"], place_id);
+            assert_eq!(request.headers()["Roblox-Universe-Id"], format!("9{place_id}"));
+            let session: serde_json::Value = serde_json::from_str(
+                request.headers()["Roblox-Session-Id"].to_str().expect("session header"),
+            )
+            .expect("session JSON");
+            assert_eq!(session["PlaceId"].as_u64(), numeric_place_id(place_id));
+        }
+        assert_eq!(lookups, ["123450", "223450"]);
+    }
+
+    #[tokio::test]
+    async fn download_context_missing_universe_never_inherits_another_place() {
+        let client = reqwest::Client::new();
+        let mut universes = HashMap::from([("123450".into(), Some("9123450".into()))]);
+        let mut lookups = Vec::new();
+        let url = "https://assetdelivery.roblox.com/v1/asset?id=123456789&placeId=223450";
+        for _ in 0..2 {
+            let context = resolve_download_context(url, Some("123450"), &mut universes, |pid| {
+                lookups.push(pid);
+                std::future::ready(None)
+            })
+            .await;
+            assert_eq!(context.place_id.as_deref(), Some("223450"));
+            assert!(context.universe_id.is_none());
+            let request = crate::commands::spoofer::apply_roblox_game_context(
+                client.get(url),
+                context.place_id.as_deref(),
+                context.universe_id.as_deref(),
+            )
+            .build()
+            .expect("request");
+            assert_eq!(request.headers()["Roblox-Place-Id"], "223450");
+            assert!(!request.headers().contains_key("Roblox-Universe-Id"));
+        }
+        let unscoped = "https://assetdelivery.roblox.com/v1/asset?id=123456789";
+        let context = resolve_download_context(
+            unscoped,
+            None,
+            &mut universes,
+            |_| -> std::future::Ready<Option<String>> {
+                panic!("an unscoped request must not resolve a universe");
+            },
+        )
+        .await;
+        assert!(context.place_id.is_none());
+        assert!(context.universe_id.is_none());
+        let context = resolve_download_context(
+            unscoped,
+            Some("123450"),
+            &mut universes,
+            |_| -> std::future::Ready<Option<String>> {
+                panic!("cached universe must be reused");
+            },
+        )
+        .await;
+        assert_eq!(context.universe_id.as_deref(), Some("9123450"));
+        assert_eq!(lookups, ["223450"]);
+
+        let context = resolve_download_context(url, Some("123450"), &mut HashMap::new(), |_| {
+            std::future::ready(Some("9223450".into()))
+        })
+        .await;
+        assert_eq!(context.universe_id.as_deref(), Some("9223450"));
+    }
+
+    #[test]
+    fn archive_recovery_requires_opt_in_and_runs_once() {
+        for status in [403, 404, 409, 410] {
+            let mut attempts = DownloadAttempts::default();
+            attempts.record_http_status(reqwest::StatusCode::from_u16(status).expect("status"));
+            assert!(!attempts.take_archive_recovery(false));
+            assert!(attempts.take_archive_recovery(true));
+            assert!(!attempts.take_archive_recovery(true));
+        }
+    }
+
+    #[test]
+    fn archive_recovery_preserves_failure_after_later_errors() {
+        for first_status in [403, 409] {
+            let mut attempts = DownloadAttempts::default();
+            for status in [first_status, 404, 408, 429, 502] {
+                attempts.record_http_status(reqwest::StatusCode::from_u16(status).expect("status"));
+            }
+            assert!(attempts.take_archive_recovery(true));
+        }
+    }
+
+    #[test]
+    fn archive_recovery_rejects_unrelated_errors_and_stops_on_unauthorized() {
+        for status in [400, 401, 408, 429, 500] {
+            let mut attempts = DownloadAttempts::default();
+            attempts.record_http_status(reqwest::StatusCode::from_u16(status).expect("status"));
+            assert!(!attempts.take_archive_recovery(true));
+        }
+        let mut attempts = DownloadAttempts::default();
+        attempts.record_http_status(reqwest::StatusCode::FORBIDDEN);
+        attempts.record_http_status(reqwest::StatusCode::UNAUTHORIZED);
+        assert!(!attempts.take_archive_recovery(true));
+    }
+
+    #[test]
+    fn invalid_payload_allows_only_explicit_archive_recovery() {
+        for enabled in [false, true] {
+            let mut attempts = DownloadAttempts::default();
+            attempts.record_http_status(reqwest::StatusCode::OK);
+            let result = attempts.accept_candidate(
+                DownloadResult {
+                    success: false,
+                    file_path: None,
+                    error: Some("Downloaded asset response was an error page.".into()),
+                    resolved_place_id: None,
+                },
+                Some("987654321".into()),
+            );
+            assert_eq!(
+                result.err().expect("invalid candidate"),
+                "Downloaded asset response was an error page.",
+            );
+            assert_eq!(attempts.take_archive_recovery(enabled), enabled);
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_candidate_advances_to_valid_payload_and_stops(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let candidates: [(&str, &[u8]); 3] = [
+            ("invalid", b"<!doctype html><title>Forbidden</title>"),
+            ("valid", b"<roblox version=\"4\"><Item class=\"KeyframeSequence\" /></roblox>"),
+            ("unused", b"<roblox version=\"4\"><Item class=\"KeyframeSequence\" /></roblox>"),
+        ];
+        let mut attempts = DownloadAttempts::default();
+        let mut visited = Vec::new();
+        let mut errors = Vec::new();
+        let mut selected = None;
+        for (index, (name, body)) in candidates.into_iter().enumerate() {
+            visited.push(name);
+            attempts.record_http_status(reqwest::StatusCode::OK);
+            let path = std::env::temp_dir()
+                .join(format!("trapspoofer-candidate-{}-{name}.rbxm", uuid::Uuid::new_v4()));
+            tokio::fs::write(&path, body).await?;
+            let path_string = path.to_string_lossy().to_string();
+            let validation = validate_downloaded_payload(&path_string, Some("animation")).await;
+            tokio::fs::remove_file(&path).await?;
+            let valid = validation.is_ok();
+            let result = attempts.accept_candidate(
+                DownloadResult {
+                    success: valid,
+                    file_path: valid.then_some(path_string),
+                    error: validation.err(),
+                    resolved_place_id: None,
+                },
+                Some((123450 + index).to_string()),
+            );
+            match result {
+                Ok(result) => {
+                    selected = Some(result);
+                    break;
+                }
+                Err(error) => errors.push(error),
+            }
+        }
+        assert_eq!(visited, ["invalid", "valid"]);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("error page"));
+        let selected = selected.expect("valid candidate");
+        assert!(selected.success);
+        assert!(selected.file_path.as_deref().is_some_and(|path| path.ends_with("-valid.rbxm")));
+        assert_eq!(selected.resolved_place_id.as_deref(), Some("123451"));
+        assert!(!attempts.take_archive_recovery(true));
+        Ok(())
+    }
 
     #[test]
     fn direct_download_urls_do_not_use_zero_server_place_id() {

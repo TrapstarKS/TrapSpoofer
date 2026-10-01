@@ -1150,6 +1150,79 @@ mod tests {
     }
 
     #[test]
+    fn retry_exports_preserve_accumulated_replacements() {
+        for (format, name) in [
+            (FileFormat::Binary, "retry.rbxm"),
+            (FileFormat::Binary, "retry.rbxl"),
+            (FileFormat::Xml, "retry.rbxmx"),
+            (FileFormat::Xml, "retry.rbxlx"),
+        ] {
+            let dir = temp_dir(name);
+            let source = write_sample(&dir, name, format);
+            let original_bytes = std::fs::read(&source).expect("read original file");
+            let props = ApiDumpProperties::default();
+            let source_path = source.to_str().expect("utf8 source path");
+            scan_place_file_inner(source_path, &props).expect("scan original file");
+            let first_mappings = AnyValue(json!({ "1234567890": "9876543210" }));
+            let first = write_spoofed_place_file_inner(source_path, None, &first_mappings, &props)
+                .expect("write first successful replacements");
+            let output_path = first["outputPath"].as_str().expect("output path");
+
+            let unchanged = write_spoofed_place_file_inner(
+                source_path,
+                Some(output_path),
+                &first_mappings,
+                &props,
+            )
+            .expect("write after retry failed");
+            assert_eq!(unchanged["patchesFailed"], 0);
+            let partial = load_dom(Path::new(output_path), format).expect("read partial copy");
+            let partial_scan = scan_dom(&partial, &props);
+            assert_eq!(
+                find(&partial_scan.records, "Workspace.Wave", "AnimationId").value,
+                "rbxassetid://9876543210"
+            );
+            assert_eq!(
+                find(&partial_scan.records, "Workspace.Music", "SoundId").value,
+                "rbxassetid://2345678901"
+            );
+
+            let recovered_mappings = AnyValue(json!({
+                "1234567890": "9876543210",
+                "2345678901": "8765432109",
+            }));
+            let recovered = write_spoofed_place_file_inner(
+                source_path,
+                Some(output_path),
+                &recovered_mappings,
+                &props,
+            )
+            .expect("write accumulated recovered replacements");
+            assert_eq!(recovered["patchesFailed"], 0);
+            assert_eq!(recovered["outputPath"], first["outputPath"]);
+            let completed = load_dom(Path::new(output_path), format).expect("read recovered copy");
+            let completed_scan = scan_dom(&completed, &props);
+            assert_eq!(
+                find(&completed_scan.records, "Workspace.Wave", "AnimationId").value,
+                "rbxassetid://9876543210"
+            );
+            assert_eq!(
+                find(&completed_scan.records, "Workspace.Music", "SoundId").value,
+                "rbxassetid://8765432109"
+            );
+            assert_eq!(
+                find(&completed_scan.records, "Workspace.Wave", "__Attribute__:RunAnim").value,
+                "rbxassetid://5550001111"
+            );
+            let script = &find(&completed_scan.records, "ServerScriptService.Main", "Source").value;
+            assert!(script.contains("rbxassetid://9876543210"));
+            assert!(!script.contains("rbxassetid://1234567890"));
+            assert_eq!(std::fs::read(&source).expect("read original after writes"), original_bytes);
+            std::fs::remove_dir_all(&dir).expect("remove temporary fixture files");
+        }
+    }
+
+    #[test]
     fn write_without_cache_reloads_file_and_accepts_array_mappings() {
         let dir = temp_dir("nocache");
         let source = write_sample(&dir, "array.rbxm", FileFormat::Binary);

@@ -43,6 +43,24 @@ describe('job progress', () => {
     expect(transferStage('downloading', 'old:up:123', 'processing', 'job')).toBeNull();
   });
 
+  it('shows recovery during download discovery and allows the recovered download to proceed', () => {
+    expect(transferStage('downloading', 'job:dl:123', 'recovering', 'job')).toBe('recovering');
+    expect(transferStage('discovering_graph', 'job:dl:123', 'recovering', 'job')).toBe(
+      'recovering',
+    );
+    expect(transferStage('recovering', 'job:dl:123', 'downloading:1/4', 'job')).toBe('downloading');
+    expect(transferStage('recovering', 'job:up:123', 'processing', 'job')).toBe('uploading');
+  });
+
+  it('ignores recovery events from another job or after an asset has finished', () => {
+    expect(transferStage('downloading', 'job-other:dl:123', 'recovering', 'job')).toBeNull();
+    expect(transferStage('downloading', 'older-job:dl:123', 'recovering', 'job')).toBeNull();
+    expect(transferStage('uploading', 'job:dl:123', 'recovering', 'job')).toBeNull();
+    for (const stage of ['done', 'error', 'cancelled', 'skipped'] as const) {
+      expect(transferStage(stage, 'job:dl:123', 'recovering', 'job')).toBeNull();
+    }
+  });
+
   it('keeps skipped, cancelled, completed and failed counts disjoint', () => {
     const assets = Object.fromEntries(
       ['1', '2', '3', '4'].map((id) => [id, { name: id, type: 'animation' }]),

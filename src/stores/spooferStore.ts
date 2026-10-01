@@ -9,6 +9,7 @@ export type AssetStage =
   | 'resolving_location'
   | 'discovering_usage'
   | 'discovering_graph'
+  | 'recovering'
   | 'downloading'
   | 'uploading'
   | 'done'
@@ -29,6 +30,7 @@ export interface JobTarget {
   studioSessionId: string | null;
   animationMode: 'animation' | 'clip_replace' | 'clip_parent';
   source: SessionSource | null;
+  previousResults?: SpooferAssetResult[];
   autoApply: boolean;
   userId: string;
   groupId: string;

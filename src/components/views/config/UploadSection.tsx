@@ -46,11 +46,9 @@ export default function UploadSection() {
           <option value="clip_parent">{t('prefs.upload.clipParent')}</option>
         </select>
       </SettingRow>
-      <SettingSwitchRow
-        label={t('prefs.upload.archiveRecovery')}
-        description={t('prefs.upload.archiveRecoveryDesc')}
-        checked={config.advanced.enableArchiveRecovery}
-        onCheckedChange={(value) => updateConfig('advanced', 'enableArchiveRecovery', value)}
+      <SettingRow
+        label={t('prefs.upload.failedRecovery')}
+        description={t('prefs.upload.failedRecoveryDesc')}
       />
     </SettingCard>
   );

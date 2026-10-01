@@ -13,6 +13,7 @@ import { serviceText } from '../utils/i18n/serviceText';
 import {
   acceptsJobEvent,
   countJobResults,
+  mergeJobResults,
   normalizeJobResults,
   stageFromResult,
   terminalStages,
@@ -139,12 +140,13 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const state = useSpooferStore.getState();
         const target = state.jobTarget;
         const startTime = state.spoofStartTime;
-        const results = normalizeJobResults(
+        const batchResults = normalizeJobResults(
           e.payload.assetResults ?? e.payload.results ?? [],
           state.assetMetadataMap,
           e.payload.error || e.payload.output || 'Job stopped before this asset finished',
           e.payload.cancelled,
         );
+        const results = mergeJobResults(target?.previousResults ?? [], batchResults);
         setIsSpoofing(false);
         setActiveSpooferJobId(null);
         setSpoofStartTime(null);
@@ -162,14 +164,14 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             : null,
           lastJobSource: target?.source ?? null,
         });
-        for (const result of results) {
+        for (const result of batchResults) {
           if (!result.id) continue;
           setAssetStatus(result.id, {
             stage: stageFromResult(result),
             message: result.errorReason || result.reason,
           });
         }
-        const counts = countJobResults(results);
+        const counts = countJobResults(batchResults);
         const { total, completed: ok, skipped, errors: failed, cancelled } = counts;
         setSpoofCurrentCount(total);
         setSpoofTotalCount(total);

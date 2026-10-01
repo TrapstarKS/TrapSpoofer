@@ -141,6 +141,7 @@ const ACTIVE: AssetStage[] = [
   'resolving_location',
   'discovering_usage',
   'discovering_graph',
+  'recovering',
   'downloading',
   'uploading',
 ];

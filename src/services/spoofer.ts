@@ -6,14 +6,20 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import { useConfigStore } from '../stores/configStore';
-import { isOwnedBy, useSessionStore } from '../stores/sessionStore';
-import { applyReplacements, useSpooferStore } from '../stores/spooferStore';
+import { isOwnedBy, type SessionSource, useSessionStore } from '../stores/sessionStore';
+import { applyReplacements, type LastJobTarget, useSpooferStore } from '../stores/spooferStore';
 import { requireStudioSession, useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { assertAppIsNotUpdating } from '../stores/updaterStore';
+import type { SpooferAssetResult } from '../types/tauriEvents';
 import { getStudioPlaceIdFallback } from '../utils/apiClient';
 import { addDebugLog } from '../utils/debugLogger';
 import { serviceText } from '../utils/i18n/serviceText';
-import { countJobResults, jobReplacements } from '../utils/jobProgress';
+import {
+  countJobResults,
+  jobReplacements,
+  mergeJobResults,
+  stageFromResult,
+} from '../utils/jobProgress';
 import {
   loadCachedGroups,
   loadCachedUsers,
@@ -427,6 +433,13 @@ export interface RunOptions {
   skipAlreadySpoofed?: boolean;
 }
 
+interface RetryContext {
+  results: SpooferAssetResult[];
+  source: SessionSource | null;
+  target: LastJobTarget | null;
+  recovery: boolean;
+}
+
 type ApiKeyOwner = { ok: boolean; ownerUserId?: string | null; message?: string };
 
 export function parseAudioQuota(payload: unknown): { remaining: number; total: number } | null {
@@ -470,6 +483,10 @@ export function selectedAssetIds(): string[] {
 }
 
 export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
+  return launchSpoof(options);
+}
+
+async function launchSpoof(options: RunOptions, retry?: RetryContext): Promise<RunResult> {
   try {
     assertAppIsNotUpdating();
   } catch (error) {
@@ -480,20 +497,23 @@ export async function runSpoof(options: RunOptions = {}): Promise<RunResult> {
     return { ok: false, reason: 'busy', message: serviceText('jobBusy') };
   useSpooferStore.setState({ isPreparingJob: true });
   try {
-    return await startSpoof(options);
+    return await startSpoof(options, retry);
   } finally {
     useSpooferStore.setState({ isPreparingJob: false });
   }
 }
 
-async function startSpoof(options: RunOptions): Promise<RunResult> {
+async function startSpoof(options: RunOptions, retry?: RetryContext): Promise<RunResult> {
   const spoofer = useSpooferStore.getState();
   const { config, accountSecrets } = useConfigStore.getState();
   const session = useSessionStore.getState();
-  const studioSessionId =
-    session.source?.kind === 'file'
+  const source = retry ? retry.source : session.source;
+  const studioSessionId = retry
+    ? (retry.target?.studioSessionId ?? source?.studioSessionId ?? null)
+    : source?.kind === 'file'
       ? null
-      : (session.source?.studioSessionId ?? useStudioSessionsStore.getState().selectedSessionId);
+      : (source?.studioSessionId ?? useStudioSessionsStore.getState().selectedSessionId);
+  const animationMode = retry?.target?.animationMode ?? config.spoofing.animationMode;
   const warnings: string[] = [];
 
   if (spoofer.isSpoofing) {
@@ -605,14 +625,16 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
   useSpooferStore.setState({
     activeSpooferJobId: jobId,
     assetStatuses: {},
-    lastAssetResults: [],
+    lastAssetResults: retry?.results ?? [],
     isJobPaused: false,
     spoofStartTime: Date.now(),
-    lastJobTarget: null,
+    lastJobTarget: retry?.target ?? null,
+    lastJobSource: source,
     jobTarget: {
-      source: session.source,
+      source,
       studioSessionId,
-      animationMode: config.spoofing.animationMode,
+      animationMode,
+      previousResults: retry?.results,
       autoApply: session.autoApplyOverride ?? config.general.autoApplyResults,
       userId: target.userId,
       groupId: target.groupId,
@@ -621,7 +643,7 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
       permissions: { ...config.permissions },
     },
   });
-  useSessionStore.setState({ autoApplyOverride: null });
+  useSessionStore.setState({ autoApplyOverride: null, lastFileWrite: null });
   spoofer.setAssetMetadataMap(
     Object.fromEntries(payload.map((p) => [p.id, { name: p.name, type: p.type }])),
   );
@@ -663,8 +685,8 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
         : null;
 
     const placeIdFallback =
-      session.source?.placeId && session.source.placeId !== '0'
-        ? session.source.placeId
+      source?.placeId && source.placeId !== '0'
+        ? source.placeId
         : studioSessionId
           ? await getStudioPlaceIdFallback(studioSessionId).catch(() => '')
           : '';
@@ -694,7 +716,7 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
         spoofSounds: config.spoofing.audio,
         uploadTypes: downloadOnly ? ['download'] : config.spoofing.uploadTypes,
         downloadPath: config.spoofing.downloadPath,
-        placeName: session.source?.label ?? null,
+        placeName: source?.label ?? null,
         concurrent: adv.concurrentSpoofing,
         concurrentDownloading: adv.concurrentDownloading,
         maxConcurrency: adv.maxConcurrency,
@@ -707,7 +729,7 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
         account,
         group,
         preserveMetadata: config.spoofing.preserveMetadata,
-        enableArchiveRecovery: adv.enableArchiveRecovery,
+        enableArchiveRecovery: retry?.recovery ?? false,
         proxyUrl: adv.proxyUrl,
         operationPollIntervalMs: adv.operationPollIntervalMs || 250,
         forcePlaceIds: forcePlaceIds || null,
@@ -725,11 +747,15 @@ async function startSpoof(options: RunOptions): Promise<RunResult> {
         assetStatuses: Object.fromEntries(
           payload.map((asset) => [asset.id, { stage: 'error', message }]),
         ),
-        lastAssetResults: payload.map((asset) => ({
-          ...asset,
-          success: false,
-          errorReason: message,
-        })),
+        lastAssetResults: mergeJobResults(
+          retry?.results ?? [],
+          payload.map((asset) => ({
+            ...asset,
+            success: false,
+            errorReason: message,
+          })),
+        ),
+        spoofStartTime: null,
         spoofCurrentCount: payload.length,
         spoofProgress: 100,
       });
@@ -820,18 +846,35 @@ export function jobSnapshot() {
 }
 
 export async function retryFailed(): Promise<RunResult> {
-  const results = useSpooferStore.getState().lastAssetResults;
-  const failed = results.filter((r) => r.success === false && !r.skipped);
+  return retryFailedAssets(false);
+}
+
+export async function recoverFailed(): Promise<RunResult> {
+  return retryFailedAssets(true);
+}
+
+async function retryFailedAssets(recovery: boolean): Promise<RunResult> {
+  const state = useSpooferStore.getState();
+  const results = state.lastAssetResults;
+  const failed = results.filter((result) => stageFromResult(result) === 'error');
   const assetTypes: Record<string, string> = {};
   const ids: string[] = [];
   for (const r of failed) {
-    const id = String(r.id || '').replace(/\D/g, '');
-    if (!id) continue;
+    const id = String(r.id ?? '');
+    if (!/^\d{5,20}$/.test(id)) continue;
     ids.push(id);
     const type = String(r.type || r.assetType || '');
     if (type) assetTypes[id] = type;
   }
-  return runSpoof({ assetIds: ids, assetTypes, ignoreQuota: true });
+  return launchSpoof(
+    { assetIds: ids, assetTypes, ignoreQuota: true },
+    {
+      results,
+      source: state.lastJobSource ?? useSessionStore.getState().source,
+      target: state.lastJobTarget,
+      recovery,
+    },
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -870,7 +913,7 @@ export async function writeSpoofedFile(options: {
   mappings?: Record<string, string>;
 }) {
   assertAppIsNotUpdating();
-  const source = useSessionStore.getState().source;
+  const source = useSpooferStore.getState().lastJobSource ?? useSessionStore.getState().source;
   const path = options.path ?? source?.filePath;
   if (!path) throw new Error(serviceText('noFileLoaded'));
   const mappings = options.mappings ?? currentReplacements();

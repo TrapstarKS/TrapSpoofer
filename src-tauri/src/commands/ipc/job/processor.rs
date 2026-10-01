@@ -315,8 +315,10 @@ const fn should_fast_fail_on_empty_batches(
     batch_metadata_empty: bool,
     batch_urls_empty: bool,
     discovery_found_places: bool,
+    enable_archive_recovery: bool,
 ) -> bool {
-    preserve_metadata
+    !enable_archive_recovery
+        && preserve_metadata
         && total_assets >= 5
         && !forced_place_present
         && batch_metadata_empty
@@ -810,11 +812,16 @@ pub async fn process_spoofer_action(
 
     let total_pre = asset_ids.len();
     let forced_place_present = !forced_place_ids.is_empty();
-    let cheap_gate = preserve_metadata
-        && total_pre >= 5
-        && !forced_place_present
-        && batch_metadata.is_empty()
-        && batch_urls.is_empty();
+    let enable_archive_recovery = data.enable_archive_recovery.unwrap_or(false);
+    let cheap_gate = should_fast_fail_on_empty_batches(
+        preserve_metadata,
+        total_pre,
+        forced_place_present,
+        batch_metadata.is_empty(),
+        batch_urls.is_empty(),
+        false,
+        enable_archive_recovery,
+    );
     let discovery_found_places = if cheap_gate {
         match asset_ids.first() {
             Some(sample) => sample_discovery_reachable(&app, &cookie, sample).await,
@@ -830,6 +837,7 @@ pub async fn process_spoofer_action(
         batch_metadata.is_empty(),
         batch_urls.is_empty(),
         discovery_found_places,
+        enable_archive_recovery,
     ) {
         temp_log(
             "No accessible asset data was returned by Roblox. Check the selected account, asset permissions and place context before retrying.",
@@ -905,7 +913,7 @@ pub async fn process_spoofer_action(
         proxy_url,
         batch_urls,
         batch_metadata,
-        enable_archive_recovery: data.enable_archive_recovery.unwrap_or(false),
+        enable_archive_recovery,
         operation_poll_interval_ms: data.operation_poll_interval_ms,
         total_assets: total,
         success_count: AtomicUsize::new(0),
@@ -1386,18 +1394,36 @@ mod tests {
 
     #[test]
     fn fast_fail_requires_no_recovery_path() {
-        assert!(should_fast_fail_on_empty_batches(true, 10, false, true, true, false));
+        assert!(should_fast_fail_on_empty_batches(true, 10, false, true, true, false, false));
 
-        assert!(!should_fast_fail_on_empty_batches(true, 10, false, true, true, true));
+        assert!(!should_fast_fail_on_empty_batches(true, 10, false, true, true, true, false));
 
-        assert!(!should_fast_fail_on_empty_batches(true, 10, true, true, true, false));
+        assert!(!should_fast_fail_on_empty_batches(true, 10, true, true, true, false, false));
 
-        assert!(!should_fast_fail_on_empty_batches(true, 10, false, false, true, false));
-        assert!(!should_fast_fail_on_empty_batches(true, 10, false, true, false, false));
+        assert!(!should_fast_fail_on_empty_batches(true, 10, false, false, true, false, false));
+        assert!(!should_fast_fail_on_empty_batches(true, 10, false, true, false, false, false));
 
-        assert!(!should_fast_fail_on_empty_batches(true, 4, false, true, true, false));
+        assert!(!should_fast_fail_on_empty_batches(true, 4, false, true, true, false, false));
 
-        assert!(!should_fast_fail_on_empty_batches(false, 10, false, true, true, false));
+        assert!(!should_fast_fail_on_empty_batches(false, 10, false, true, true, false, false));
+    }
+
+    #[test]
+    fn fast_fail_allows_explicit_archive_recovery_only() {
+        for enable_archive_recovery in [None, Some(false), Some(true)] {
+            assert_eq!(
+                should_fast_fail_on_empty_batches(
+                    true,
+                    5,
+                    false,
+                    true,
+                    true,
+                    false,
+                    enable_archive_recovery.unwrap_or(false),
+                ),
+                enable_archive_recovery != Some(true),
+            );
+        }
     }
 
     #[test]
