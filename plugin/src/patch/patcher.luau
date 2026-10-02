@@ -268,10 +268,41 @@ local function clearAnimationClipCache()
 	table.clear(animationClipOrder)
 end
 
+local function hasAnimationClipData(clip: Instance): boolean
+	if clip:IsA("KeyframeSequence") then
+		return clip:FindFirstChildWhichIsA("Keyframe") ~= nil
+	elseif clip:IsA("CurveAnimation") then
+		for _, descendant in ipairs(clip:GetDescendants()) do
+			if
+				descendant:IsA("FloatCurve")
+				or descendant:IsA("Vector3Curve")
+				or descendant:IsA("EulerRotationCurve")
+				or descendant:IsA("RotationCurve")
+			then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function cloneAnimationClip(source: AnimationClip): AnimationClip
+	local clip = source:Clone()
+	if not clip then
+		error("Animation clip cannot be cloned; the original Animation was preserved")
+	end
+	if #clip:GetDescendants() ~= #source:GetDescendants() then
+		clip:Destroy()
+		error("Animation clip could not be cloned completely; the original Animation was preserved")
+	end
+	clip.Archivable = true
+	return clip
+end
+
 local function loadAnimationClip(assetId: string): AnimationClip
 	local cached = animationClipCache[assetId]
 	if cached then
-		return cached:Clone()
+		return cloneAnimationClip(cached)
 	end
 	local clip
 	for attempt = 1, 3 do
@@ -280,8 +311,8 @@ local function loadAnimationClip(assetId: string): AnimationClip
 		if not source or not (source:IsA("KeyframeSequence") or source:IsA("CurveAnimation")) then
 			error("Roblox did not return a KeyframeSequence or CurveAnimation")
 		end
-		if #source:GetChildren() > 0 then
-			clip = source:Clone()
+		if hasAnimationClipData(source) then
+			clip = cloneAnimationClip(source)
 			break
 		end
 		if attempt < 3 then
@@ -299,26 +330,40 @@ local function loadAnimationClip(assetId: string): AnimationClip
 	end
 	animationClipCache[assetId] = clip
 	table.insert(animationClipOrder, assetId)
-	return clip:Clone()
+	return cloneAnimationClip(clip)
 end
 
 local function replaceAnimationClip(obj: Instance, patch: Patch): (boolean, string?)
-	if patch.animationMode ~= "clip_parent" and patch.animationMode ~= "clip_replace" then
+	local mode = patch.animationMode
+	if mode ~= "clip_parent" and mode ~= "clip_parent_id" and mode ~= "clip_replace" then
 		return false, "Invalid animation clip mode"
 	end
 	local assetId = normalizeAssetId(patch.value)
 	if not assetId then
 		return false, "Invalid animation asset ID"
 	end
-	if obj:IsA("AnimationClip") and obj:GetAttribute("TrapSpooferClipAssetId") == assetId then
-		return true, nil
+	if obj:IsA("AnimationClip") then
+		if
+			mode == "clip_replace"
+			and obj:GetAttribute("TrapSpooferClipAssetId") == assetId
+			and obj:GetAttribute("TrapSpooferClipContainer") == false
+			and hasAnimationClipData(obj)
+		then
+			return true, nil
+		end
+		return false, "Target is already a clip with a different mode or asset; scan again"
 	end
 	if not obj:IsA("Animation") then
 		return false, "Target is not an Animation; scan again"
 	end
 	local originalParent = obj.Parent
+	local originalParentParent = if originalParent then originalParent.Parent else nil
+	local oldName = obj.Name
 	local oldId = obj.AnimationId
 	local expected = normalizeAssetId(patch.expectedValue)
+	if patch.expectedValue ~= nil and not expected then
+		return false, "Invalid original animation asset ID"
+	end
 	if expected and normalizeAssetId(oldId) ~= expected and normalizeAssetId(oldId) ~= assetId then
 		return false, "Animation changed since the scan; scan again"
 	end
@@ -327,73 +372,146 @@ local function replaceAnimationClip(obj: Instance, patch: Patch): (boolean, stri
 			and originalParent:GetAttribute("TrapSpooferClipContainer") == true
 		then originalParent
 		else nil
-	if
-		previousClip
-		and previousClip:GetAttribute("TrapSpooferClipAssetId") == assetId
-		and patch.animationMode == "clip_parent"
-	then
-		obj.AnimationId = "rbxassetid://" .. assetId
-		return true, nil
-	end
-	local clip = loadAnimationClip(assetId)
-	if obj.Parent ~= originalParent or obj.AnimationId ~= oldId then
-		clip:Destroy()
-		return false, "Animation changed while loading its clip; scan again"
-	end
-	local parent = if previousClip then previousClip.Parent else originalParent
-	local moved = {}
-	local ok, err = pcall(function()
-		clip.Name = if previousClip then previousClip.Name else obj.Name
-		for _, child in ipairs(clip:GetChildren()) do
-			child:SetAttribute("TrapSpooferImportedClipData", true)
+	local sourceId = expected or normalizeAssetId(oldId) or assetId
+	local clip = previousClip
+	if previousClip then
+		local previousAssetId = previousClip:GetAttribute("TrapSpooferClipAssetId")
+		if previousAssetId ~= assetId and previousAssetId ~= sourceId then
+			return false,
+				"Existing clip belongs to another asset; move the Animation out and scan again"
 		end
-		if previousClip then
-			for key, value in pairs(previousClip:GetAttributes()) do
-				clip:SetAttribute(key, value)
+		if not hasAnimationClipData(previousClip) then
+			return false,
+				"Existing clip has no animation data; the original Animation was preserved"
+		end
+	else
+		-- The uploaded ID may not be available in Studio yet. Prefer the original
+		-- asset so the native clip and its metadata do not depend on that upload.
+		local loaded, result = pcall(loadAnimationClip, sourceId)
+		if not loaded and sourceId ~= assetId then
+			local originalError = result
+			loaded, result = pcall(loadAnimationClip, assetId)
+			if not loaded then
+				result = tostring(originalError) .. "; replacement clip: " .. tostring(result)
 			end
 		end
+		if not loaded then
+			return false,
+				"Could not load animation clip; the original Animation was preserved: " .. tostring(
+					result
+				)
+		end
+		clip = result
+	end
+	if
+		getRegisteredObject(patch.token) ~= obj
+		or obj.Parent ~= originalParent
+		or obj.AnimationId ~= oldId
+		or obj.Name ~= oldName
+		or (originalParent and originalParent.Parent ~= originalParentParent)
+	then
+		if not previousClip then
+			clip:Destroy()
+		end
+		return false, "Animation changed while loading its clip; scan again"
+	end
+	local isParentMode = mode ~= "clip_replace"
+	local desiredId = if mode == "clip_parent_id" then "rbxassetid://" .. assetId else oldId
+	if mode == "clip_parent" and expected and normalizeAssetId(oldId) ~= expected then
+		desiredId = patch.expectedValue
+	end
+	local oldAttributes = if previousClip then clip:GetAttributes() else nil
+	local oldTags = if previousClip then CollectionService:GetTags(clip) else nil
+	local moved = {}
+	local ok, err = pcall(function()
+		if not previousClip then
+			clip.Name = oldName
+		end
 		for key, value in pairs(obj:GetAttributes()) do
-			clip:SetAttribute(key, value)
+			if clip:GetAttribute(key) == nil then
+				clip:SetAttribute(key, value)
+			end
 		end
 		for _, tag in ipairs(CollectionService:GetTags(obj)) do
 			CollectionService:AddTag(clip, tag)
 		end
 		clip:SetAttribute("TrapSpooferClipAssetId", assetId)
-		clip:SetAttribute("TrapSpooferClipContainer", patch.animationMode == "clip_parent")
-		clip.Parent = parent
-		if patch.animationMode == "clip_parent" then
-			obj.AnimationId = "rbxassetid://" .. assetId
-			obj.Parent = clip
+		clip:SetAttribute("TrapSpooferClipContainer", isParentMode)
+		if not previousClip then
+			clip.Parent = originalParent
+		end
+		if isParentMode then
+			if obj.AnimationId ~= desiredId then
+				obj.AnimationId = desiredId
+			end
+			if obj.Parent ~= clip then
+				obj.Parent = clip
+			end
 		else
 			for _, child in ipairs(obj:GetChildren()) do
 				table.insert(moved, { child = child, parent = obj })
 				child.Parent = clip
 			end
-		end
-		if previousClip then
-			for _, child in ipairs(previousClip:GetChildren()) do
-				if child ~= obj and child:GetAttribute("TrapSpooferImportedClipData") ~= true then
-					table.insert(moved, { child = child, parent = previousClip })
-					child.Parent = clip
-				end
-			end
+			obj.Parent = nil
 		end
 	end)
 	if not ok then
-		obj.Parent = originalParent
-		obj.AnimationId = oldId
-		for _, entry in ipairs(moved) do
-			entry.child.Parent = entry.parent
+		local rollbackErrors = {}
+		local function restore(callback)
+			local restored, restoreError = pcall(callback)
+			if not restored then
+				table.insert(rollbackErrors, tostring(restoreError))
+			end
 		end
-		clip:Destroy()
+		for index = #moved, 1, -1 do
+			local entry = moved[index]
+			restore(function()
+				if entry.child.Parent ~= entry.parent then
+					entry.child.Parent = entry.parent
+				end
+			end)
+		end
+		restore(function()
+			if obj.Parent ~= originalParent then
+				obj.Parent = originalParent
+			end
+		end)
+		restore(function()
+			if obj.AnimationId ~= oldId then
+				obj.AnimationId = oldId
+			end
+		end)
+		if previousClip then
+			restore(function()
+				for key in pairs(clip:GetAttributes()) do
+					if oldAttributes[key] == nil then
+						clip:SetAttribute(key, nil)
+					end
+				end
+				for key, value in pairs(oldAttributes) do
+					clip:SetAttribute(key, value)
+				end
+				for _, tag in ipairs(CollectionService:GetTags(clip)) do
+					if not table.find(oldTags, tag) then
+						CollectionService:RemoveTag(clip, tag)
+					end
+				end
+			end)
+		elseif #rollbackErrors == 0 then
+			clip:Destroy()
+		end
+		if #rollbackErrors > 0 then
+			return false,
+				tostring(err) .. "; rollback incomplete (clip retained): " .. table.concat(
+					rollbackErrors,
+					"; "
+				)
+		end
 		return false, tostring(err)
 	end
-	if patch.animationMode == "clip_replace" then
+	if not isParentMode then
 		replaceRegisteredObject(patch.token, clip)
 		obj:Destroy()
-	end
-	if previousClip then
-		previousClip:Destroy()
 	end
 	return true, nil
 end

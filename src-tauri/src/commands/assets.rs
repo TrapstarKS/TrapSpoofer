@@ -343,7 +343,14 @@ pub async fn fetch_animation_xml(
             }
         };
         let mut out = Vec::new();
-        if let Err(e) = rbx_xml::to_writer_default(&mut out, &dom, dom.root().children()) {
+        crate::commands::place_file::ensure_xml_serializable(&dom)?;
+        if let Err(e) = rbx_xml::to_writer(
+            &mut out,
+            &dom,
+            dom.root().children(),
+            rbx_xml::EncodeOptions::new()
+                .property_behavior(rbx_xml::EncodePropertyBehavior::WriteUnknown),
+        ) {
             return Err(crate::error::AppError::Custom(format!("XML serialize error: {e}")));
         }
         Some(String::from_utf8_lossy(&out).to_string())

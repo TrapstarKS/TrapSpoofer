@@ -36,7 +36,12 @@ export default function UploadSection() {
           value={config.spoofing.animationMode}
           onChange={(event) => {
             const mode = event.target.value;
-            if (mode === 'animation' || mode === 'clip_replace' || mode === 'clip_parent')
+            if (
+              mode === 'animation' ||
+              mode === 'clip_replace' ||
+              mode === 'clip_parent' ||
+              mode === 'clip_parent_id'
+            )
               updateConfig('spoofing', 'animationMode', mode);
           }}
           className="max-w-60 rounded-lg border border-border-subtle bg-bg-base px-2 py-2 text-[12px] text-text-primary"
@@ -44,6 +49,7 @@ export default function UploadSection() {
           <option value="animation">{t('prefs.upload.animationId')}</option>
           <option value="clip_replace">{t('prefs.upload.clipReplace')}</option>
           <option value="clip_parent">{t('prefs.upload.clipParent')}</option>
+          <option value="clip_parent_id">{t('prefs.upload.clipParentId')}</option>
         </select>
       </SettingRow>
       <SettingRow

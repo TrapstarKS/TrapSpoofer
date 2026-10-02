@@ -240,7 +240,8 @@ export const en = {
       saveReminder:
         'Done in Studio? Remember to save the place (Ctrl+S) or publish it so the changes are kept.',
       fileTitle: 'Save the spoofed file',
-      fileHelp: 'Creates a copy of {file} with the new IDs. The original stays untouched.',
+      fileHelp:
+        'Creates a copy of {file} with the selected replacements and animation mode. The original stays untouched.',
       fileSave: 'Save spoofed file',
       fileSaving: 'Saving…',
       fileSaved: 'File saved with {count} replacements.',
@@ -525,7 +526,8 @@ export const pt = {
       saveReminder:
         'Terminou no Studio? Lembre de salvar o place (Ctrl+S) ou publicar para manter as alterações.',
       fileTitle: 'Salvar o arquivo spoofado',
-      fileHelp: 'Cria uma cópia de {file} com os novos IDs. O original fica intacto.',
+      fileHelp:
+        'Cria uma cópia de {file} com as substituições e o modo de animação escolhidos. O original fica intacto.',
       fileSave: 'Salvar arquivo spoofado',
       fileSaving: 'Salvando…',
       fileSaved: 'Arquivo salvo com {count} substituições.',

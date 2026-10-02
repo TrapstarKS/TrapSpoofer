@@ -22,6 +22,12 @@ use crate::api_dump::ApiDumpProperties;
 use crate::commands::AnyValue;
 use crate::studio_bridge::messages::{analyze_records, plan_patches, StudioRecord};
 
+mod animation;
+
+use animation::{AnimationMode, ClipResults};
+
+pub(crate) use animation::{cache_animation_source, ensure_xml_serializable};
+
 const MAX_SCRIPT_SOURCE_BYTES: usize = 8_000_000;
 const MAX_RECORD_VALUE_BYTES: usize = 1_000_000;
 const MAX_RECORD_TEXT_VALUE_BYTES: usize = 100_000;
@@ -107,8 +113,12 @@ fn load_dom(path: &Path, format: FileFormat) -> Result<WeakDom, String> {
         FileFormat::Binary => {
             rbx_binary::from_reader(reader).map_err(|e| format!("Failed to read binary file: {e}"))
         }
-        FileFormat::Xml => rbx_xml::from_reader_default(reader)
-            .map_err(|e| format!("Failed to read XML file: {e}")),
+        FileFormat::Xml => rbx_xml::from_reader(
+            reader,
+            rbx_xml::DecodeOptions::new()
+                .property_behavior(rbx_xml::DecodePropertyBehavior::ReadUnknown),
+        )
+        .map_err(|e| format!("Failed to read XML file: {e}")),
     }
 }
 
@@ -751,21 +761,40 @@ fn apply_single_patch(
     }
 }
 
-fn apply_patches(dom: &mut WeakDom, patches: &[Value], aliases: &AliasMap) -> ApplyReport {
+fn apply_patches(
+    dom: &mut WeakDom,
+    patches: &[Value],
+    aliases: &AliasMap,
+    clips: &ClipResults,
+    format: FileFormat,
+) -> ApplyReport {
     let mut report = ApplyReport::default();
     let tokens: HashMap<String, Ref> =
         dom.descendants().map(|inst| (inst.referent().to_string(), inst.referent())).collect();
     let mut touched_mesh_parts = 0usize;
 
-    for patch in patches {
+    // Apply metadata/name/id mappings before moving instances, so the clip
+    // inherits the final attributes and tags and child tokens remain valid.
+    let ordered = patches
+        .iter()
+        .filter(|patch| patch["action"] != "replaceAnimationClip")
+        .chain(patches.iter().filter(|patch| patch["action"] == "replaceAnimationClip"));
+    for patch in ordered {
         let token = patch.get("token").and_then(Value::as_str).unwrap_or_default();
         let full_name = patch.get("fullName").and_then(Value::as_str).unwrap_or(token);
         let action = patch.get("action").and_then(Value::as_str).unwrap_or("?");
-        let Some(instance) = tokens.get(token).and_then(|r| dom.get_by_ref_mut(*r)) else {
+        let Some(&referent) = tokens.get(token) else {
             report.fail(format!("{action} on {full_name}: instance not found"));
             continue;
         };
-        match apply_single_patch(instance, patch, aliases, &mut touched_mesh_parts) {
+        let result = if action == "replaceAnimationClip" {
+            animation::apply_clip_patch(dom, referent, patch, aliases, clips, format)
+        } else if let Some(instance) = dom.get_by_ref_mut(referent) {
+            apply_single_patch(instance, patch, aliases, &mut touched_mesh_parts)
+        } else {
+            Err("instance not found".into())
+        };
+        match result {
             Ok(()) => report.applied += 1,
             Err(error) => report.fail(format!("{action} on {full_name}: {error}")),
         }
@@ -801,6 +830,9 @@ fn resolve_output_path(source: &Path, output_path: Option<&str>) -> Result<PathB
 }
 
 fn write_dom(dom: &WeakDom, format: FileFormat, output: &Path) -> Result<(), String> {
+    if format == FileFormat::Xml {
+        ensure_xml_serializable(dom)?;
+    }
     if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -815,8 +847,14 @@ fn write_dom(dom: &WeakDom, format: FileFormat, output: &Path) -> Result<(), Str
         match format {
             FileFormat::Binary => rbx_binary::to_writer(&mut writer, dom, refs)
                 .map_err(|e| format!("Failed to encode binary file: {e}"))?,
-            FileFormat::Xml => rbx_xml::to_writer_default(&mut writer, dom, refs)
-                .map_err(|e| format!("Failed to encode XML file: {e}"))?,
+            FileFormat::Xml => rbx_xml::to_writer(
+                &mut writer,
+                dom,
+                refs,
+                rbx_xml::EncodeOptions::new()
+                    .property_behavior(rbx_xml::EncodePropertyBehavior::WriteUnknown),
+            )
+            .map_err(|e| format!("Failed to encode XML file: {e}"))?,
         }
         std::io::Write::flush(&mut writer).map_err(|e| e.to_string())?;
         drop(writer);
@@ -855,21 +893,29 @@ fn drop_noop_patches(records: &[StudioRecord], patches: Vec<Value>) -> Vec<Value
 }
 
 fn take_cached_place(path: &Path) -> Option<LoadedPlace> {
+    let (modified, len) = file_stamp(path);
     let mut guard = place_cache().lock().ok()?;
     let cached = guard.as_ref()?;
-    let (modified, len) = file_stamp(path);
     if cached.path == path && cached.modified == modified && cached.len == len {
         return guard.take();
     }
     None
 }
 
-pub(crate) fn write_spoofed_place_file_inner(
+struct PreparedPlaceWrite {
+    loaded: LoadedPlace,
+    output: PathBuf,
+    patches: Vec<Value>,
+    warnings: Vec<String>,
+}
+
+fn prepare_place_write(
     path: &str,
     output_path: Option<&str>,
     mappings: &AnyValue,
     props: &ApiDumpProperties,
-) -> Result<Value, String> {
+    mode: AnimationMode,
+) -> Result<PreparedPlaceWrite, String> {
     let source = canonical_path(path)?;
     let parsed_mappings = crate::commands::studio::parse_replacements_map(mappings);
     if parsed_mappings.is_empty() {
@@ -883,7 +929,7 @@ pub(crate) fn write_spoofed_place_file_inner(
     }
 
     let mut warnings = Vec::new();
-    let mut loaded = match take_cached_place(&source) {
+    let loaded = match take_cached_place(&source) {
         Some(cached) => cached,
         None => load_place(&source, props)?,
     };
@@ -897,13 +943,28 @@ pub(crate) fn write_spoofed_place_file_inner(
         }
     }
 
-    let patches =
-        drop_noop_patches(&loaded.records, plan_patches(&loaded.records, &parsed_mappings));
-    let report = apply_patches(&mut loaded.dom, &patches, &loaded.aliases);
+    let patches = crate::studio_bridge::animation::annotate_patches(
+        drop_noop_patches(&loaded.records, plan_patches(&loaded.records, &parsed_mappings)),
+        &loaded.records,
+        None,
+        mode.as_str(),
+    );
+    Ok(PreparedPlaceWrite { loaded, output, patches, warnings })
+}
+
+fn finish_place_write(prepared: PreparedPlaceWrite, clips: &ClipResults) -> Result<Value, String> {
+    let PreparedPlaceWrite { mut loaded, output, patches, mut warnings } = prepared;
+    warnings.extend(animation::fallback_warnings(clips));
+    let report = apply_patches(&mut loaded.dom, &patches, &loaded.aliases, clips, loaded.format);
     warnings.extend(report.warnings);
 
     if report.applied == 0 {
-        warnings.push("No patches applied; none of the mapped ids were found in this file.".into());
+        warnings.push(if report.failed == 0 {
+            "No patches applied; none of the mapped ids were found in this file.".into()
+        } else {
+            "No patches applied; see the reported failures. Original instances were preserved."
+                .into()
+        });
     }
 
     write_dom(&loaded.dom, loaded.format, &output)?;
@@ -914,6 +975,17 @@ pub(crate) fn write_spoofed_place_file_inner(
         "patchesFailed": report.failed,
         "warnings": warnings,
     }))
+}
+
+#[cfg(test)]
+fn write_spoofed_place_file_inner(
+    path: &str,
+    output_path: Option<&str>,
+    mappings: &AnyValue,
+    props: &ApiDumpProperties,
+) -> Result<Value, String> {
+    let prepared = prepare_place_write(path, output_path, mappings, props, AnimationMode::Id)?;
+    finish_place_write(prepared, &ClipResults::new())
 }
 
 /// Scans a place/model file offline and returns the same asset stores the
@@ -933,16 +1005,29 @@ pub async fn scan_place_file_assets(path: String) -> crate::error::Result<AnyVal
 #[tauri::command]
 #[specta::specta]
 pub async fn write_spoofed_place_file(
+    app: tauri::AppHandle,
     path: String,
     output_path: Option<String>,
     mappings: AnyValue,
+    animation_mode: Option<String>,
+    cookie: Option<String>,
+    place_id: Option<String>,
 ) -> crate::error::Result<AnyValue> {
+    let mode = AnimationMode::parse(animation_mode.as_deref())?;
     let props = crate::api_dump::get_api_dump_properties().await;
-    let result = tokio::task::spawn_blocking(move || {
-        write_spoofed_place_file_inner(&path, output_path.as_deref(), &mappings, &props)
+    let prepared = tokio::task::spawn_blocking(move || {
+        prepare_place_write(&path, output_path.as_deref(), &mappings, &props, mode)
     })
     .await
     .map_err(|e| format!("Place write task failed: {e}"))??;
+    // The loaded DOM is owned by this operation. No cache mutex or file handle
+    // is held while clips are read, fetched or decoded.
+    let clips =
+        animation::resolve_clips(&app, &prepared.loaded.dom, &prepared.patches, cookie, place_id)
+            .await;
+    let result = tokio::task::spawn_blocking(move || finish_place_write(prepared, &clips))
+        .await
+        .map_err(|e| format!("Place write task failed: {e}"))??;
     Ok(AnyValue(result))
 }
 

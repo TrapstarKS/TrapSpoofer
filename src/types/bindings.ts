@@ -2,6 +2,7 @@
 
 import { invoke as __TAURI_INVOKE } from '@tauri-apps/api/core';
 
+/** Commands */
 export const commands = {
   parseAnimationData: (xml: string) =>
     typedError<
@@ -72,6 +73,7 @@ export const commands = {
   openExternal: (url: string) =>
     typedError<boolean, AppError>(__TAURI_INVOKE('open_external', { url })),
   selectFolder: () => typedError<string | null, AppError>(__TAURI_INVOKE('select_folder')),
+  /**  Show a file produced by the app (e.g. a spoofed .rbxl) in the OS file manager. */
   revealInFolder: (path: string) =>
     typedError<boolean, AppError>(__TAURI_INVOKE('reveal_in_folder', { path })),
   uninstallApp: () => typedError<boolean, AppError>(__TAURI_INVOKE('uninstall_app')),
@@ -132,6 +134,11 @@ export const commands = {
       __TAURI_INVOKE('scan_and_replace_multiple_strings', { pid, replacements }),
     ),
   clearAssetCache: () => __TAURI_INVOKE<boolean>('clear_asset_cache'),
+  /**
+   *  Kept for frontend compatibility. `push_url` is ignored: TrapSpoofer has no
+   *  community cache and never uploads discoveries anywhere. If a legacy
+   *  `local_remote_cache.json` exists, its entries are loaded into the local cache.
+   */
   initializeRemoteCache: (pushUrl: string | null) =>
     typedError<null, string>(__TAURI_INVOKE('initialize_remote_cache', { pushUrl })),
   patchAssetPermissions: (assetId: string, universeId: string, cookie: string, csrfToken: string) =>
@@ -215,14 +222,38 @@ export const commands = {
   getPortDiagnostic: () => __TAURI_INVOKE<unknown>('get_port_diagnostic'),
   getStudioAssetSnapshots: (sessionId: string | null) =>
     typedError<unknown, string>(__TAURI_INVOKE('get_studio_asset_snapshots', { sessionId })),
+  /**
+   *  Scans a place/model file offline and returns the same asset stores the
+   *  Studio bridge exposes through `get_studio_asset_snapshots`.
+   */
   scanPlaceFileAssets: (path: string) =>
     typedError<unknown, AppError>(__TAURI_INVOKE('scan_place_file_assets', { path })),
-  writeSpoofedPlaceFile: (path: string, outputPath: string | null, mappings: unknown) =>
+  /**
+   *  Writes a copy of the place/model file with the given id mappings applied.
+   *  Defaults to `<stem>.spoofed.<ext>` next to the source file.
+   */
+  writeSpoofedPlaceFile: (
+    path: string,
+    outputPath: string | null,
+    mappings: unknown,
+    animationMode: string | null,
+    cookie: string | null,
+    placeId: string | null,
+  ) =>
     typedError<unknown, AppError>(
-      __TAURI_INVOKE('write_spoofed_place_file', { path, outputPath, mappings }),
+      __TAURI_INVOKE('write_spoofed_place_file', {
+        path,
+        outputPath,
+        mappings,
+        animationMode,
+        cookie,
+        placeId,
+      }),
     ),
+  /**  Frontend answer to an `mcp://request` event. `payload` is a JSON string. */
   mcpRespond: (requestId: string, isError: boolean, payload: string) =>
     __TAURI_INVOKE<boolean>('mcp_respond', { requestId, isError, payload }),
+  /**  Called by the frontend once its `mcp://request` listener is registered. */
   mcpSetFrontendReady: (ready: boolean) =>
     __TAURI_INVOKE<void>('mcp_set_frontend_ready', { ready }),
   mcpSetEnabled: (enabled: boolean) => __TAURI_INVOKE<void>('mcp_set_enabled', { enabled }),

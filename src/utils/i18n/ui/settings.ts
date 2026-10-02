@@ -69,12 +69,13 @@ export const en = {
     },
     upload: {
       title: 'Upload behavior',
-      animationMode: 'Animation replacement in Studio',
+      animationMode: 'Animation replacement (Studio and files)',
       animationModeDesc:
-        'Keep the Animation ID, replace the instance with its native KeyframeSequence/CurveAnimation, or add the clip as its parent. The original clip format is preserved. Native clips are editable animation data; existing game code may need adapting.',
+        'Update the Animation ID, replace it with its original KeyframeSequence/CurveAnimation, or add the clip as its parent with or without updating the ID. Applies to Studio and saved Roblox files. Native clips are editable animation data; existing game code may need adapting.',
       animationId: 'Update Animation ID',
       clipReplace: 'Replace with native clip',
-      clipParent: 'Native clip as parent',
+      clipParent: 'Native clip as parent (keep ID)',
+      clipParentId: 'Native clip as parent + new ID',
       desc: 'What happens to each asset during the spoof.',
       skipOwned: 'Skip assets you already own',
       skipOwnedDesc:
@@ -239,12 +240,13 @@ export const pt = {
     },
     upload: {
       title: 'Comportamento do envio',
-      animationMode: 'Substituição de animações no Studio',
+      animationMode: 'Substituição de animações (Studio e arquivos)',
       animationModeDesc:
-        'Atualize o ID da Animation, substitua pelo KeyframeSequence/CurveAnimation original ou adicione o clip como pai. O formato original é preservado. Clips são dados editáveis de animação; o código do jogo pode precisar de adaptação.',
+        'Atualize o ID da Animation, substitua pelo KeyframeSequence/CurveAnimation original ou adicione o clip como pai, mantendo ou trocando o ID. Vale para Studio e arquivos Roblox salvos. Clips são dados editáveis de animação; o código do jogo pode precisar de adaptação.',
       animationId: 'Atualizar ID da Animation',
       clipReplace: 'Substituir pelo clip nativo',
-      clipParent: 'Clip nativo como pai',
+      clipParent: 'Clip nativo como pai (manter ID)',
+      clipParentId: 'Clip nativo como pai + novo ID',
       desc: 'O que acontece com cada asset durante o spoof.',
       skipOwned: 'Pular assets que já são seus',
       skipOwnedDesc:

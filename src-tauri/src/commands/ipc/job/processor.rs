@@ -1124,6 +1124,15 @@ pub async fn process_spoofer_action(
                         let sink_ctx = Arc::clone(&ctx);
                         let permission_sink: crate::commands::spoofer::PermissionSink =
                             Arc::new(move |new_asset_id, universe_id| sink_ctx.spawn_permission_grant(new_asset_id, universe_id));
+                        if mapped_type_name == "Animation" {
+                            if let Err(error) = crate::commands::place_file::cache_animation_source(
+                                &ctx.app, &file_path, &asset_id,
+                            ).await {
+                                ctx.log(&format!(
+                                    "Could not cache original animation {asset_id} for native file export: {error}. Export will try downloading the clip again."
+                                ), "warn");
+                            }
+                        }
                         ctx.transition(&asset_id, "uploading", "Uploading and processing");
                         let up_res = crate::commands::spoofer::publish_asset_with_hooks(
                             ctx.app.clone(), file_path.clone(), details.name, final_description, ctx.cookie.clone(), ctx.csrf_token.clone(), ctx.group_id.clone(), format!("{}:up:{asset_id}", ctx.job_id), Some(mapped_type_name.to_string()), Some(ctx.api_key.clone()), upload_user_id, Some(asset_id.clone()), ctx.universe_id.clone(), Some(ctx.downloads_root.clone()), ctx.proxy_url.clone(), ctx.operation_poll_interval_ms,

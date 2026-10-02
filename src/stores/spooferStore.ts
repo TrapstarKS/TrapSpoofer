@@ -28,7 +28,7 @@ import { assertAppIsNotUpdating } from './updaterStore';
 
 export interface JobTarget {
   studioSessionId: string | null;
-  animationMode: 'animation' | 'clip_replace' | 'clip_parent';
+  animationMode: AppConfig['spoofing']['animationMode'];
   source: SessionSource | null;
   previousResults?: SpooferAssetResult[];
   autoApply: boolean;
@@ -40,7 +40,7 @@ export interface JobTarget {
 }
 
 export interface LastJobTarget {
-  studioSessionId: string;
+  studioSessionId: string | null;
   animationMode: JobTarget['animationMode'];
 }
 

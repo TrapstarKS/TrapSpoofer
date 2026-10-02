@@ -95,6 +95,9 @@ async function expectFileMappings(extension: string, mappings: Record<string, st
     path: `/fixtures/fixture.${extension}`,
     outputPath: `/copies/fixture.${extension}`,
     mappings,
+    animationMode: 'animation',
+    cookie: null,
+    placeId: null,
   });
 }
 
@@ -152,6 +155,48 @@ afterEach(() => {
 });
 
 describe('retrying a completed file job', () => {
+  it.each(['rbxm', 'rbxl', 'rbxmx', 'rbxlx'])(
+    'keeps the animation mode for %s exports and retries after preferences change',
+    async (extension) => {
+      await act(async () => {
+        useConfigStore.getState().updateConfig('spoofing', 'animationMode', 'clip_parent_id');
+      });
+      await startFileJob(extension);
+      await act(async () => {
+        useConfigStore.getState().updateConfig('spoofing', 'animationMode', 'animation');
+        await writeSpoofedFile({ outputPath: `/copies/fixture.${extension}` });
+      });
+      expect(invoke).toHaveBeenLastCalledWith('write_spoofed_place_file', {
+        path: `/fixtures/fixture.${extension}`,
+        outputPath: `/copies/fixture.${extension}`,
+        mappings: { [ids[0]]: '22345001' },
+        animationMode: 'clip_parent_id',
+        cookie: 's'.repeat(60),
+        placeId: null,
+      });
+      await act(async () => {
+        await retryFailed();
+      });
+      expect(useSpooferStore.getState().jobTarget).toMatchObject({
+        studioSessionId: null,
+        animationMode: 'clip_parent_id',
+      });
+      await finishJob([{ id: ids[1], success: true, newId: '22345002' }]);
+      await act(async () => {
+        await writeSpoofedFile({ outputPath: `/copies/fixture.${extension}` });
+      });
+      expect(invoke).toHaveBeenLastCalledWith(
+        'write_spoofed_place_file',
+        expect.objectContaining({
+          animationMode: 'clip_parent_id',
+          mappings: { [ids[0]]: '22345001', [ids[1]]: '22345002' },
+        }),
+      );
+      await expect(pushToStudio()).rejects.toThrow(/target is no longer available/);
+      expect(performStudioReplacement).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(['rbxm', 'rbxl', 'rbxmx', 'rbxlx'])(
     'keeps the %s copy downloadable when retry fails, then adds recovered replacements',
     async (extension) => {

@@ -57,7 +57,7 @@ export const AppConfigSchema = z.object({
     extraAssetIds: z.string().default(''),
     preserveMetadata: z.boolean().default(true),
     animationMode: z
-      .enum(['animation', 'clip_replace', 'clip_parent'])
+      .enum(['animation', 'clip_replace', 'clip_parent', 'clip_parent_id'])
       .catch('animation')
       .default('animation'),
   }),

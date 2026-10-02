@@ -1,4 +1,4 @@
-mod animation;
+pub(crate) mod animation;
 pub mod messages;
 pub mod middleware;
 pub mod server;
@@ -98,7 +98,7 @@ pub async fn queue_replace_mappings_internal(
     if uuid::Uuid::parse_str(operation_id).is_err() {
         return Err("Invalid replacement operation ID.".into());
     }
-    if !matches!(animation_mode, "animation" | "clip_replace" | "clip_parent") {
+    if !matches!(animation_mode, "animation" | "clip_replace" | "clip_parent" | "clip_parent_id") {
         return Err("Invalid animation replacement mode.".into());
     }
     let mut guard = data.write().await;

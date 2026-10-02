@@ -22,6 +22,8 @@ type PatchAction =
 	| "replaceMeshPart"
 	| "replaceAnimationClip"
 
+type AnimationReplacementMode = "animation" | "clip_replace" | "clip_parent" | "clip_parent_id"
+
 type Patch = {
 	token: string,
 	fullName: string?,
@@ -30,7 +32,7 @@ type Patch = {
 	value: any,
 	meshId: string?,
 	textureId: string?,
-	animationMode: string?,
+	animationMode: AnimationReplacementMode?,
 	expectedValue: string?,
 	operationId: string?,
 }

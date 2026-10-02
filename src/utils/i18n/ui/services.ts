@@ -20,9 +20,11 @@ export const en = {
     noFileLoaded: 'No .rbxl/.rbxm file loaded.',
     noMappings: 'No mappings: run the spoof before saving the file.',
     fileSaved: 'File saved: {path} ({count} replacement(s)).',
+    filePartial: 'File saved: {path} ({count} applied, {failed} failed). Check the warnings.',
     needCookieProfile: 'Select a profile with a valid cookie.',
     nothingToDiscover: 'No assets to discover.',
-    fileModeHint: 'File mode: use "Save spoofed file" to write the new IDs.',
+    fileModeHint:
+      'File mode: use "Save spoofed file" to apply replacements and the animation mode.',
   },
 };
 
@@ -45,8 +47,10 @@ export const pt = {
     noFileLoaded: 'Nenhum arquivo .rbxl/.rbxm carregado.',
     noMappings: 'Nenhum mapeamento: rode o spoof antes de salvar o arquivo.',
     fileSaved: 'Arquivo salvo: {path} ({count} substituições).',
+    filePartial: 'Arquivo salvo: {path} ({count} aplicadas, {failed} falharam). Confira os avisos.',
     needCookieProfile: 'Selecione um perfil com cookie válido.',
     nothingToDiscover: 'Nenhum asset para descobrir.',
-    fileModeHint: 'Modo arquivo: use "Salvar arquivo spoofado" para gravar os novos IDs.',
+    fileModeHint:
+      'Modo arquivo: use "Salvar arquivo spoofado" para aplicar as substituições e o modo de animação.',
   },
 };

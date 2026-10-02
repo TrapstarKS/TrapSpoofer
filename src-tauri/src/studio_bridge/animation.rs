@@ -17,7 +17,7 @@ pub fn annotate_patches(
     patches.retain_mut(|patch| {
         let token = patch["token"].as_str().unwrap_or_default().to_string();
         let property = patch["property"].as_str().unwrap_or_default().to_string();
-        if animation_mode != "animation"
+        if matches!(animation_mode, "clip_replace" | "clip_parent" | "clip_parent_id")
             && patch["action"] == "setProperty"
             && matches!(property.as_str(), "AnimationId" | "AnimationContent")
         {
@@ -75,7 +75,7 @@ mod tests {
         })
         .collect();
         let mappings = [json!({"originalId": "123456789", "newId": "987654321"})];
-        for mode in ["clip_replace", "clip_parent"] {
+        for mode in ["clip_replace", "clip_parent", "clip_parent_id"] {
             let patches = annotate_patches(
                 plan_patches(&records, &mappings),
                 &records,
@@ -90,6 +90,7 @@ mod tests {
             let clip =
                 patches.iter().find(|patch| patch["token"] == "animation").expect("animation");
             assert_eq!(clip["expectedValue"], "rbxassetid://123456789");
+            assert_eq!(clip["value"], "rbxassetid://987654321");
             assert_eq!(clip["animationMode"], mode);
             assert_eq!(clip["operationId"], "operation");
             assert_eq!(

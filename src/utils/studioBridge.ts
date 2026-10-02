@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import type { AppConfig } from '../stores/configStore';
 import { requireStudioSession } from '../stores/studioSessionsStore';
 
 export interface ReplacementOptions {
   sessionId?: string;
   operationId?: string;
-  animationMode?: 'animation' | 'clip_replace' | 'clip_parent';
+  animationMode?: AppConfig['spoofing']['animationMode'];
 }
 
 export async function queueStudioReplacements(

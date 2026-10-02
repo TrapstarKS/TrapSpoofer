@@ -219,6 +219,29 @@ describe('final-result failed asset recovery', () => {
     );
   });
 
+  it('reports a failed native clip separately from successfully saved replacements', async () => {
+    const showToast = vi.fn();
+    const result = {
+      outputPath: '/tmp/Example_spoofed.rbxl',
+      patchesApplied: 1,
+      patchesFailed: 1,
+      warnings: ['Native clip unavailable; original Animation preserved.'],
+    };
+    useSpooferStore.setState({ showToast });
+    vi.mocked(writeSpoofedFile).mockImplementation(async () => {
+      useSessionStore.getState().setLastFileWrite(result);
+      return result;
+    });
+    render(<ApplyStep />);
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Save spoofed file' })),
+    );
+    expect(showToast).toHaveBeenCalledWith('info', expect.stringContaining('1 failed'));
+    expect(showToast).not.toHaveBeenCalledWith('success', expect.any(String));
+    expect(screen.getByText(result.warnings[0])).toBeInTheDocument();
+    expect(screen.getByText(result.outputPath)).toBeInTheDocument();
+  });
+
   it.each(['rbxm', 'rbxl', 'rbxmx', 'rbxlx'])(
     'keeps the original .%s download target after the selected source changes',
     async (extension) => {
@@ -243,7 +266,7 @@ describe('final-result failed asset recovery', () => {
       render(<ApplyStep />);
       expect(
         screen.getByText(
-          `Creates a copy of Original.${extension} with the new IDs. The original stays untouched.`,
+          `Creates a copy of Original.${extension} with the selected replacements and animation mode. The original stays untouched.`,
         ),
       ).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Apply in Studio' })).not.toBeInTheDocument();

@@ -156,7 +156,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         useSpooferStore.setState({
           isJobPaused: false,
           jobTarget: null,
-          lastJobTarget: target?.studioSessionId
+          lastJobTarget: target
             ? {
                 studioSessionId: target.studioSessionId,
                 animationMode: target.animationMode,

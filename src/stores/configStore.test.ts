@@ -47,7 +47,7 @@ describe('configStore', () => {
     expect(next.spoofing.animationMode).toBe('animation');
     expect(next.spoofing.selectedUser).toBe('12345');
     expect(next.spoofing.selectedGroup).toBe('67890');
-    for (const animationMode of ['clip_replace', 'clip_parent'])
+    for (const animationMode of ['clip_replace', 'clip_parent', 'clip_parent_id'])
       expect(
         AppConfigSchema.parse({ ...saved, spoofing: { ...saved.spoofing, animationMode } }).spoofing
           .animationMode,

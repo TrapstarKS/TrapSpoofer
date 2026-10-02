@@ -42,9 +42,12 @@ describe('UploadSection failed asset recovery', () => {
     render(<UploadSection />);
     fireEvent.click(screen.getByRole('switch', { name: 'Skip assets you already own' }));
     expect(updateConfig).toHaveBeenCalledExactlyOnceWith('advanced', 'skipOwned', !checked);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Animation replacement in Studio' }), {
-      target: { value: 'clip_parent' },
+    const animationMode = screen.getByRole('combobox', {
+      name: 'Animation replacement (Studio and files)',
     });
+    fireEvent.change(animationMode, { target: { value: 'clip_parent' } });
     expect(updateConfig).toHaveBeenLastCalledWith('spoofing', 'animationMode', 'clip_parent');
+    fireEvent.change(animationMode, { target: { value: 'clip_parent_id' } });
+    expect(updateConfig).toHaveBeenLastCalledWith('spoofing', 'animationMode', 'clip_parent_id');
   });
 });

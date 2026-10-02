@@ -212,7 +212,14 @@ function FileApply() {
     setSaving(true);
     try {
       const result = await writeSpoofedFile({ outputPath });
-      toast('success', t('flow.apply.fileSaved').replace('{count}', String(result.patchesApplied)));
+      toast(
+        result.patchesFailed > 0 ? 'info' : 'success',
+        result.patchesFailed > 0
+          ? t('flow.apply.fileDone')
+              .replace('{applied}', String(result.patchesApplied))
+              .replace('{failed}', String(result.patchesFailed))
+          : t('flow.apply.fileSaved').replace('{count}', String(result.patchesApplied)),
+      );
     } catch (e) {
       toast('error', `${t('flow.apply.fileFailed')} ${errorText(e)}`);
     } finally {
@@ -248,9 +255,20 @@ function FileApply() {
           {saving ? t('flow.apply.fileSaving') : t('flow.apply.fileSave')}
         </Button>
         {lastWrite && (
-          <div className="space-y-2 rounded-xl border border-success/25 bg-success/[0.06] px-4 py-3">
+          <div
+            className={cn(
+              'space-y-2 rounded-xl border px-4 py-3',
+              lastWrite.patchesFailed > 0
+                ? 'border-warning/25 bg-warning/[0.06]'
+                : 'border-success/25 bg-success/[0.06]',
+            )}
+          >
             <p className="flex items-center gap-2 text-[13px] font-semibold text-text-primary">
-              <CheckCircle2 size={15} className="text-success" />
+              {lastWrite.patchesFailed > 0 ? (
+                <XCircle size={15} className="text-warning" />
+              ) : (
+                <CheckCircle2 size={15} className="text-success" />
+              )}
               {t('flow.apply.fileDone')
                 .replace('{applied}', String(lastWrite.patchesApplied))
                 .replace('{failed}', String(lastWrite.patchesFailed))}

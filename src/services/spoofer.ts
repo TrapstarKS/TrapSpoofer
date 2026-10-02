@@ -900,7 +900,7 @@ export async function pushToStudio(
     await applyReplacements(map, !(options.persist ?? false));
   } else {
     const target = useSpooferStore.getState().lastJobTarget;
-    if (!target)
+    if (!target?.studioSessionId)
       throw new Error('The last Studio job target is no longer available. Run the job again.');
     await applyReplacements(map, true, target.studioSessionId, target.animationMode);
   }
@@ -913,7 +913,10 @@ export async function writeSpoofedFile(options: {
   mappings?: Record<string, string>;
 }) {
   assertAppIsNotUpdating();
-  const source = useSpooferStore.getState().lastJobSource ?? useSessionStore.getState().source;
+  const { lastJobSource, lastJobTarget } = useSpooferStore.getState();
+  const source = lastJobSource ?? useSessionStore.getState().source;
+  const animationMode =
+    lastJobTarget?.animationMode ?? useConfigStore.getState().config.spoofing.animationMode;
   const path = options.path ?? source?.filePath;
   if (!path) throw new Error(serviceText('noFileLoaded'));
   const mappings = options.mappings ?? currentReplacements();
@@ -929,12 +932,19 @@ export async function writeSpoofedFile(options: {
     path,
     outputPath: options.outputPath ?? null,
     mappings,
+    animationMode,
+    cookie: animationMode === 'animation' ? null : getActiveTarget().cookie || null,
+    placeId: source?.placeId && source.placeId !== '0' ? source.placeId : null,
   });
   result.outputPath = displayPath(result.outputPath);
   useSessionStore.getState().setLastFileWrite(result);
-  log(
-    `[SUCCESS] ${serviceText('fileSaved', { path: result.outputPath, count: result.patchesApplied })}`,
-  );
+  const saved = serviceText(result.patchesFailed > 0 ? 'filePartial' : 'fileSaved', {
+    path: result.outputPath,
+    count: result.patchesApplied,
+    failed: result.patchesFailed,
+  });
+  log(`[${result.patchesFailed > 0 ? 'WARN' : 'SUCCESS'}] ${saved}`);
+  for (const warning of result.warnings) log(`[WARN] ${warning}`);
   return result;
 }
 
