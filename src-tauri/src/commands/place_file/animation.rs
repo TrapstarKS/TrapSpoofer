@@ -231,6 +231,9 @@ impl NativeClip {
         }
         for referent in mapping.values() {
             let instance = staged.get_by_ref_mut(*referent).expect("cloned subtree");
+            // HistoryIds describe the source asset's editing history, not the
+            // newly imported instances. Never duplicate them across clips.
+            instance.properties.remove(&ustr("HistoryId"));
             for value in instance.properties.values_mut() {
                 remap_references(value, &mapping);
             }
@@ -434,8 +437,20 @@ fn inherit_metadata(
         clip.name = original.name.clone();
     }
     if replacement {
+        if fresh {
+            // clip_replace keeps the existing instance/referent. Preserve its
+            // identity too: copying the downloaded clip's UniqueId into a target
+            // without one duplicates it when several Animations use that clip.
+            for identity in ["UniqueId", "HistoryId"] {
+                let identity = ustr(identity);
+                if !original.properties.contains_key(&identity) {
+                    clip.properties.remove(&identity);
+                }
+            }
+        }
         for (name, value) in &original.properties {
             if !matches!(name.as_str(), "AnimationId" | "AnimationContent" | "Attributes" | "Tags")
+                && (fresh || !matches!(name.as_str(), "UniqueId" | "HistoryId"))
                 && (fresh || !clip.properties.contains_key(name))
             {
                 clip.properties.insert(*name, value.clone());

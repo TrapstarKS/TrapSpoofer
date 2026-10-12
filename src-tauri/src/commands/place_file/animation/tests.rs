@@ -1,8 +1,10 @@
-use super::super::{finish_place_write, load_dom, prepare_place_write, write_dom};
+use super::super::{apply_patches, finish_place_write, load_dom, prepare_place_write, write_dom};
 use super::*;
 use crate::api_dump::ApiDumpProperties;
 use crate::commands::AnyValue;
-use rbx_dom_weak::types::{BinaryString, CFrame, Content, ContentId, Enum, Matrix3, Vector3};
+use rbx_dom_weak::types::{
+    BinaryString, CFrame, Content, ContentId, Enum, Matrix3, UniqueId, Vector3,
+};
 use serde_json::json;
 
 const ORIGINAL: &str = "1234567890";
@@ -399,6 +401,150 @@ fn binary_round_trip_preserves_content_object_references() {
 }
 
 #[test]
+fn repeated_native_clips_do_not_duplicate_unique_ids() {
+    // The real failure was multiple Animations that referenced the same clip.
+    // The downloaded clip has a UniqueId but some original Animations do not.
+    // Check before encoding/reloading: the reader itself repairs duplicates.
+    let source_id = UniqueId::new(1, 2, 3);
+    let source_child_id = UniqueId::new(4, 5, 6);
+    let original_id = UniqueId::new(7, 8, 9);
+    let original_history = UniqueId::new(10, 11, 12);
+    for extension in ["rbxl", "rbxlx"] {
+        for class in ["KeyframeSequence", "CurveAnimation"] {
+            for mode in [AnimationMode::Replace, AnimationMode::Parent, AnimationMode::ParentId] {
+                let directory = FixtureDir::new();
+                let path = directory.0.join(format!("source.{extension}"));
+                let (format, _) = FileFormat::from_path(&path).expect("format");
+                let mut source = source_dom();
+                let parent = instance(&source, "Walk").parent();
+                source.insert(
+                    parent,
+                    InstanceBuilder::new("Animation").with_name("Run").with_property(
+                        "AnimationId",
+                        ContentId::from(format!("rbxassetid://{ORIGINAL}")),
+                    ),
+                );
+                source.insert(
+                    parent,
+                    InstanceBuilder::new("Animation")
+                        .with_name("Idle")
+                        .with_property(
+                            "AnimationId",
+                            ContentId::from(format!("rbxassetid://{ORIGINAL}")),
+                        )
+                        .with_property("UniqueId", Variant::UniqueId(original_id))
+                        .with_property("HistoryId", Variant::UniqueId(original_history)),
+                );
+                write_dom(&source, format, &path).expect("original place");
+
+                let mut native = clip_dom(class, false);
+                let root = native.root().children()[0];
+                native.get_by_ref_mut(root).expect("native clip").properties.extend([
+                    (ustr("UniqueId"), Variant::UniqueId(source_id)),
+                    (ustr("HistoryId"), Variant::UniqueId(UniqueId::new(13, 14, 15))),
+                ]);
+                let child = native.get_by_ref(root).expect("native clip").children()[0];
+                native.get_by_ref_mut(child).expect("native child").properties.extend([
+                    (ustr("UniqueId"), Variant::UniqueId(source_child_id)),
+                    (ustr("HistoryId"), Variant::UniqueId(UniqueId::new(16, 17, 18))),
+                ]);
+                let bytes = encode(&native, FileFormat::Binary);
+                let clips = HashMap::from([(
+                    (ORIGINAL.into(), REPLACEMENT.into()),
+                    NativeClip::parse(&bytes, ORIGINAL),
+                )]);
+                let mut prepared = prepare_place_write(
+                    path.to_str().expect("path"),
+                    None,
+                    &AnyValue(json!({ "1234567890": REPLACEMENT })),
+                    &ApiDumpProperties::default(),
+                    mode,
+                )
+                .expect("prepare");
+                let original_identities: HashMap<_, _> = prepared
+                    .loaded
+                    .dom
+                    .descendants()
+                    .filter(|item| item.class.as_str() == "Animation")
+                    .map(|item| {
+                        (item.name.clone(), item.properties.get(&ustr("UniqueId")).cloned())
+                    })
+                    .collect();
+                let report = apply_patches(
+                    &mut prepared.loaded.dom,
+                    &prepared.patches,
+                    &prepared.loaded.aliases,
+                    &clips,
+                    format,
+                );
+                assert_eq!(report.failed, 0, "{extension} {class} {mode:?}: {:?}", report.warnings);
+                let dom = &prepared.loaded.dom;
+                let mut ids = HashSet::new();
+                for item in dom.descendants() {
+                    if let Some(Variant::UniqueId(id)) = item.properties.get(&ustr("UniqueId")) {
+                        assert!(
+                            id.is_nil() || ids.insert(*id),
+                            "{extension} {class} {mode:?}: duplicate UniqueId {id} on {}",
+                            item.name
+                        );
+                    }
+                }
+                for name in ["Walk", "Run"] {
+                    let target = dom
+                        .descendants()
+                        .find(|item| {
+                            item.name == name
+                                && item.class.as_str()
+                                    == if mode == AnimationMode::Replace {
+                                        class
+                                    } else {
+                                        "Animation"
+                                    }
+                        })
+                        .expect("target animation");
+                    if mode == AnimationMode::Replace {
+                        assert_eq!(
+                            target.properties.get(&ustr("UniqueId")),
+                            original_identities[name].as_ref(),
+                            "{extension} {class} {mode:?} {name}: converted Animation must keep its identity"
+                        );
+                    }
+                }
+                let idle = dom
+                    .descendants()
+                    .find(|item| {
+                        item.name == "Idle"
+                            && item.class.as_str()
+                                == if mode == AnimationMode::Replace { class } else { "Animation" }
+                    })
+                    .expect("idle animation");
+                assert_eq!(
+                    idle.properties.get(&ustr("UniqueId")),
+                    Some(&Variant::UniqueId(original_id))
+                );
+                assert_eq!(
+                    idle.properties.get(&ustr("HistoryId")),
+                    Some(&Variant::UniqueId(original_history))
+                );
+                if mode != AnimationMode::Replace {
+                    let native_roots =
+                        dom.descendants().filter(|item| item.class.as_str() == class);
+                    assert_eq!(native_roots.count(), 3);
+                    for root in dom.descendants().filter(|item| item.class.as_str() == class) {
+                        assert!(
+                            !root.properties.contains_key(&ustr("HistoryId")),
+                            "native imported root must not duplicate source editing history"
+                        );
+                    }
+                }
+                write_dom(dom, format, &directory.0.join(format!("result.{extension}")))
+                    .expect("write result");
+            }
+        }
+    }
+}
+
+#[test]
 fn failed_clip_preserves_animation_and_applies_other_mappings() {
     for extension in ["rbxm", "rbxl", "rbxmx", "rbxlx"] {
         let directory = FixtureDir::new();
@@ -543,6 +689,8 @@ fn rejects_unknown_mode_and_explains_replacement_asset_fallback() {
 
 #[test]
 fn reopened_parent_reuses_edited_native_data_across_modes_without_downloading() {
+    let wrapper_uid = UniqueId::new(19, 20, 21);
+    let wrapper_history = UniqueId::new(22, 23, 24);
     for extension in ["rbxm", "rbxl", "rbxmx", "rbxlx"] {
         for class in ["KeyframeSequence", "CurveAnimation"] {
             let directory = FixtureDir::new();
@@ -576,6 +724,8 @@ fn reopened_parent_reuses_edited_native_data_across_modes_without_downloading() 
             let native = edited.get_by_ref_mut(wrapper).expect("native parent");
             native.name = "EditedNative".into();
             native.properties.insert(ustr("Loop"), Variant::Bool(false));
+            native.properties.insert(ustr("UniqueId"), Variant::UniqueId(wrapper_uid));
+            native.properties.insert(ustr("HistoryId"), Variant::UniqueId(wrapper_history));
             if let Some(Variant::Attributes(attributes)) =
                 native.properties.get_mut(&ustr("Attributes"))
             {
@@ -653,6 +803,14 @@ fn reopened_parent_reuses_edited_native_data_across_modes_without_downloading() 
                 let native = instance(&output, "EditedNative");
                 assert_eq!(native.class.as_str(), class);
                 assert_eq!(native.properties.get(&ustr("Loop")), Some(&Variant::Bool(false)));
+                assert_eq!(
+                    native.properties.get(&ustr("UniqueId")),
+                    Some(&Variant::UniqueId(wrapper_uid))
+                );
+                assert_eq!(
+                    native.properties.get(&ustr("HistoryId")),
+                    Some(&Variant::UniqueId(wrapper_history))
+                );
                 assert_eq!(instance(&output, "WrapperNote").parent(), native.referent());
                 assert_eq!(
                     instance(&output, "WrapperLink").properties.get(&ustr("Value")),

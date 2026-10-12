@@ -1,6 +1,6 @@
 [package]
 name         = "app"
-version      = "3.1.7"
+version      = "3.1.8"
 authors      = ["Trapstar", "IncredibroXP <incredibroxpdev@gmail.com>"]
 description  = "TrapSpoofer - Roblox asset spoofer"
 edition      = "2021"
