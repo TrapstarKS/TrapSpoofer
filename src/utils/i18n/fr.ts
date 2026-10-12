@@ -117,8 +117,7 @@ export const fr: TranslationTree = {
     audioQuotaChecking: 'Quota audio : vérification...',
     audioQuotaLeft: 'Quota audio : {remaining} / {capacity} restants',
     audioQuotaUnavailable: 'Quota audio : indisponible',
-    noGroupsFound:
-      "Aucun groupe trouvé. Ajoutez des informations d'identification dans la Configuration, puis sélectionnez un utilisateur.",
+    noGroupsFound: 'Aucun groupe trouvé. Actualisez la liste ou reconnectez-vous.',
   },
   settings: {
     title: 'Paramètres',

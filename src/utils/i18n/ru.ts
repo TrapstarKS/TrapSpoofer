@@ -125,8 +125,7 @@ export const ru: TranslationTree = {
     audioQuotaChecking: 'Квота аудио: проверка...',
     audioQuotaLeft: 'Квота аудио: {remaining} / {capacity} осталось',
     audioQuotaUnavailable: 'Квота аудио: недоступна',
-    noGroupsFound:
-      'Группы не найдены. Добавьте учетные данные в настройках, затем выберите пользователя.',
+    noGroupsFound: 'Группы не найдены. Обновите список или войдите в аккаунт снова.',
   },
   settings: {
     title: 'Настройки',

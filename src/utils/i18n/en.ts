@@ -110,8 +110,7 @@ export const en: TranslationTree = {
     audioQuotaChecking: 'Audio quota: checking with Roblox...',
     audioQuotaLeft: 'Audio quota: {remaining} of {capacity} remaining',
     audioQuotaUnavailable: 'Audio quota: unavailable',
-    noGroupsFound:
-      'No manageable groups found. Make sure your account has group management permissions in Roblox.',
+    noGroupsFound: 'No groups found. Refresh the list or sign in again.',
   },
   settings: {
     title: 'Settings',

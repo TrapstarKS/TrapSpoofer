@@ -110,8 +110,7 @@ export const pt: TranslationTree = {
     audioQuotaChecking: 'Cota de áudio: verificando com o Roblox...',
     audioQuotaLeft: 'Cota de áudio: {remaining} de {capacity} restante(s)',
     audioQuotaUnavailable: 'Cota de áudio: indisponível',
-    noGroupsFound:
-      'Nenhum grupo gerenciável encontrado. Verifique se sua conta tem permissões de gerenciamento de grupos no Roblox.',
+    noGroupsFound: 'Nenhum grupo encontrado. Atualize a lista ou entre novamente.',
   },
   settings: {
     title: 'Configurações',

@@ -117,7 +117,7 @@ export function useProfileGroups(accountId: string | null, enabled = true) {
   return { groups, loading };
 }
 
-/** "Enviar para": personal account or one of the manageable groups. */
+/** "Enviar para": personal account or one of the available Roblox groups. */
 export function UploadTargetSelect({
   accountId,
   value,

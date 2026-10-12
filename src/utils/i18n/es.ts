@@ -119,8 +119,7 @@ export const es: TranslationTree = {
     audioQuotaChecking: 'Cuota de audio: comprobando...',
     audioQuotaLeft: 'Cuota de audio: quedan {remaining} / {capacity}',
     audioQuotaUnavailable: 'Cuota de audio: no disponible',
-    noGroupsFound:
-      'No se encontraron grupos. Agrega credenciales en Configuración, luego selecciona un usuario.',
+    noGroupsFound: 'No se encontraron grupos. Actualiza la lista o inicia sesión de nuevo.',
   },
   settings: {
     title: 'Ajustes',

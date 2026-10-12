@@ -1,4 +1,5 @@
 pub mod cookies;
+mod groups;
 pub mod studio_accounts;
 mod studio_cookies;
 pub mod validation;
@@ -30,11 +31,6 @@ struct AvatarResponse {
 struct AvatarItem {
     #[serde(rename = "imageUrl")]
     image_url: String,
-}
-
-#[derive(Deserialize)]
-struct GroupResponse {
-    data: Vec<RobloxGroup>,
 }
 
 #[derive(Deserialize)]
@@ -211,42 +207,7 @@ pub async fn get_manageable_groups(
     app: AppHandle,
     cookie: String,
 ) -> crate::error::Result<Vec<RobloxGroup>> {
-    let url = "https://develop.roblox.com/v1/user/groups/canmanage";
-    let cookie_val = sanitize_cookie_value(&cookie);
-    let cookie_header_str = if cookie_val.starts_with(".ROBLOSECURITY=") {
-        cookie_val
-    } else {
-        format!(".ROBLOSECURITY={cookie_val}")
-    };
-
-    let client = crate::utils::get_http_client();
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        COOKIE,
-        HeaderValue::from_str(&cookie_header_str).map_err(|e| {
-            crate::error::AppError::Custom(format!(
-                "The provided cookie contains invalid characters: {e}"
-            ))
-        })?,
-    );
-    headers.insert(USER_AGENT, HeaderValue::from_static(ROBLOX_USER_AGENT));
-
-    let res = client.get(url).headers(headers).send().await.map_err(|e| {
-        crate::error::AppError::Custom(format!("Could not reach Roblox group servers: {e}"))
-    })?;
-
-    check_for_roblosecurity_update(&app, &res, &cookie_header_str);
-
-    if !res.status().is_success() {
-        return Err(format!("Could not retrieve manageable groups (HTTP {}). Please check that your account has group management rights.", res.status()).into());
-    }
-
-    let json: GroupResponse = res.json().await.map_err(|e| {
-        crate::error::AppError::Custom(format!("Could not parse manageable groups response: {e}"))
-    })?;
-
-    Ok(json.data)
+    groups::get_upload_groups(&app, cookie).await
 }
 
 #[tauri::command]
