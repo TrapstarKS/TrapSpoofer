@@ -1,6 +1,8 @@
 pub(crate) mod animation;
+pub mod local_references;
 pub mod messages;
 pub mod middleware;
+mod owners;
 pub mod server;
 pub mod sessions;
 
@@ -489,12 +491,15 @@ pub async fn get_port_diagnostic() -> AnyValue {
 #[specta::specta]
 #[must_use]
 pub async fn get_studio_health_status(session_id: Option<String>) -> AnyValue {
+    let session_snapshots = sessions::registry().snapshots().await;
+    owners::refresh_missing_owners(&session_snapshots).await;
     let mut sessions_list = Vec::new();
-    for (id, data) in sessions::registry().snapshots().await {
+    for (id, data) in session_snapshots {
         let guard = data.read().await;
         sessions_list.push(json!({
             "sessionId": id, "synced": sessions::connected(&guard),
             "studioPlaceId": guard.studio_place_id, "studioPlaceName": guard.studio_place_name,
+            "studioCreatorType": guard.studio_creator_type, "studioCreatorId": guard.studio_creator_id,
             "scanStatus": guard.scan_status,
             "completedScanId": guard.completed_scan_id,
         }));
@@ -507,6 +512,7 @@ pub async fn get_studio_health_status(session_id: Option<String>) -> AnyValue {
                 "sessionId": id, "synced": sessions::connected(&guard),
                 "scanStatus": guard.scan_status, "studioPlaceId": guard.studio_place_id,
                 "studioPlaceName": guard.studio_place_name, "completedScanId": guard.completed_scan_id,
+                "studioCreatorType": guard.studio_creator_type, "studioCreatorId": guard.studio_creator_id,
                 "activeScanId": guard.active_scan_id, "requestedScanId": guard.requested_scan_id,
                 "pendingPatchId": guard.pending_patch_id,
             })

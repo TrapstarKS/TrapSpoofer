@@ -188,3 +188,54 @@ TrapSpoofer/
 ## Credits & license
 
 Based on **ISpooferMotion V2** by IncredibroXP. TrapSpoofer is licensed under the **GNU General Public License v3.0 or later** — see [`LICENSE`](LICENSE).
+
+### MCP settings, local publishing and permissions
+
+`get_settings` and `update_settings` use the interface's persistent configuration. A patch only changes supplied fields. `grantPermissions.subjectType` is `Universe`, `Group` or `User`; all Roblox IDs are strings. A `Universe` ID is used as supplied.
+
+```json
+{
+  "grantPermissions": { "enabled": true, "subjectType": "Group", "ids": ["764544807"] },
+  "skipOwned": true,
+  "keepNameAndDescription": true,
+  "animationMode": "animation"
+}
+```
+
+Pass that object to `update_settings`. `spoof_assets` accepts `grantPermissions`, `skipOwned` and `keepNameAndDescription` as temporary overrides. Animation modes are `animation`, `clip_replace`, `clip_parent` and `clip_parent_id`. `retry_failed({"jobId":"<job UUID>"})` exposes recovery through the same job pipeline.
+
+Use `get_status` to compare the active upload destination with each connected Studio's place and owner. `scan_studio` returns `localReferences`, including `rbxasset://` property values and quoted URIs in scripts, their disk paths when found, and instance/property usages. Select a window with `studioSessionId` when needed.
+
+`publish_assets` publishes files through the existing uploader and job lifecycle:
+
+```json
+{
+  "files": [
+    { "path": "/absolute/texture.png", "name": "Example texture" },
+    { "path": "/absolute/body.mesh", "type": "Mesh" }
+  ],
+  "profile": "<saved profile ID or name>",
+  "groupId": "764544807",
+  "grantPermissions": { "enabled": true, "subjectType": "Group", "ids": ["764544807"] },
+  "studioPathMap": { "/absolute/texture.png": "rbxasset://textures/example.png" },
+  "pushToStudio": true
+}
+```
+
+Types are inferred from extensions: PNG/JPG/BMP/TGA, OGG/MP3/WAV/FLAC, FBX/OBJ/glTF/GLB and Roblox `.mesh` v2–7. Roblox mesh and OBJ files are converted to static GLB geometry; materials, rigging and facial animation are not preserved by this conversion. Mesh uploads create a **Model**: `assetId` identifies the model, while `meshId` identifies the MeshPart geometry used by the game. A model containing several different MeshParts reports an ambiguity instead of selecting one silently. Local files are limited to 20 MiB; a folder job accepts up to 1,000 supported files.
+
+`publish_folder` accepts the same options with `dir`, `recursive` (default `false`) and optional relative `glob` (for example `**/*.png`) in place of `files`. Symlinks are skipped. glTF's local buffers and images are bundled with path traversal checks.
+
+`get_job({"jobId":"<returned UUID>","waitSeconds":30})` reports per-asset `imageId`/`meshId`, `cacheHit`, moderation (`approved`, `pending`, `rejected`), permission (`granted`, `failed` with reason, `not_requested`) and `pathMappings` (`absolute path -> rbxassetid://ID`). Moderation has a bounded wait and may remain pending. Upload receipts and IDs are cached durably by SHA-256 and profile/group; retries resume an accepted operation or reuse its asset rather than uploading a second copy. Files whose permissions failed keep their cached upload for recovery.
+
+With `pushToStudio`, the existing plugin replaces matching local image/texture/clothing/mesh references, including MeshPart and SpecialMesh, and reports replacement errors through `get_job`. Paths from the last Studio scan are inferred; `studioPathMap` supplies explicit mappings. Save the place after applying replacements.
+
+For assets uploaded earlier, use `grant_permissions`:
+
+```json
+{ "assetIds": ["123456789"], "subjectType": "Group", "ids": ["764544807"] }
+```
+
+It returns a job ID; `get_job` includes the result for each asset. `get_permissions({"assetIds":["123456789"]})` reads existing recipients. Roblox enforces the signed-in profile's rights and API-key scopes. Failed files/permissions do not discard successful items.
+
+Set `dry_run:true` on `spoof_assets`, `publish_assets`, `publish_folder` or `grant_permissions` to inspect counts, types, destination, cache hits and quota estimates without uploading, granting permissions or changing Studio. `list_profiles` exposes `hasCookie`/`hasApiKey` booleans; MCP responses and activity summaries remove credentials.

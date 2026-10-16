@@ -3,6 +3,12 @@ use validator::Validate;
 
 #[derive(serde::Deserialize, specta::Type, Validate)]
 pub struct SpooferActionRequest {
+    #[serde(rename = "publishFiles")]
+    pub publish_files: Option<Vec<super::publish::PublishFile>>,
+    #[serde(rename = "grantPermissions")]
+    pub grant_permissions: Option<super::publish::GrantPermissions>,
+    #[serde(rename = "permissionAssetIds")]
+    pub permission_asset_ids: Option<Vec<String>>,
     #[serde(rename = "jobId")]
     pub job_id: Option<String>,
     #[validate(length(min = 1))]

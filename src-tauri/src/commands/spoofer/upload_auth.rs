@@ -1,6 +1,6 @@
 use reqwest::{RequestBuilder, Response};
 
-pub(super) enum UploadAuth {
+pub(crate) enum UploadAuth {
     ApiKey(String),
     Cookie { header: String, csrf: String },
 }

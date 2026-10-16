@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo } from 'react';
 
+import { localPathReplacements } from '../services/spoofer';
 import { type AppConfig, useConfigStore } from '../stores/configStore';
 import type { AssetStage } from '../stores/spooferStore';
 import { applyReplacements, useSpooferStore } from '../stores/spooferStore';
@@ -135,7 +136,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       });
 
-      const p4 = listen<SpooferResultPayload>('spoofer-result', (e) => {
+      const p4 = listen<SpooferResultPayload>('spoofer-result', async (e) => {
         if (!accepts(e.payload.jobId)) return;
         const state = useSpooferStore.getState();
         const target = state.jobTarget;
@@ -147,19 +148,25 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           e.payload.cancelled,
         );
         const results = mergeJobResults(target?.previousResults ?? [], batchResults);
-        setIsSpoofing(false);
-        setActiveSpooferJobId(null);
+
         setSpoofStartTime(null);
         setLastAssetResults(results);
         setKeyframeWarningCount(e.payload.keyframe_warnings ?? 0);
         incrementSpoofCompletionVersion();
         useSpooferStore.setState({
           isJobPaused: false,
+          lastJobId: e.payload.jobId ?? state.lastJobId,
           jobTarget: null,
           lastJobTarget: target
             ? {
                 studioSessionId: target.studioSessionId,
                 animationMode: target.animationMode,
+                kind: target.kind,
+                publishFiles: target.publishFiles,
+                studioPathMap: target.studioPathMap,
+                grantPermissions: target.grantPermissions,
+                userId: target.userId,
+                groupId: target.groupId,
               }
             : null,
           lastJobSource: target?.source ?? null,
@@ -211,133 +218,30 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
             useSpooferStore.getState().setLastReplacements(mergedReplacements);
 
-            const toApply = newBatchReplacements;
+            const toApply =
+              target?.kind === 'publish'
+                ? localPathReplacements(batchResults, target.studioPathMap)
+                : newBatchReplacements;
             const autoApply = target?.autoApply ?? false;
             if (target?.source?.kind === 'file') {
               setSpoofingLogs((prev) =>
                 appendSpoofingLog(prev, `[INFO] ${serviceText('fileModeHint')}`),
               );
             } else if (autoApply && target?.studioSessionId && Object.keys(toApply).length > 0) {
-              void applyReplacements(
+              await applyReplacements(
                 toApply,
                 true,
                 target?.studioSessionId ?? undefined,
                 target?.animationMode,
               ).catch((error) => {
+                useSpooferStore.setState({ studioPushError: String(error) });
                 useSpooferStore.getState().showToast('error', String(error), 6000);
               });
             }
           }
-
-          const permissionsConfig = target?.permissions;
-          if (permissionsConfig?.enabled && permissionsConfig.subjectIds?.trim()) {
-            const rawIds: unknown[] = [];
-            if (e.payload.replacements) {
-              rawIds.push(...Object.values(e.payload.replacements));
-            }
-            if (e.payload.assetResults) {
-              for (const r of e.payload.assetResults as any[]) {
-                const newId = r.newId || r.new_asset_id || r.newAssetId;
-                if (newId) {
-                  rawIds.push(newId);
-                }
-              }
-            }
-
-            const newAssetIds: number[] = [];
-            for (const val of rawIds) {
-              const num = Number(val);
-              if (Number.isFinite(num) && num > 0 && !newAssetIds.includes(num)) {
-                newAssetIds.push(num);
-              }
-            }
-
-            if (newAssetIds.length > 0) {
-              const subjectIds = permissionsConfig.subjectIds
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-
-              if (subjectIds.length > 0) {
-                const apiKey = target?.apiKey || null;
-                const cookie = target?.cookie || null;
-
-                console.log(
-                  '[AssetPermissions] Auto-granting permissions for asset IDs:',
-                  newAssetIds,
-                  'to targets:',
-                  subjectIds,
-                  `(${permissionsConfig.subjectType})`,
-                  'Has Cookie:',
-                  Boolean(cookie),
-                  'Has API Key:',
-                  Boolean(apiKey),
-                );
-
-                setSpoofingLogs((prev) =>
-                  appendSpoofingLog(
-                    prev,
-                    `[INFO] Auto-granting permissions for ${newAssetIds.length} asset(s) to ${subjectIds.length} target(s) (${permissionsConfig.subjectType})...`,
-                  ),
-                );
-
-                useSpooferStore.getState().setIsGrantingPermissions(true);
-                useSpooferStore.getState().setPermissionsTotalCount(newAssetIds.length);
-                useSpooferStore.getState().setPermissionsCurrentCount(0);
-                useSpooferStore.getState().setPermissionsStartTime(Date.now());
-
-                import('@tauri-apps/api/core')
-                  .then(({ invoke }) =>
-                    invoke<{
-                      success_asset_ids: number[];
-                      failed_asset_ids: number[];
-                      errors: string[];
-                    }>('batch_grant_asset_permissions', {
-                      req: {
-                        asset_ids: newAssetIds,
-                        subject_type: permissionsConfig.subjectType,
-                        subject_ids: subjectIds,
-                        action: 'Use',
-                        api_key: apiKey,
-                        cookie: cookie,
-                      },
-                    }),
-                  )
-                  .then((res) => {
-                    console.log('[AssetPermissions] Response:', res);
-                    const okCount = res.success_asset_ids.length;
-                    const failCount = res.failed_asset_ids.length;
-                    const logMsg =
-                      failCount > 0
-                        ? `Permissions auto-grant completed with warnings: ${okCount} updated, ${failCount} failed.`
-                        : `Permissions auto-grant completed successfully: ${okCount} asset(s) updated.`;
-                    setSpoofingLogs((prev) =>
-                      appendSpoofingLog(
-                        prev,
-                        failCount > 0 ? `[WARN] ${logMsg}` : `[SUCCESS] ${logMsg}`,
-                      ),
-                    );
-                    if (res.errors && res.errors.length > 0) {
-                      for (const err of res.errors) {
-                        console.error('[AssetPermissions] Error:', err);
-                        setSpoofingLogs((prev) => appendSpoofingLog(prev, `[ERROR] ${err}`));
-                      }
-                    }
-                    logIsm(failCount > 0 ? 'warn' : 'success', logMsg, false);
-                  })
-                  .catch((err) => {
-                    console.error('[AssetPermissions] Fatal error granting permissions:', err);
-                    const errMsg = `Could not auto-grant permissions: ${String(err)}`;
-                    setSpoofingLogs((prev) => appendSpoofingLog(prev, `[ERROR] ${errMsg}`));
-                    logIsm('error', errMsg, false);
-                  })
-                  .finally(() => {
-                    useSpooferStore.getState().setIsGrantingPermissions(false);
-                  });
-              }
-            }
-          }
         }
+        setIsSpoofing(false);
+        setActiveSpooferJobId(null);
       });
 
       const p5 = listen<{

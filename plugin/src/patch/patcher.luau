@@ -210,6 +210,8 @@ local function normalizePatch(rawPatch: any): (Patch?, string?)
 		value = rawPatch.value,
 		meshId = if rawPatch.meshId ~= nil then tostring(rawPatch.meshId) else nil,
 		textureId = if rawPatch.textureId ~= nil then tostring(rawPatch.textureId) else nil,
+		expectedMeshId = rawPatch.expectedMeshId,
+		expectedTextureId = rawPatch.expectedTextureId,
 	},
 		nil
 end
@@ -528,6 +530,24 @@ local function applyPatch(patch: Patch): (boolean, string?)
 	if not initialParentValid or obj.Parent == nil then
 		return false, "Studio object was destroyed or deparented before patching"
 	end
+	if patch.expectedValue ~= nil and patch.action ~= "replaceAnimationClip" then
+		local property = if patch.action == "replaceScriptSource" then "Source" else patch.property
+		local readOk, current = pcall(function()
+			if patch.action == "replaceAttribute" then
+				return obj:GetAttribute(property)
+			end
+			return (obj :: any)[property]
+		end)
+		if not readOk or contentValueToString(current) ~= patch.expectedValue then
+			local desired = if patch.action == "replaceScriptSource"
+				then patch.value
+				else toAssetUri(patch.value) or contentValueToString(patch.value)
+			if readOk and desired ~= nil and contentValueToString(current) == desired then
+				return true, nil
+			end
+			return false, "Studio value changed since scanning; scan again"
+		end
+	end
 
 	if patch.action == "replaceAnimationClip" then
 		return replaceAnimationClip(obj, patch)
@@ -709,7 +729,10 @@ local function applyPatch(patch: Patch): (boolean, string?)
 		local ok, err
 		if #source >= 200000 then
 			ok, err = pcall(function()
-				ScriptEditorService:UpdateSourceAsync(obj :: any, function()
+				ScriptEditorService:UpdateSourceAsync(obj :: any, function(current: string): string
+					if patch.expectedValue ~= nil and current ~= patch.expectedValue then
+						error("Studio source changed since scanning; scan again")
+					end
 					return source
 				end)
 			end)
@@ -744,15 +767,47 @@ local function applyPatch(patch: Patch): (boolean, string?)
 		if not targetMeshUri and not targetTextureUri then
 			return false, "replaceMeshPart requires meshId or textureId"
 		end
+		local readOk, currentMeshUri, currentTextureUri = pcall(function()
+			return meshObj.MeshId, meshObj.TextureID
+		end)
+		if not readOk then
+			return false, "Could not read current mesh references"
+		end
+		if
+			(
+				patch.expectedMeshId
+				and currentMeshUri ~= patch.expectedMeshId
+				and currentMeshUri ~= targetMeshUri
+			)
+			or (
+				patch.expectedTextureId
+				and currentTextureUri ~= patch.expectedTextureId
+				and currentTextureUri ~= targetTextureUri
+			)
+		then
+			return false, "Studio mesh reference changed since scanning; scan again"
+		end
+		if
+			(not targetMeshUri or currentMeshUri == targetMeshUri)
+			and (not targetTextureUri or currentTextureUri == targetTextureUri)
+		then
+			return true, nil
+		end
 
-		if not targetMeshUri then
+		if not targetMeshUri or currentMeshUri == targetMeshUri then
 			local ok, err = pcall(function()
 				meshObj.TextureID = targetTextureUri :: string
 			end)
 			return ok, err
 		end
 
-		local replaceOk, replaceErr = applyMeshPartInPlace(meshObj, targetMeshUri, targetTextureUri)
+		local replaceOk, replaceErr = applyMeshPartInPlace(
+			meshObj,
+			targetMeshUri,
+			targetTextureUri,
+			patch.expectedMeshId,
+			patch.expectedTextureId
+		)
 		if not replaceOk then
 			return false, replaceErr
 		end

@@ -32,6 +32,8 @@ type Patch = {
 	value: any,
 	meshId: string?,
 	textureId: string?,
+	expectedMeshId: string?,
+	expectedTextureId: string?,
 	animationMode: AnimationReplacementMode?,
 	expectedValue: string?,
 	operationId: string?,

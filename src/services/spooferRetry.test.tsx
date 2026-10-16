@@ -335,12 +335,12 @@ describe('retrying a completed file job', () => {
     );
   });
 
-  it('requires explicit recovery even when the old global recovery setting is enabled', async () => {
+  it('honors configured recovery while keeping retry and explicit recovery separate', async () => {
     act(() => {
       useConfigStore.getState().updateConfig('advanced', 'enableArchiveRecovery', true);
     });
     await startFileJob();
-    expect(lastJobInput().enableArchiveRecovery).toBe(false);
+    expect(lastJobInput().enableArchiveRecovery).toBe(true);
     await act(async () => {
       await retryFailed();
     });
@@ -355,7 +355,7 @@ describe('retrying a completed file job', () => {
     await act(async () => {
       await runSpoof({ assetIds: [ids[0]] });
     });
-    expect(lastJobInput().enableArchiveRecovery).toBe(false);
+    expect(lastJobInput().enableArchiveRecovery).toBe(true);
   });
 
   it('rejects a second retry while the first is preparing without losing the previous results', async () => {

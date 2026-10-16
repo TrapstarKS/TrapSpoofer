@@ -63,6 +63,9 @@ pub struct AssetServerStateData {
     pub scan_status: Option<Value>,
     pub studio_place_id: Option<String>,
     pub studio_place_name: Option<String>,
+    pub studio_creator_type: Option<String>,
+    pub studio_creator_id: Option<String>,
+    pub studio_creator_resolved_at: Option<Instant>,
     pub keyframe_warning_count: usize,
     pub scan_records_truncated: bool,
     pub notify: std::sync::Arc<tokio::sync::Notify>,
@@ -100,6 +103,9 @@ impl Default for AssetServerStateData {
             scan_status: None,
             studio_place_id: None,
             studio_place_name: None,
+            studio_creator_type: None,
+            studio_creator_id: None,
+            studio_creator_resolved_at: None,
             keyframe_warning_count: 0,
             scan_records_truncated: false,
             notify: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -192,7 +198,7 @@ fn runtime_load_pattern() -> &'static Regex {
     })
 }
 
-fn infer_category_from_property(property: &str) -> Option<&'static str> {
+pub(crate) fn infer_category_from_property(property: &str) -> Option<&'static str> {
     match property {
         "AnimationId" | "AnimationContent" | "ClimbAnimation" | "FallAnimation"
         | "IdleAnimation" | "JumpAnimation" | "RunAnimation" | "SwimAnimation"
@@ -1101,11 +1107,25 @@ pub fn plan_patches(records: &[StudioRecord], mappings: &[Value]) -> Vec<Value> 
                     "fullName": record.full_name,
                     "value": rewritten
                 }));
+                if record.property == "Source"
+                    && super::local_references::local_uri_pattern()
+                        .find_iter(&record.value)
+                        .any(|uri| filtered_mappings.contains_key(uri.as_str()))
+                {
+                    if let Some(patch) = patches.last_mut() {
+                        patch["expectedValue"] = json!(record.value);
+                    }
+                }
             }
             continue;
         }
 
-        let Some(asset_id) = normalize_asset_id(&record.value) else {
+        let is_local = super::local_references::is_local_asset_uri(&record.value);
+        let Some(asset_id) = (if is_local {
+            Some(record.value.as_str())
+        } else {
+            normalize_asset_id(&record.value)
+        }) else {
             continue;
         };
         let Some(new_id) = mapping_map.get(&asset_id) else {
@@ -1115,9 +1135,18 @@ pub fn plan_patches(records: &[StudioRecord], mappings: &[Value]) -> Vec<Value> 
         if !is_path_allowed(asset_id, &record.full_name) {
             continue;
         }
+        let local_value = if is_local {
+            let Some(id) = normalize_asset_id(new_id) else { continue };
+            Some(format!("rbxassetid://{id}"))
+        } else {
+            None
+        };
 
         if record.class_name == "MeshPart"
-            && matches!(record.property.as_str(), "MeshId" | "MeshContent" | "TextureID")
+            && matches!(
+                record.property.as_str(),
+                "MeshId" | "MeshContent" | "TextureID" | "TextureId"
+            )
         {
             let patch = mesh_patches.entry(record.token.clone()).or_insert_with(|| {
                 json!({
@@ -1126,12 +1155,20 @@ pub fn plan_patches(records: &[StudioRecord], mappings: &[Value]) -> Vec<Value> 
                     "fullName": record.full_name
                 })
             });
-            patch[if record.property == "TextureID" { "textureId" } else { "meshId" }] =
+            let is_texture = matches!(record.property.as_str(), "TextureID" | "TextureId");
+            patch[if is_texture { "textureId" } else { "meshId" }] =
                 Value::String((*new_id).to_string());
+            if is_local {
+                patch[if is_texture { "expectedTextureId" } else { "expectedMeshId" }] =
+                    json!(record.value);
+            }
             continue;
         }
 
         let do_bounded_replace = |value: &str| -> String {
+            if let Some(local_value) = &local_value {
+                return local_value.clone();
+            }
             bounded_re_cache
                 .get(asset_id)
                 .map(|re| re.replace_all(value, *new_id).into_owned())
@@ -1154,6 +1191,11 @@ pub fn plan_patches(records: &[StudioRecord], mappings: &[Value]) -> Vec<Value> 
                 "property": attr_name,
                 "value": replaced_val
             }));
+            if is_local {
+                if let Some(patch) = patches.last_mut() {
+                    patch["expectedValue"] = json!(record.value);
+                }
+            }
             continue;
         }
 
@@ -1164,6 +1206,11 @@ pub fn plan_patches(records: &[StudioRecord], mappings: &[Value]) -> Vec<Value> 
             "property": record.property,
             "value": do_bounded_replace(&record.value)
         }));
+        if is_local {
+            if let Some(patch) = patches.last_mut() {
+                patch["expectedValue"] = json!(record.value);
+            }
+        }
     }
 
     patches.extend(mesh_patches.into_values());
@@ -1240,6 +1287,38 @@ fn extract_script_asset_ids(source: &str) -> Vec<String> {
 }
 
 fn replace_script_asset_ids<'a>(
+    source: &'a str,
+    mappings: &HashMap<&str, &str>,
+) -> std::borrow::Cow<'a, str> {
+    let mut rewritten = String::new();
+    let mut end = 0;
+    for found in super::local_references::local_uri_pattern().find_iter(source) {
+        rewritten
+            .push_str(&replace_numeric_script_asset_ids(&source[end..found.start()], mappings));
+        let uri = found.as_str();
+        if super::local_references::is_local_asset_uri(uri) {
+            if let Some(id) = mappings.get(uri).and_then(|value| normalize_asset_id(value)) {
+                rewritten.push_str(&format!("rbxassetid://{id}"));
+            } else {
+                rewritten.push_str(uri);
+            }
+        } else {
+            rewritten.push_str(&replace_numeric_script_asset_ids(uri, mappings));
+        }
+        end = found.end();
+    }
+    if end == 0 {
+        return replace_numeric_script_asset_ids(source, mappings);
+    }
+    rewritten.push_str(&replace_numeric_script_asset_ids(&source[end..], mappings));
+    if rewritten == source {
+        std::borrow::Cow::Borrowed(source)
+    } else {
+        std::borrow::Cow::Owned(rewritten)
+    }
+}
+
+fn replace_numeric_script_asset_ids<'a>(
     source: &'a str,
     mappings: &HashMap<&str, &str>,
 ) -> std::borrow::Cow<'a, str> {
@@ -1521,5 +1600,82 @@ mod tests {
         assert_eq!(patches[0]["token"], "1");
         assert_eq!(patches[0]["fullName"], "Workspace.ModelA.SoundA");
         assert_eq!(patches[0]["value"], "rbxassetid://99999");
+    }
+
+    #[test]
+    fn local_properties_keep_expected_uris_and_upload_as_asset_uris() {
+        for property in [
+            "TextureID",
+            "TextureId",
+            "Texture",
+            "ColorMap",
+            "ShirtTemplate",
+            "PantsTemplate",
+            "Image",
+            "MeshId",
+            "MeshContent",
+        ] {
+            let mut original = record(property, "rbxasset://textures/face.png");
+            original.class_name = "SpecialMesh".into();
+            let patches = plan_patches(
+                &[original],
+                &[json!({
+                    "originalId": "rbxasset://textures/face.png", "newId": "987654321"
+                })],
+            );
+            assert_eq!(patches.len(), 1, "{property}");
+            assert_eq!(patches[0]["action"], "setProperty");
+            assert_eq!(patches[0]["property"], property);
+            assert_eq!(patches[0]["value"], "rbxassetid://987654321");
+            assert_eq!(patches[0]["expectedValue"], "rbxasset://textures/face.png");
+        }
+    }
+
+    #[test]
+    fn local_mesh_and_texture_share_existing_meshpart_patch() {
+        let mut mesh = record("MeshId", "rbxasset://models/body.mesh");
+        mesh.class_name = "MeshPart".into();
+        let mut texture = mesh.clone();
+        texture.property = "TextureID".into();
+        texture.value = "rbxasset://textures/body.png".into();
+        let patches = plan_patches(
+            &[mesh, texture],
+            &[
+                json!({"originalId": "rbxasset://models/body.mesh", "newId": "123456789"}),
+                json!({"originalId": "rbxasset://textures/body.png", "newId": "987654321"}),
+            ],
+        );
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0]["action"], "replaceMeshPart");
+        assert_eq!(patches[0]["meshId"], "123456789");
+        assert_eq!(patches[0]["textureId"], "987654321");
+        assert_eq!(patches[0]["expectedMeshId"], "rbxasset://models/body.mesh");
+        assert_eq!(patches[0]["expectedTextureId"], "rbxasset://textures/body.png");
+    }
+
+    #[test]
+    fn local_script_rewrites_preserve_content_calls_and_respect_target_paths() {
+        let source = "local face = Content.fromUri('rbxasset://textures/123456789.png')\nlocal mesh = \"rbxasset://models/body.mesh\"\nlocal keep = 'rbxasset://textures/987654321.png'";
+        let mut script = record("Source", source);
+        script.class_name = "ModuleScript".into();
+        let mappings = [
+            json!({"originalId": "rbxasset://textures/123456789.png", "newId": "555666777"}),
+            json!({"originalId": "rbxasset://models/body.mesh", "newId": "111222333", "targetPaths": ["Workspace.Other"]}),
+            json!({"originalId": "987654321", "newId": "222333444"}),
+        ];
+        let patches = plan_patches(&[script], &mappings);
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0]["action"], "replaceScriptSource");
+        assert_eq!(patches[0]["value"], "local face = Content.fromUri('rbxassetid://555666777')\nlocal mesh = \"rbxasset://models/body.mesh\"\nlocal keep = 'rbxasset://textures/987654321.png'");
+        assert_eq!(patches[0]["expectedValue"], source);
+    }
+
+    #[test]
+    fn invalid_local_replacement_id_produces_no_patch() {
+        assert!(plan_patches(
+            &[record("Image", "rbxasset://textures/face.png")],
+            &[json!({"originalId": "rbxasset://textures/face.png", "newId": "invalid"})]
+        )
+        .is_empty());
     }
 }

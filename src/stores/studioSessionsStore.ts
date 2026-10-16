@@ -5,6 +5,8 @@ export interface StudioSession {
   synced: boolean;
   studioPlaceId: string | null;
   studioPlaceName: string | null;
+  studioCreatorType?: 'User' | 'Group' | null;
+  studioCreatorId?: string | null;
   scanStatus: { scanning: boolean; current_service: string; scanned: number; total: number } | null;
   completedScanId?: string | null;
 }

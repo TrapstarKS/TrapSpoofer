@@ -80,8 +80,20 @@ export const commands = {
   clearPluginCache: () => typedError<boolean, AppError>(__TAURI_INVOKE('clear_plugin_cache')),
   openFrontendDevtools: () => __TAURI_INVOKE<void>('open_frontend_devtools'),
   setProxyUrl: (url: string | null) => __TAURI_INVOKE<boolean>('set_proxy_url', { url }),
-  runSpooferAction: (data: SpooferActionRequest) =>
+  runSpooferAction: (data: SpooferActionRequest_Deserialize) =>
     typedError<null, AppError>(__TAURI_INVOKE('run_spoofer_action', { data })),
+  inspectPublishFiles: (files: PublishFile[], profileId: string | null, groupId: string | null) =>
+    typedError<PublishFileInspection[], AppError>(
+      __TAURI_INVOKE('inspect_publish_files', { files, profileId, groupId }),
+    ),
+  listPublishFolder: (directory: string, recursive: boolean, glob: string | null) =>
+    typedError<PublishFile[], AppError>(
+      __TAURI_INVOKE('list_publish_folder', { directory, recursive, glob }),
+    ),
+  getAssetPermissions: (assetIds: string[], cookie: string | null, apiKey: string | null) =>
+    typedError<AssetPermissionsResult[], AppError>(
+      __TAURI_INVOKE('get_asset_permissions', { assetIds, cookie, apiKey }),
+    ),
   spooferPause: (jobId: string) => __TAURI_INVOKE<boolean>('spoofer_pause', { jobId }),
   spooferResume: (jobId: string) => __TAURI_INVOKE<boolean>('spoofer_resume', { jobId }),
   spooferCancel: (jobId: string) => __TAURI_INVOKE<boolean>('spoofer_cancel', { jobId }),
@@ -222,6 +234,10 @@ export const commands = {
   getPortDiagnostic: () => __TAURI_INVOKE<unknown>('get_port_diagnostic'),
   getStudioAssetSnapshots: (sessionId: string | null) =>
     typedError<unknown, string>(__TAURI_INVOKE('get_studio_asset_snapshots', { sessionId })),
+  getStudioLocalReferences: (sessionId: string | null) =>
+    typedError<StudioLocalReference[], string>(
+      __TAURI_INVOKE('get_studio_local_references', { sessionId }),
+    ),
   /**
    *  Scans a place/model file offline and returns the same asset stores the
    *  Studio bridge exposes through `get_studio_asset_snapshots`.
@@ -281,6 +297,19 @@ export type AssetExplorerItem = {
   isModerated: boolean;
 };
 
+export type AssetPermission = {
+  subjectType: string;
+  subjectId: string;
+  action: string;
+};
+
+export type AssetPermissionsResult = {
+  assetId: string;
+  success: boolean;
+  permissions: AssetPermission[];
+  reason: string | null;
+};
+
 export type BatchGrantPermissionsRequest = {
   asset_ids: (number | null)[];
   subject_type: string;
@@ -294,6 +323,7 @@ export type BatchGrantPermissionsResponse = {
   success_asset_ids: (number | null)[];
   failed_asset_ids: (number | null)[];
   errors: string[];
+  results: PermissionAssetResult[];
 };
 
 export type FetchAssetsRequest = {
@@ -325,6 +355,21 @@ export type GlobalPlacesResponse = {
   games: GlobalPlace[];
 };
 
+export type GrantPermissions = GrantPermissions_Serialize | GrantPermissions_Deserialize;
+
+export type GrantPermissions_Deserialize = {
+  enabled: boolean;
+  ids: string[];
+} & {
+  subjectType: string;
+};
+
+export type GrantPermissions_Serialize = {
+  enabled: boolean;
+  subjectType: string;
+  ids: string[];
+};
+
 export type McpInfo = {
   enabled: boolean;
   port: number | null;
@@ -354,6 +399,12 @@ export type ParsedAssetRef = {
   path: string;
 };
 
+export type PermissionAssetResult = {
+  asset_id: string;
+  success: boolean;
+  reason: string | null;
+};
+
 export type PlaceParseResult = {
   fileType: string;
   rootInstances: RbxInstance[];
@@ -364,6 +415,25 @@ export type ProfileRequest = {
   autoDetect: boolean | null;
   cookie: string | null;
   groupId: string | null;
+};
+
+export type PublishFile = {
+  path: string;
+  type: string | null;
+  name: string | null;
+  description: string | null;
+};
+
+export type PublishFileInspection = {
+  path: string;
+  name: string;
+  type: string;
+  size: number | null;
+  sha256: string | null;
+  cacheHit: boolean;
+  cachedAssetId: string | null;
+  error: string | null;
+  warnings: string[];
 };
 
 export type RbxInstance = {
@@ -424,7 +494,46 @@ export type RobloxUserInfo = {
   displayName: string;
 };
 
-export type SpooferActionRequest = {
+export type SpooferActionRequest =
+  SpooferActionRequest_Serialize | SpooferActionRequest_Deserialize;
+
+export type SpooferActionRequest_Deserialize = {
+  publishFiles: PublishFile[] | null;
+  grantPermissions: GrantPermissions_Deserialize | null;
+  permissionAssetIds: string[] | null;
+  jobId: string | null;
+  assets: string | null;
+  cookie: string | null;
+  fallbackCookies: string[] | null;
+  apiKey: string | null;
+  groupId: string | null;
+  spoofSounds: boolean | null;
+  uploadTypes: string[] | null;
+  downloadPath: string | null;
+  forcePlaceIds: string | null;
+  assetForcePlaceIds: { [key in string]: string } | null;
+  operationPollIntervalMs: number | null;
+  placeName: string | null;
+  concurrent: boolean | null;
+  concurrentDownloading: boolean | null;
+  maxConcurrency: number | null;
+  maxDownloadConcurrency: number | null;
+  skipOwned: boolean | null;
+  excludedUserIds: string | null;
+  excludedGroupIds: string | null;
+  skipExistingReplacements: boolean | null;
+  existingReplacements: string | null;
+  account: string | null;
+  group: string | null;
+  preserveMetadata: boolean | null;
+  enableArchiveRecovery: boolean | null;
+  proxyUrl: string | null;
+};
+
+export type SpooferActionRequest_Serialize = {
+  publishFiles: PublishFile[] | null;
+  grantPermissions: GrantPermissions_Serialize | null;
+  permissionAssetIds: string[] | null;
   jobId: string | null;
   assets: string | null;
   cookie: string | null;
@@ -464,6 +573,20 @@ export type StudioAccountsResult = {
   accounts: StudioAccount[];
   rejectedCount: number;
   failedCount: number;
+};
+
+export type StudioLocalReference = {
+  uri: string;
+  path: string | null;
+  type: string;
+  usages: StudioLocalUsage[];
+};
+
+export type StudioLocalUsage = {
+  token: string;
+  fullName: string;
+  className: string;
+  property: string;
 };
 
 /* Tauri Specta runtime */

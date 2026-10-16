@@ -91,6 +91,32 @@ pub async fn push_to_studio(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn get_studio_local_references(
+    session_id: Option<String>,
+) -> Result<Vec<crate::studio_bridge::local_references::StudioLocalReference>, String> {
+    let (_, data) =
+        crate::studio_bridge::sessions::registry().resolve(session_id.as_deref(), true).await?;
+    let records = {
+        let guard = data.read().await;
+        if guard.completed_scan_id.is_none()
+            || guard.active_scan_id.is_some()
+            || guard.requested_scan_id.is_some()
+        {
+            return Err(
+                "Complete a scan of this Studio window before reading local references.".into()
+            );
+        }
+        std::sync::Arc::clone(&guard.studio_records)
+    };
+    tokio::task::spawn_blocking(move || {
+        crate::studio_bridge::local_references::collect_local_references(&records)
+    })
+    .await
+    .map_err(|error| format!("Could not resolve Studio local references: {error}"))
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn set_plugin_batch_size(batch_size: u32) -> Result<(), String> {
     crate::studio_bridge::set_batch_size(batch_size).await;
     Ok(())

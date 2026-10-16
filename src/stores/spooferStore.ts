@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import type { GrantPermissions } from '../mcp/settings';
 import type { SpooferAssetResult } from '../types/tauriEvents';
 
 export type AssetStage =
@@ -26,7 +27,18 @@ import type { SessionSource } from './sessionStore';
 import { requireStudioSession } from './studioSessionsStore';
 import { assertAppIsNotUpdating } from './updaterStore';
 
+export interface PublishFile {
+  path: string;
+  type?: 'Image' | 'Audio' | 'Mesh';
+  name?: string;
+  description?: string;
+}
+
 export interface JobTarget {
+  kind?: 'spoof' | 'publish' | 'permissions';
+  publishFiles?: PublishFile[];
+  studioPathMap?: Record<string, string>;
+  grantPermissions?: GrantPermissions;
   studioSessionId: string | null;
   animationMode: AppConfig['spoofing']['animationMode'];
   source: SessionSource | null;
@@ -40,6 +52,12 @@ export interface JobTarget {
 }
 
 export interface LastJobTarget {
+  kind?: JobTarget['kind'];
+  publishFiles?: PublishFile[];
+  studioPathMap?: Record<string, string>;
+  grantPermissions?: GrantPermissions;
+  userId?: string;
+  groupId?: string;
   studioSessionId: string | null;
   animationMode: JobTarget['animationMode'];
 }
@@ -133,6 +151,8 @@ interface SpooferState {
   spoofCompletionVersion: number;
   incrementSpoofCompletionVersion: () => void;
 
+  studioPushError: string | null;
+  lastJobId: string | null;
   activeSpooferJobId: string | null;
   setActiveSpooferJobId: (id: string | null) => void;
 
@@ -351,6 +371,8 @@ export const useSpooferStore = create<SpooferState>((set) => ({
       spoofCompletionVersion: state.spoofCompletionVersion + 1,
     })),
 
+  studioPushError: null,
+  lastJobId: null,
   activeSpooferJobId: null,
   setActiveSpooferJobId: (id) => set({ activeSpooferJobId: id }),
 

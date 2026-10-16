@@ -6,7 +6,9 @@
 local function applyMeshPartInPlace(
 	meshObj: MeshPart,
 	targetMeshUri: string,
-	targetTextureUri: string?
+	targetTextureUri: string?,
+	expectedMeshUri: string?,
+	expectedTextureUri: string?
 ): (boolean, string?)
 	local contentOk, meshContent = pcall(function()
 		return Content.fromUri(targetMeshUri)
@@ -87,6 +89,19 @@ local function applyMeshPartInPlace(
 			temporaryMesh:Destroy()
 		end)
 		return false, "Original MeshPart was destroyed while loading replacement mesh"
+	end
+	for property, expected in pairs({ MeshId = expectedMeshUri, TextureID = expectedTextureUri }) do
+		local readOk, current = pcall(function()
+			return (meshObj :: any)[property]
+		end)
+		local currentUri = contentValueToString(current)
+		local targetUri = if property == "MeshId" then targetMeshUri else targetTextureUri
+		if
+			not readOk or (currentUri ~= expected and (not targetUri or currentUri ~= targetUri))
+		then
+			temporaryMesh:Destroy()
+			return false, "Studio mesh reference changed while loading replacement; scan again"
+		end
 	end
 
 	local applyOk, applyErr = pcall(function()

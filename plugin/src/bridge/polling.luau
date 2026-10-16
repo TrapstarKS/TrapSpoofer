@@ -272,10 +272,18 @@ local function getPollUrl(): string
 			pName = game.Name
 		end
 	end)
+	local creatorType = ""
+	local creatorId = 0
+	pcall(function()
+		creatorType = game.CreatorType.Name
+		creatorId = game.CreatorId
+	end)
 	return string.format(
-		"/poll?place_id=%s&place_name=%s",
+		"/poll?place_id=%s&place_name=%s&creator_type=%s&creator_id=%s",
 		tostring(pId),
-		HttpService:UrlEncode(pName)
+		HttpService:UrlEncode(pName),
+		HttpService:UrlEncode(creatorType),
+		tostring(creatorId)
 	)
 end
 

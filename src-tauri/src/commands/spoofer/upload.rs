@@ -20,7 +20,8 @@ fn format_wait_seconds(milliseconds: u64) -> String {
 }
 
 fn emit_spoofer_log(app: &AppHandle, level: &str, message: &str) {
-    let _ = crate::commands::ipc::append_log_entry(app, level, "spoofer", message);
+    let message = crate::commands::ipc::redact_log_message(message);
+    let _ = crate::commands::ipc::append_log_entry(app, level, "spoofer", &message);
     let _ = app.emit(
         "spoofer-log",
         serde_json::json!({
@@ -80,7 +81,7 @@ struct UploadMetadata {
     pub asset_id: Option<String>,
 }
 
-async fn poll_roblox_operation(
+pub(crate) async fn poll_roblox_operation(
     app: &AppHandle,
     client: &reqwest::Client,
     operation_path: &str,
@@ -181,9 +182,15 @@ struct UploadKind {
 
 fn upload_kind_for_type(asset_type_name: Option<&str>) -> UploadKind {
     match asset_type_name {
+        Some("Model") => UploadKind {
+            asset_type: "Model".into(),
+            file_type: "model/gltf-binary".into(),
+            extension: "glb".into(),
+            needs_universe_permissions: false,
+        },
         Some("Mesh") => UploadKind {
             asset_type: "Mesh".into(),
-            file_type: "model/x-rbxm".into(),
+            file_type: "model/x-file-mesh-data".into(),
             extension: "mesh".into(),
             needs_universe_permissions: true,
         },
@@ -253,6 +260,9 @@ async fn upload_path_allowed(
 
 /// Callback receiving `(asset_id, universe_id)` for a post-upload universe
 /// permission grant.
+pub type UploadReceiptSink =
+    std::sync::Arc<dyn Fn(Option<String>, Option<String>) -> Result<(), String> + Send + Sync>;
+
 pub type PermissionSink = std::sync::Arc<dyn Fn(String, String) + Send + Sync>;
 
 /// Optional behaviour tweaks used by the spoofer job pipeline.
@@ -264,6 +274,7 @@ pub struct PublishHooks {
     /// When set, universe permission grants are handed to the sink (so the
     /// caller can run them concurrently) instead of being awaited inline.
     pub permission_sink: Option<PermissionSink>,
+    pub receipt_sink: Option<UploadReceiptSink>,
 }
 
 #[tauri::command]
@@ -384,6 +395,22 @@ pub async fn publish_asset_with_hooks(
     );
 
     let mut upload_kind = upload_kind_for_type(asset_type_name.as_deref());
+    let extension = canonical_file_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if let Some((mime, ext)) = match (asset_type_name.as_deref(), extension.as_str()) {
+        (Some("Model"), "fbx") => Some(("model/fbx", "fbx")),
+        (Some("Model"), "gltf") => Some(("model/gltf+json", "gltf")),
+        (Some("Model"), "glb") => Some(("model/gltf-binary", "glb")),
+        (Some("Image"), "bmp") => Some(("image/bmp", "bmp")),
+        (Some("Image"), "tga") => Some(("image/tga", "tga")),
+        _ => None,
+    } {
+        upload_kind.file_type = mime.into();
+        upload_kind.extension = ext.into();
+    }
 
     match crate::commands::spoofer::inspector::inspect_payload(&canonical_file_path).await {
         Ok(meta) => {
@@ -528,9 +555,9 @@ pub async fn publish_asset_with_hooks(
         let mut tried_type_fallback = false;
         let mut tried_name_fallback = false;
         let mut csrf_retries = 0;
-        const MAX_UPLOAD_ATTEMPTS: u32 = 300;
+        let max_upload_attempts: u32 = if hooks.receipt_sink.is_some() { 4 } else { 300 };
 
-        for attempt in 0..MAX_UPLOAD_ATTEMPTS {
+        for attempt in 0..max_upload_attempts {
             wait_rate_limit(RateLimitBucket::Upload).await;
 
             let file_part = if let Some(buf) = &fallback_buffer {
@@ -575,6 +602,10 @@ pub async fn publish_asset_with_hooks(
             }
 
             if (500..600).contains(&status_code) {
+                if hooks.receipt_sink.is_some() {
+                    upload_error=Some(format!("Roblox returned HTTP {status_code}; upload outcome is uncertain. Check Creator Hub before retrying."));
+                    break;
+                }
                 crate::commands::spoofer::record_adaptive_server_error();
                 crate::commands::spoofer::set_circuit_breaker(std::time::Duration::from_secs(10));
                 continue;
@@ -598,6 +629,10 @@ pub async fn publish_asset_with_hooks(
                 continue;
             }
 
+            if status_code == 409 && hooks.receipt_sink.is_some() {
+                upload_error = Some("Roblox reported an existing upload with identical content. No duplicate was created; inspect Creator Hub for the existing asset.".into());
+                break;
+            }
             if status_code == 409 {
                 tried_type_fallback = false;
                 tried_name_fallback = false;
@@ -705,7 +740,7 @@ pub async fn publish_asset_with_hooks(
             }
 
             if status_code == 429 {
-                if attempt + 1 == MAX_UPLOAD_ATTEMPTS {
+                if attempt + 1 == max_upload_attempts {
                     upload_error = Some("Roblox continued limiting upload requests after all retry attempts. Try again later.".into());
                     break;
                 }
@@ -722,7 +757,7 @@ pub async fn publish_asset_with_hooks(
                     std::time::Duration::from_millis(sleep_duration),
                 );
                 let message = format!(
-                    "Roblox upload rate limit hit for {name} using {}; backing off for {} before attempt {} of {MAX_UPLOAD_ATTEMPTS}.",
+                    "Roblox upload rate limit hit for {name} using {}; backing off for {} before attempt {} of {max_upload_attempts}.",
                     upload_auth.label(),
                     format_wait_seconds(sleep_duration),
                     attempt + 2
@@ -756,6 +791,11 @@ pub async fn publish_asset_with_hooks(
                     } else {
                         format!("HTTP {}: {}", status.as_u16(), resp_text)
                     };
+                let parsed_err = super::permissions::sanitize_response(
+                    &parsed_err,
+                    Some(&cookie),
+                    api_key.as_deref(),
+                );
                 upload_error = Some(format!("Upload failed: {parsed_err}"));
                 break;
             }
@@ -821,6 +861,9 @@ pub async fn publish_asset_with_hooks(
             });
         }
 
+        if let Some(sink) = hooks.receipt_sink.as_ref() {
+            sink(final_asset_id.clone(), operation_path.clone())?;
+        }
         if let Some(op_path) = operation_path {
             match poll_roblox_operation(
                 &app,
@@ -865,6 +908,9 @@ pub async fn publish_asset_with_hooks(
     }
 
     if let Some(id) = final_asset_id {
+        if let Some(sink) = hooks.receipt_sink.as_ref() {
+            sink(Some(id.clone()), None)?;
+        }
         if let Some(group_id) = &group_id {
             crate::domain::asset_owners::remember(&id, "Group", group_id, Some(name.clone()));
         } else if let Some(user_id) = &user_id {

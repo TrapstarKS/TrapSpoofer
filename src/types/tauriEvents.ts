@@ -30,6 +30,13 @@ export type SpooferAssetResult = {
   skipped?: boolean;
   cancelled?: boolean;
   localPath?: string;
+  path?: string;
+  assetId?: string;
+  meshId?: string;
+  imageId?: string;
+  moderation?: 'approved' | 'pending' | 'rejected';
+  cacheHit?: boolean;
+  permission?: { status: 'granted' | 'failed' | 'not_requested'; reason?: string };
   reason?: string;
 };
 

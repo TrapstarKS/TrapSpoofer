@@ -450,7 +450,7 @@ pub fn get_cookie_from_roblox_studio_inner(
     }
     Ok(super::studio_cookies::read_studio_cookies()?
         .into_iter()
-        .find(|session| requested.as_ref().map_or(true, |id| session.user_id.as_ref() == Some(id)))
+        .find(|session| requested.as_ref().is_none_or(|id| session.user_id.as_ref() == Some(id)))
         .map(|session| session.cookie))
 }
 

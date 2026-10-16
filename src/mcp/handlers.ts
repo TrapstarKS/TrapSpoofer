@@ -3,6 +3,7 @@
  * catalogue and relays every call here through the `mcp://request` event.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { z } from 'zod';
 
 import {
   countByType,
@@ -13,7 +14,15 @@ import {
 import * as spoofer from '../services/spoofer';
 import { useConfigStore } from '../stores/configStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { useStudioSessionsStore } from '../stores/studioSessionsStore';
 import { loadCachedGroups } from '../utils/robloxProfiles';
+import {
+  configuredPermissions,
+  getSettings,
+  grantPermissionsSchema,
+  idSchema,
+  updateSettings,
+} from './settings';
 
 type Args = Record<string, unknown>;
 export type ToolHandler = (args: Args) => Promise<unknown>;
@@ -55,22 +64,122 @@ function scanSummary() {
 }
 
 async function studioStatus() {
-  try {
-    const health = await invoke<{
-      synced?: boolean;
-      studioPlaceId?: string | null;
-      studioPlaceName?: string | null;
-      scanStatus?: { scanning?: boolean } | null;
-    }>('get_studio_health_status');
+  const health = await invoke<{ sessions?: Array<Record<string, unknown>> }>(
+    'get_studio_health_status',
+  );
+  const sessions = health.sessions ?? [];
+  useStudioSessionsStore
+    .getState()
+    .updateSessions(sessions as unknown as import('../stores/studioSessionsStore').StudioSession[]);
+  return {
+    connected: sessions.some((session) => session.synced),
+    selectedSessionId: useStudioSessionsStore.getState().selectedSessionId,
+    sessions: sessions
+      .filter((session) => session.synced)
+      .map((session) => ({
+        sessionId: session.sessionId,
+        place: session.studioPlaceName,
+        placeId: session.studioPlaceId,
+        owner: { type: session.studioCreatorType ?? null, id: session.studioCreatorId ?? null },
+        scanning: Boolean((session.scanStatus as { scanning?: boolean } | null)?.scanning),
+      })),
+  };
+}
+
+function selectStudioSession(sessionId: unknown) {
+  if (typeof sessionId !== 'string') return;
+  const store = useStudioSessionsStore.getState();
+  store.selectSession(sessionId);
+  if (useStudioSessionsStore.getState().selectedSessionId !== sessionId)
+    throw new Error('Studio session is not connected');
+}
+
+const publishOptionsSchema = z.object({
+  profile: z.string().min(1).optional(),
+  groupId: idSchema.nullable().optional(),
+  grantPermissions: grantPermissionsSchema.optional(),
+  studioPathMap: z.record(z.string(), z.string()).optional(),
+  pushToStudio: z.boolean().optional(),
+  studioSessionId: z.string().optional(),
+  dry_run: z.boolean().optional(),
+});
+const publishSchema = publishOptionsSchema
+  .extend({
+    files: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1),
+            type: z.enum(['Image', 'Audio', 'Mesh']).optional(),
+            name: z.string().min(1).max(100).optional(),
+            description: z.string().max(1000).optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(1000),
+  })
+  .strict();
+
+function safeDestination(options: { profile?: string; groupId?: string | null } = {}) {
+  const target = spoofer.getActiveTarget(options);
+  return {
+    profile: target.userId,
+    name: target.accountName,
+    groupId: target.groupId === 'none' ? null : target.groupId,
+  };
+}
+
+async function publishAssets(input: z.infer<typeof publishSchema>) {
+  const destination = safeDestination(input);
+  const files = await invoke<Array<Record<string, unknown>>>('inspect_publish_files', {
+    files: input.files,
+    profileId: destination.profile,
+    groupId: destination.groupId,
+  });
+  if (input.dry_run)
     return {
-      connected: Boolean(health.synced),
-      placeId: health.studioPlaceId ?? null,
-      placeName: health.studioPlaceName ?? null,
-      scanning: Boolean(health.scanStatus?.scanning),
+      dry_run: true,
+      count: files.length,
+      files,
+      destination,
+      grantPermissions: input.grantPermissions ?? configuredPermissions(),
+      quotaEstimate: {
+        uploads: files.filter((file) => !file.cacheHit && !file.error).length,
+        audioUploads: files.filter(
+          (file) =>
+            !file.cacheHit && !file.error && (file.type === 'Audio' || file.type === 'audio'),
+        ).length,
+        note: 'Estimate; cache hits use no upload quota. Roblox enforces creator-specific limits.',
+      },
     };
-  } catch {
-    return { connected: false, placeId: null, placeName: null, scanning: false };
+  let studioPathMap = input.studioPathMap;
+  if (input.pushToStudio) {
+    await studioStatus();
+    selectStudioSession(input.studioSessionId);
+    const sessionId = input.studioSessionId ?? useStudioSessionsStore.getState().selectedSessionId;
+    let refs: Array<{ uri: string; path: string | null }>;
+    try {
+      refs = await invoke('get_studio_local_references', { sessionId });
+    } catch (error) {
+      if (!String(error).includes('Complete a scan')) throw error;
+      if (input.studioPathMap && Object.keys(input.studioPathMap).length) refs = [];
+      else {
+        await spoofer.scanStudio();
+        refs = await invoke('get_studio_local_references', { sessionId });
+      }
+    }
+    studioPathMap = {
+      ...Object.fromEntries(refs.filter((ref) => ref.path).map((ref) => [ref.path!, ref.uri])),
+      ...studioPathMap,
+    };
   }
+  return {
+    started: true,
+    ...(await spoofer.runAssetAction({ ...input, studioPathMap })),
+    destination,
+    next: 'Call get_job with jobId and waitSeconds for moderation, meshId/imageId, permission results and pathMappings.',
+  };
 }
 
 export const handlers: Record<string, ToolHandler> = {
@@ -92,9 +201,14 @@ export const handlers: Record<string, ToolHandler> = {
     };
   },
 
-  async scan_studio() {
+  async scan_studio(args) {
+    await studioStatus();
+    selectStudioSession(args.studioSessionId);
     await spoofer.scanStudio();
-    return scanSummary();
+    const localReferences = await invoke('get_studio_local_references', {
+      sessionId: useSessionStore.getState().source?.studioSessionId ?? null,
+    });
+    return { ...scanSummary(), localReferences };
   },
 
   async scan_file(args) {
@@ -141,28 +255,237 @@ export const handlers: Record<string, ToolHandler> = {
     };
   },
 
+  async get_settings() {
+    return getSettings();
+  },
+
+  async update_settings(args) {
+    return updateSettings(args);
+  },
+
   async spoof_assets(args) {
+    const input = z
+      .object({
+        assetIds: z.array(idSchema).max(10000).optional(),
+        types: z.array(z.enum(['Animation', 'Sound', 'Image', 'Mesh', 'Video'])).optional(),
+        autoPush: z.boolean().optional(),
+        grantPermissions: grantPermissionsSchema.optional(),
+        skipOwned: z.boolean().optional(),
+        keepNameAndDescription: z.boolean().optional(),
+        dry_run: z.boolean().optional(),
+      })
+      .strict()
+      .parse(args);
     const { assets } = useSessionStore.getState();
-    let ids = Array.isArray(args.assetIds) ? args.assetIds.map(String) : undefined;
-    if (!ids) {
-      const types = new Set(toTypes(args.types) ?? ['animation', 'audio']);
-      ids = assets
-        .filter((a) => types.has(a.type) && spoofer.ownershipOf(a.id) !== true)
-        .map((a) => a.id);
+    const skipOwned = input.skipOwned ?? getSettings().skipOwned;
+    const types = new Set(toTypes(input.types) ?? ['animation', 'audio']);
+    const ids = [
+      ...new Set(
+        input.assetIds ??
+          assets
+            .filter((a) => types.has(a.type) && (!skipOwned || spoofer.ownershipOf(a.id) !== true))
+            .map((a) => a.id),
+      ),
+    ];
+    const selected = ids.filter((id) => !skipOwned || spoofer.ownershipOf(id) !== true);
+    if (input.dry_run) {
+      const byId = new Map(assets.map((asset) => [asset.id, asset.type]));
+      return {
+        dry_run: true,
+        count: selected.length,
+        skippedOwned: ids.length - selected.length,
+        assetIds: selected,
+        byType: selected.reduce<Record<string, number>>((counts, id) => {
+          const type = byId.get(id) ?? 'animation';
+          counts[type] = (counts[type] ?? 0) + 1;
+          return counts;
+        }, {}),
+        destination: safeDestination(),
+        grantPermissions: input.grantPermissions ?? configuredPermissions(),
+        quotaEstimate: {
+          uploads: selected.length,
+          audioUploads: selected.filter((id) => byId.get(id) === 'audio').length,
+          note: 'Estimate; Roblox enforces creator-specific limits.',
+        },
+      };
     }
-    useSessionStore.setState({ autoApplyOverride: args.autoPush === false ? false : null });
-    const result = await spoofer.runSpoof({ assetIds: ids, ignoreQuota: false });
+    useSessionStore.setState({ autoApplyOverride: input.autoPush ?? null });
+    const result = await spoofer.runSpoof({
+      assetIds: ids,
+      ignoreQuota: false,
+      skipOwned: input.skipOwned,
+      keepNameAndDescription: input.keepNameAndDescription,
+      grantPermissions: input.grantPermissions,
+    });
     if (!result.ok) throw new Error(result.message);
     return {
       started: true,
+      jobId: spoofer.jobSnapshot().jobId,
       assets: result.count,
       warnings: result.warnings,
-      next: 'Call get_job with waitSeconds to follow progress.',
+      next: 'Call get_job with jobId and waitSeconds to follow progress.',
     };
+  },
+
+  async publish_assets(args) {
+    return publishAssets(publishSchema.parse(args));
+  },
+
+  async publish_folder(args) {
+    const input = publishOptionsSchema
+      .extend({
+        dir: z.string().min(1),
+        recursive: z.boolean().default(false),
+        glob: z.string().optional(),
+      })
+      .strict()
+      .parse(args);
+    const files = await invoke<spoofer.AssetActionOptions['files']>('list_publish_folder', {
+      directory: input.dir,
+      recursive: input.recursive,
+      glob: input.glob ?? null,
+    });
+    return publishAssets({ ...input, files: files ?? [] });
+  },
+
+  async grant_permissions(args) {
+    const input = z
+      .object({
+        assetIds: z.array(idSchema).min(1).max(1000),
+        subjectType: z.enum(['Universe', 'Group', 'User']),
+        ids: z.array(idSchema).min(1).max(100),
+        dry_run: z.boolean().optional(),
+      })
+      .strict()
+      .parse(args);
+    const assetIds = [...new Set(input.assetIds)];
+    const grantPermissions = {
+      enabled: true,
+      subjectType: input.subjectType,
+      ids: [...new Set(input.ids)],
+    };
+    if (input.dry_run)
+      return {
+        dry_run: true,
+        count: assetIds.length,
+        assetIds,
+        grantPermissions,
+        destination: safeDestination(),
+        quotaEstimate: {
+          uploads: 0,
+          permissionUpdates: assetIds.length * grantPermissions.ids.length,
+        },
+      };
+    return { started: true, ...(await spoofer.runAssetAction({ assetIds, grantPermissions })) };
+  },
+
+  async get_permissions(args) {
+    const { assetIds } = z
+      .object({ assetIds: z.array(idSchema).min(1).max(1000) })
+      .strict()
+      .parse(args);
+    const target = spoofer.getActiveTarget();
+    return invoke('get_asset_permissions', {
+      assetIds: [...new Set(assetIds)],
+      cookie: target.cookie || null,
+      apiKey: target.apiKey || null,
+    });
+  },
+
+  async retry_failed(args) {
+    const { jobId } = z.object({ jobId: z.string().uuid() }).strict().parse(args);
+    const snapshot = spoofer.jobSnapshot();
+    if (snapshot.running) throw new Error('A job is still running');
+    const history = await invoke<Array<Record<string, unknown>>>('get_jobs');
+    const job = history.find((item) => item.id === jobId);
+    if (!job) throw new Error('Job not found in local history');
+    const results = (job.assetResults ?? []) as import('../types/tauriEvents').SpooferAssetResult[];
+    const failed = results.filter(
+      (result) =>
+        (!result.success && !result.skipped && !result.cancelled) ||
+        result.permission?.status === 'failed',
+    );
+    if (!failed.length)
+      return { started: false, assets: 0, message: 'No failed assets or permissions' };
+    const config = (job.config ?? {}) as Record<string, unknown>;
+    const account = job.account as { id?: string } | undefined;
+    const groupId = typeof config.groupId === 'string' ? config.groupId : null;
+    const grant = config.grantPermissions
+      ? grantPermissionsSchema.parse(config.grantPermissions)
+      : undefined;
+    const permissionFailures = failed.filter(
+      (r) => r.permission?.status === 'failed' && (r.meshId ?? r.imageId ?? r.newId),
+    );
+    const permissionIds = permissionFailures
+      .map((r) => r.meshId ?? r.imageId ?? r.newId!)
+      .filter(Boolean);
+    const uploadFailures = failed.filter((r) => !permissionFailures.includes(r));
+    if (config.kind === 'publish') {
+      const files = (config.publishFiles ?? []) as NonNullable<spoofer.AssetActionOptions['files']>;
+      return {
+        started: true,
+        ...(await spoofer.runAssetAction({
+          files: files.filter((file) => uploadFailures.some((result) => result.id === file.path)),
+          assetIds: permissionIds,
+          profile: account?.id,
+          groupId,
+          grantPermissions: grant,
+        })),
+      };
+    }
+    if (config.kind === 'permissions' || permissionFailures.length === failed.length) {
+      if (!grant) throw new Error('This historical job does not contain its permission recipients');
+      return {
+        started: true,
+        ...(await spoofer.runAssetAction({
+          assetIds: failed.map((r) => r.meshId ?? r.imageId ?? r.newId ?? r.id!).filter(Boolean),
+          profile: account?.id,
+          groupId,
+          grantPermissions: grant,
+        })),
+      };
+    }
+    useSessionStore.setState({ autoApplyOverride: false });
+    const result = await spoofer.runSpoof({
+      assetIds: uploadFailures
+        .filter((r) => !r.success)
+        .map((r) => r.id!)
+        .filter(Boolean),
+      permissionAssetIds: permissionIds,
+      assetTypes: Object.fromEntries(
+        uploadFailures.map((r) => [r.id, r.type ?? r.assetType ?? 'animation']),
+      ),
+      profile: account?.id,
+      groupId,
+      grantPermissions: grant,
+      enableArchiveRecovery: true,
+      ignoreQuota: false,
+    });
+    if (!result.ok) throw new Error(result.message);
+    return { started: true, jobId: spoofer.jobSnapshot().jobId, assets: result.count };
   },
 
   async get_job(args) {
     const wait = Math.min(600, num(args.waitSeconds, 0));
+    const jobId = str(args.jobId);
+    if (jobId && jobId !== spoofer.jobSnapshot().jobId) {
+      const jobs = await invoke<Array<Record<string, unknown>>>('get_jobs');
+      const job = jobs.find((item) => item.id === jobId);
+      if (!job) throw new Error('Job not found');
+      const assets = (job.assetResults ??
+        []) as import('../types/tauriEvents').SpooferAssetResult[];
+      return {
+        running: false,
+        jobId,
+        ...job,
+        assets,
+        pathMappings: Object.fromEntries(
+          assets
+            .filter((r) => r.path && r.newId && r.moderation !== 'rejected')
+            .map((r) => [r.path, `rbxassetid://${r.meshId ?? r.imageId ?? r.newId}`]),
+        ),
+      };
+    }
     if (wait > 0) await spoofer.waitForJob(wait * 1000);
     return spoofer.jobSnapshot();
   },
@@ -199,7 +522,7 @@ export const handlers: Record<string, ToolHandler> = {
       name: a.name,
       active: a.id === active,
       hasCookie: Boolean(accountSecrets[a.id]?.cookie),
-      hasApiKey: Boolean(accountSecrets[a.id]?.apiKey),
+      hasApiKey: Boolean(accountSecrets[a.id]?.apiKey || accountSecrets[a.id]?.groupApiKey),
       groups: loadCachedGroups(a.id).map((g) => ({ id: String(g.id), name: g.name })),
     }));
   },

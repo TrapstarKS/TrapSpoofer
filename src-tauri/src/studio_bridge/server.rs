@@ -14,6 +14,40 @@ use super::STUDIO_PROTOCOL_VERSION;
 pub struct PollQuery {
     pub place_id: Option<String>,
     pub place_name: Option<String>,
+    pub creator_type: Option<String>,
+    pub creator_id: Option<String>,
+}
+
+fn update_poll_identity(guard: &mut super::messages::AssetServerStateData, query: &PollQuery) {
+    if let Some(name) = query.place_name.as_deref().filter(|name| !name.trim().is_empty()) {
+        guard.studio_place_name = Some(name.to_string());
+    }
+    let place_id = query
+        .place_id
+        .as_deref()
+        .filter(|id| !id.is_empty() && *id != "0" && id.bytes().all(|byte| byte.is_ascii_digit()))
+        .map(str::to_string);
+    if guard.studio_place_id != place_id {
+        guard.studio_creator_type = None;
+        guard.studio_creator_id = None;
+        guard.studio_creator_resolved_at = None;
+    }
+    guard.studio_place_id = place_id;
+    if query.creator_type.is_some() || query.creator_id.is_some() {
+        guard.studio_creator_type = query
+            .creator_type
+            .as_deref()
+            .filter(|kind| matches!(*kind, "User" | "Group"))
+            .map(str::to_string);
+        guard.studio_creator_id = query
+            .creator_id
+            .as_deref()
+            .filter(|id| {
+                !id.is_empty() && *id != "0" && id.bytes().all(|byte| byte.is_ascii_digit())
+            })
+            .map(str::to_string);
+        guard.studio_creator_resolved_at = None;
+    }
 }
 
 pub async fn handle_studio_health(StudioSession(state): StudioSession) -> Json<Value> {
@@ -27,6 +61,8 @@ pub async fn handle_studio_health(StudioSession(state): StudioSession) -> Json<V
         "scanStatus": guard.scan_status,
         "studioPlaceId": guard.studio_place_id,
         "studioPlaceName": guard.studio_place_name,
+        "studioCreatorType": guard.studio_creator_type,
+        "studioCreatorId": guard.studio_creator_id,
         "batchSize": guard.batch_size
     }))
 }
@@ -58,6 +94,11 @@ pub async fn handle_scan_start(
                 .or_else(|| value.as_str().map(std::string::ToString::to_string))
         })
         .filter(|id| id != "0" && id.chars().all(|character| character.is_ascii_digit()));
+    if guard.studio_place_id != incoming_place_id {
+        guard.studio_creator_type = None;
+        guard.studio_creator_id = None;
+        guard.studio_creator_resolved_at = None;
+    }
     guard.studio_place_id = incoming_place_id;
     let incoming_place_name = payload
         .get("placeName")
@@ -341,14 +382,7 @@ pub async fn handle_poll(
         {
             let mut guard = state.data.write().await;
             guard.last_plugin_poll_time = Some(Instant::now());
-            if let Some(name) = query.place_name.as_deref().filter(|n| !n.trim().is_empty()) {
-                guard.studio_place_name = Some(name.to_string());
-            }
-            guard.studio_place_id = query
-                .place_id
-                .as_deref()
-                .filter(|id| *id != "0" && id.bytes().all(|byte| byte.is_ascii_digit()))
-                .map(str::to_string);
+            update_poll_identity(&mut guard, &query);
             let request_assets = guard.request_sounds
                 || guard.request_animations
                 || guard.request_images
@@ -707,6 +741,41 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::time::Instant;
+
+    #[test]
+    fn legacy_poll_preserves_fallback_owner_only_for_the_same_place() {
+        let mut state = super::super::messages::AssetServerStateData {
+            studio_place_id: Some("123".into()),
+            studio_creator_type: Some("Group".into()),
+            studio_creator_id: Some("456".into()),
+            studio_creator_resolved_at: Some(Instant::now()),
+            ..Default::default()
+        };
+        update_poll_identity(
+            &mut state,
+            &PollQuery { place_id: Some("123".into()), ..Default::default() },
+        );
+        assert_eq!(state.studio_creator_id.as_deref(), Some("456"));
+        assert!(state.studio_creator_resolved_at.is_some());
+        update_poll_identity(
+            &mut state,
+            &PollQuery { place_id: Some("789".into()), ..Default::default() },
+        );
+        assert!(state.studio_creator_id.is_none());
+        assert!(state.studio_creator_resolved_at.is_none());
+        update_poll_identity(
+            &mut state,
+            &PollQuery {
+                place_id: Some("789".into()),
+                creator_type: Some("User".into()),
+                creator_id: Some("987".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(state.studio_creator_id.as_deref(), Some("987"));
+        assert_eq!(state.studio_creator_type.as_deref(), Some("User"));
+        assert!(state.studio_creator_resolved_at.is_none());
+    }
 
     #[test]
     fn test_clear_stale_incomplete_not_stale() {

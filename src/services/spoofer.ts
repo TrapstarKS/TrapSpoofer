@@ -5,6 +5,12 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
+import {
+  configuredPermissions,
+  type GrantPermissions,
+  grantPermissionsSchema,
+  permissionConfig,
+} from '../mcp/settings';
 import { useConfigStore } from '../stores/configStore';
 import { isOwnedBy, type SessionSource, useSessionStore } from '../stores/sessionStore';
 import { applyReplacements, type LastJobTarget, useSpooferStore } from '../stores/spooferStore';
@@ -264,9 +270,21 @@ export interface ActiveTarget {
   groupName: string | null;
 }
 
-export function getActiveTarget(): ActiveTarget {
+export function getActiveTarget(
+  options: { profile?: string; groupId?: string | null } = {},
+): ActiveTarget {
   const { config, accountSecrets } = useConfigStore.getState();
-  const s = config.spoofing;
+  const wanted = options.profile?.toLowerCase();
+  const accountId = wanted
+    ? config.accounts.find((a) => a.id === wanted || a.name.toLowerCase() === wanted)?.id
+    : config.spoofing.selectedUser;
+  if (!accountId) throw new Error('Profile not found');
+  const s = {
+    ...config.spoofing,
+    selectedUser: accountId,
+    selectedGroup:
+      options.groupId === undefined ? config.spoofing.selectedGroup : (options.groupId ?? 'none'),
+  };
   const isGroup = s.selectedGroup !== 'none';
   const secrets = accountSecrets[s.selectedUser] ?? {};
   const auth = profileUploadAuth(config, accountSecrets, s.selectedUser, s.selectedGroup);
@@ -280,7 +298,11 @@ export function getActiveTarget(): ActiveTarget {
   return {
     userId: s.selectedUser,
     groupId: s.selectedGroup,
-    cookie: (s.cookie || secrets.cookie || '').trim(),
+    cookie: (
+      (accountId === config.spoofing.selectedUser ? s.cookie : '') ||
+      secrets.cookie ||
+      ''
+    ).trim(),
     apiKey: auth.apiKey,
     uploadAuthMethod: auth.method,
     accountName: account?.name || cachedUser?.displayName || cachedUser?.name || 'Sem perfil',
@@ -427,6 +449,13 @@ export interface RunOptions {
   assetIds?: string[];
   /** Override detected types (retry flows). */
   assetTypes?: Record<string, string>;
+  profile?: string;
+  groupId?: string | null;
+  enableArchiveRecovery?: boolean;
+  permissionAssetIds?: string[];
+  grantPermissions?: GrantPermissions;
+  skipOwned?: boolean;
+  keepNameAndDescription?: boolean;
   ignoreQuota?: boolean;
   downloadOnly?: boolean;
   /** Keep previous mappings for ids that were already spoofed. */
@@ -515,12 +544,15 @@ async function startSpoof(options: RunOptions, retry?: RetryContext): Promise<Ru
       : (source?.studioSessionId ?? useStudioSessionsStore.getState().selectedSessionId);
   const animationMode = retry?.target?.animationMode ?? config.spoofing.animationMode;
   const warnings: string[] = [];
+  const grantPermissions = grantPermissionsSchema.parse(
+    options.grantPermissions ?? configuredPermissions(config),
+  );
 
   if (spoofer.isSpoofing) {
     return { ok: false, reason: 'busy', message: serviceText('jobBusy') };
   }
 
-  const target = getActiveTarget();
+  const target = getActiveTarget(options);
   if (target.cookie.length < 50) {
     return {
       ok: false,
@@ -623,6 +655,7 @@ async function startSpoof(options: RunOptions, retry?: RetryContext): Promise<Ru
 
   const jobId = crypto.randomUUID();
   useSpooferStore.setState({
+    studioPushError: null,
     activeSpooferJobId: jobId,
     assetStatuses: {},
     lastAssetResults: retry?.results ?? [],
@@ -640,12 +673,20 @@ async function startSpoof(options: RunOptions, retry?: RetryContext): Promise<Ru
       groupId: target.groupId,
       cookie: target.cookie,
       apiKey: target.apiKey,
-      permissions: { ...config.permissions },
+      permissions: permissionConfig(grantPermissions),
+      grantPermissions,
+      kind: 'spoof',
     },
   });
   useSessionStore.setState({ autoApplyOverride: null, lastFileWrite: null });
   spoofer.setAssetMetadataMap(
-    Object.fromEntries(payload.map((p) => [p.id, { name: p.name, type: p.type }])),
+    Object.fromEntries([
+      ...payload.map((p) => [p.id, { name: p.name, type: p.type }]),
+      ...(options.permissionAssetIds ?? []).map((id) => [
+        id,
+        { name: `Asset ${id}`, type: 'permission' },
+      ]),
+    ]),
   );
   spoofer.setSpoofingLogs([
     `[INFO] Job iniciado: ${payload.length} asset(s) -> ${target.groupName ?? target.accountName}\n`,
@@ -721,15 +762,18 @@ async function startSpoof(options: RunOptions, retry?: RetryContext): Promise<Ru
         concurrentDownloading: adv.concurrentDownloading,
         maxConcurrency: adv.maxConcurrency,
         maxDownloadConcurrency: adv.maxDownloadConcurrency,
-        skipOwned: adv.skipOwned,
+        skipOwned: options.skipOwned ?? adv.skipOwned,
         excludedUserIds: adv.excludedUserIds,
         excludedGroupIds: adv.excludedGroupIds,
         skipExistingReplacements: options.skipAlreadySpoofed ?? false,
         existingReplacements: useSpooferStore.getState().lastReplacements,
         account,
         group,
-        preserveMetadata: config.spoofing.preserveMetadata,
-        enableArchiveRecovery: retry?.recovery ?? false,
+        preserveMetadata: options.keepNameAndDescription ?? config.spoofing.preserveMetadata,
+        grantPermissions,
+        permissionAssetIds: options.permissionAssetIds,
+        enableArchiveRecovery:
+          options.enableArchiveRecovery ?? retry?.recovery ?? adv.enableArchiveRecovery,
         proxyUrl: adv.proxyUrl,
         operationPollIntervalMs: adv.operationPollIntervalMs || 250,
         forcePlaceIds: forcePlaceIds || null,
@@ -800,14 +844,18 @@ export async function forceReset() {
 
 /** Resolves true when no job is running (or false on timeout). */
 export function waitForJob(timeoutMs: number): Promise<boolean> {
-  if (!useSpooferStore.getState().isSpoofing) return Promise.resolve(true);
+  const busy = () => {
+    const state = useSpooferStore.getState();
+    return state.isSpoofing || state.isReplacing;
+  };
+  if (!busy()) return Promise.resolve(true);
   return new Promise((resolve) => {
     const timer = window.setTimeout(() => {
       unsubscribe();
       resolve(false);
     }, timeoutMs);
     const unsubscribe = useSpooferStore.subscribe((state) => {
-      if (!state.isSpoofing) {
+      if (!state.isSpoofing && !state.isReplacing) {
         window.clearTimeout(timer);
         unsubscribe();
         resolve(true);
@@ -822,9 +870,9 @@ export function jobSnapshot() {
   const counts = countJobResults(results);
   const failed = results.filter((r) => !r.success && !r.skipped && !r.cancelled);
   return {
-    running: s.isSpoofing,
+    running: s.isSpoofing || s.isReplacing,
     paused: s.isJobPaused,
-    jobId: s.activeSpooferJobId,
+    jobId: s.activeSpooferJobId ?? s.lastJobId,
     progress: Math.round(s.spoofProgress),
     current: s.spoofCurrentCount,
     total: s.spoofTotalCount,
@@ -835,11 +883,21 @@ export function jobSnapshot() {
           succeeded: counts.completed,
           skipped: counts.skipped,
           cancelled: counts.cancelled,
+          permissionFailures: results
+            .filter((r) => r.permission?.status === 'failed')
+            .map((r) => ({ id: r.id, reason: r.permission?.reason })),
           failed: failed.map((r) => ({
             id: String(r.id ?? ''),
             reason: r.errorReason || r.reason || 'Failed',
           })),
         },
+    assets: results,
+    studioPushError: s.studioPushError,
+    pathMappings: Object.fromEntries(
+      results
+        .filter((r) => r.moderation !== 'rejected' && r.path && (r.meshId ?? r.imageId ?? r.newId))
+        .map((r) => [r.path, `rbxassetid://${r.meshId ?? r.imageId ?? r.newId}`]),
+    ),
     mappings: currentReplacements(),
     recentLog: s.spoofingLogs.slice(-15),
   };
@@ -998,4 +1056,115 @@ export async function discoverPlaceIds(assetIds?: string[], timeoutSecs = 60) {
     store.setIsDiscoveringPlaceIds(false);
   }
   return { searched: ids.length, found };
+}
+
+export interface AssetActionOptions {
+  files?: import('../stores/spooferStore').PublishFile[];
+  assetIds?: string[];
+  profile?: string;
+  groupId?: string | null;
+  grantPermissions?: GrantPermissions;
+  pushToStudio?: boolean;
+  studioPathMap?: Record<string, string>;
+  studioSessionId?: string;
+}
+
+export async function runAssetAction(
+  options: AssetActionOptions,
+): Promise<{ jobId: string; assets: number }> {
+  assertAppIsNotUpdating();
+  const state = useSpooferStore.getState();
+  if (state.isPreparingJob || state.isSpoofing || state.isReplacing || state.isScanningStudio)
+    throw new Error(serviceText('jobBusy'));
+  const target = getActiveTarget(options);
+  if (target.userId === 'none' || (!target.cookie && !target.apiKey))
+    throw new Error(serviceText('noProfile'));
+  const grantPermissions = grantPermissionsSchema.parse(
+    options.grantPermissions ?? configuredPermissions(),
+  );
+  const files = options.files?.length ? options.files : undefined;
+  const permissionIds = [...new Set(options.assetIds ?? [])];
+  const ids = [...(files?.map((file) => file.path) ?? []), ...permissionIds];
+  if (!ids.length) throw new Error(serviceText('noAssets'));
+  const studioSessionId = options.pushToStudio
+    ? requireStudioSession(options.studioSessionId)
+    : null;
+  const config = useConfigStore.getState().config;
+  const jobId = crypto.randomUUID();
+  const kind = files ? 'publish' : 'permissions';
+  const metadata = Object.fromEntries(
+    ids.map((id, index) => [
+      id,
+      {
+        name: files?.[index]?.name ?? id,
+        type: files?.[index]?.type?.toLowerCase() ?? 'asset',
+      },
+    ]),
+  );
+  useSpooferStore.setState({
+    studioPushError: null,
+    activeSpooferJobId: jobId,
+    isSpoofing: true,
+    isJobPaused: false,
+    spoofStartTime: Date.now(),
+    spoofProgress: 0,
+    spoofCurrentCount: 0,
+    spoofTotalCount: ids.length,
+    lastAssetResults: [],
+    assetStatuses: Object.fromEntries(ids.map((id) => [id, { stage: 'queued' as const }])),
+    assetMetadataMap: metadata,
+    spoofingLogs: [],
+    jobTarget: {
+      kind,
+      publishFiles: files,
+      grantPermissions,
+      studioSessionId,
+      animationMode: config.spoofing.animationMode,
+      source: null,
+      autoApply: options.pushToStudio ?? false,
+      studioPathMap: options.studioPathMap,
+      userId: target.userId,
+      groupId: target.groupId,
+      cookie: target.cookie,
+      apiKey: target.apiKey,
+      permissions: permissionConfig(grantPermissions),
+    },
+  });
+  try {
+    await invoke('run_spoofer_action', {
+      data: {
+        jobId,
+        publishFiles: files ?? null,
+        permissionAssetIds: permissionIds.length ? permissionIds : null,
+        grantPermissions,
+        cookie: target.cookie,
+        apiKey: target.apiKey,
+        groupId: target.groupId === 'none' ? null : target.groupId,
+        account: { id: target.userId, name: target.accountName },
+        group: target.groupId === 'none' ? null : { id: target.groupId, name: target.groupName },
+        proxyUrl: config.advanced.proxyUrl || null,
+        operationPollIntervalMs: config.advanced.operationPollIntervalMs,
+      },
+    });
+  } catch (error) {
+    useSpooferStore.setState({ isSpoofing: false, activeSpooferJobId: null, jobTarget: null });
+    throw error;
+  }
+  return { jobId, assets: ids.length };
+}
+
+export function localPathReplacements(
+  results: SpooferAssetResult[],
+  pathMap: Record<string, string> = {},
+) {
+  const mappings: Record<string, string> = {};
+  for (const result of results) {
+    const path = result.path ?? result.id;
+    const id = result.meshId ?? result.imageId ?? result.newId;
+    if (!result.success || result.moderation === 'rejected' || !path || !id) continue;
+    const reference = pathMap[path] ?? (path.startsWith('rbxasset://') ? path : null);
+    if (reference)
+      mappings[reference.startsWith('rbxasset://') ? reference : `rbxasset://${reference}`] = id;
+  }
+  return mappings;
 }

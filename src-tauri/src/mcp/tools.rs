@@ -23,6 +23,7 @@ fn scan_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
+            "studioSessionId": {"type":"string","description":"Connected Studio session from get_status; required if several windows are connected and none selected."},
             "timeoutSeconds": { "type": "integer", "minimum": 10, "maximum": 900, "description": "How long to wait for the Studio scan to finish (default 300)." }
         },
         "additionalProperties": false
@@ -49,7 +50,11 @@ fn spoof_schema() -> Value {
         "properties": {
             "assetIds": { "type": "array", "items": { "type": "string" }, "description": "Specific asset ids to spoof. Omit to spoof every foreign asset of the selected types from the last scan." },
             "types": { "type": "array", "items": { "type": "string", "enum": ASSET_TYPES }, "description": "Asset types to include (default: Animation and Sound)." },
-            "autoPush": { "type": "boolean", "description": "Push the new ids into Studio automatically when the job finishes (default true)." }
+            "autoPush": { "type": "boolean", "description": "Apply replacements automatically; defaults to shared UI setting." },
+            "grantPermissions": grant_schema(),
+            "skipOwned": { "type": "boolean", "description": "Per-call override of the shared skip-owned setting." },
+            "keepNameAndDescription": { "type": "boolean", "description": "Per-call override preserving the original name and description." },
+            "dry_run": { "type": "boolean", "description": "Preview counts, types, target and estimated quota without uploading or granting permissions." }
         },
         "additionalProperties": false
     })
@@ -59,6 +64,7 @@ fn job_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
+            "jobId": { "type": "string", "format":"uuid", "description":"Specific job, including persisted historical jobs. Omit for current/latest." },
             "waitSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "description": "Block up to N seconds until the job finishes (default 0 = return current progress immediately)." }
         },
         "additionalProperties": false
@@ -124,16 +130,97 @@ fn file_write_schema() -> Value {
     })
 }
 
+fn grant_schema() -> Value {
+    json!({"type":"object","properties":{
+        "enabled":{"type":"boolean"},
+        "subjectType":{"type":"string","enum":["Universe","Group","User"]},
+        "ids":{"type":"array","items":{"type":"string","pattern":"^[1-9]\\d{0,19}$"},"maxItems":100}
+    },"required":["enabled","subjectType","ids"],"additionalProperties":false})
+}
+
+fn settings_schema() -> Value {
+    let mut grant = grant_schema();
+    grant.as_object_mut().expect("schema").remove("required");
+    json!({"type":"object","properties":{
+        "grantPermissions":grant,
+        "skipOwned":{"type":"boolean"},"keepNameAndDescription":{"type":"boolean"},
+        "animationMode":{"type":"string","enum":["animation","clip_replace","clip_parent","clip_parent_id"]},
+        "enableArchiveRecovery":{"type":"boolean"},"autoPush":{"type":"boolean"}
+    },"additionalProperties":false})
+}
+
+fn publish_schema() -> Value {
+    json!({"type":"object","properties":{
+        "files":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"object","properties":{
+            "path":{"type":"string","minLength":1,"description":"Absolute local file path. Type inferred from extension: png/jpg/bmp/tga, ogg/mp3/wav/flac, fbx/obj/gltf/glb/mesh."},
+            "type":{"type":"string","enum":["Image","Audio","Mesh"]},
+            "name":{"type":"string","minLength":1,"maxLength":100},
+            "description":{"type":"string","maxLength":1000}
+        },"required":["path"],"additionalProperties":false}},
+        "profile":{"type":"string","description":"Saved profile id or name; defaults to active profile."},
+        "groupId":{"type":["string","null"],"description":"Target group; omit for active group, null for personal uploads."},
+        "grantPermissions":grant_schema(),
+        "studioPathMap":{"type":"object","additionalProperties":{"type":"string"},"description":"Absolute local path -> rbxasset://relative/path. Local refs from last Studio scan are inferred automatically."},
+        "pushToStudio":{"type":"boolean","description":"Apply published IDs to local references in the selected Studio. Default false."},
+        "studioSessionId":{"type":"string","description":"Explicit connected Studio session id from get_status."},
+        "dry_run":{"type":"boolean","description":"Inspect files, destination, cache hits and quota estimate without uploading, granting permissions or modifying Studio."}
+    },"required":["files"],"additionalProperties":false})
+}
+
+fn folder_schema() -> Value {
+    let mut schema = publish_schema();
+    let properties = schema["properties"].as_object_mut().expect("schema");
+    properties.remove("files");
+    properties.insert(
+        "dir".into(),
+        json!({"type":"string","minLength":1,"description":"Absolute folder path."}),
+    );
+    properties.insert("recursive".into(), json!({"type":"boolean","default":false}));
+    properties.insert(
+        "glob".into(),
+        json!({"type":"string","description":"Optional relative-path glob, e.g. **/*.png."}),
+    );
+    schema["required"] = json!(["dir"]);
+    schema
+}
+
+fn permission_assets_schema() -> Value {
+    json!({"type":"object","properties":{
+        "assetIds":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string","pattern":"^[1-9]\\d{0,19}$"}}
+    },"required":["assetIds"],"additionalProperties":false})
+}
+
+fn permission_grant_schema() -> Value {
+    let mut schema = permission_assets_schema();
+    schema["properties"]["subjectType"] =
+        json!({"type":"string","enum":["Universe","Group","User"]});
+    schema["properties"]["ids"] = json!({"type":"array","minItems":1,"maxItems":100,"items":{"type":"string","pattern":"^[1-9]\\d{0,19}$"}});
+    schema["properties"]["dry_run"] = json!({"type":"boolean"});
+    schema["required"] = json!(["assetIds", "subjectType", "ids"]);
+    schema
+}
+
+fn retry_schema() -> Value {
+    json!({"type":"object","properties":{"jobId":{"type":"string","format":"uuid"}},"required":["jobId"],"additionalProperties":false})
+}
+
 pub const TOOLS: &[ToolDef] = &[
+    ToolDef { name: "get_settings", description: "Read automatic permissions and upload behavior from the same persistent settings used by the UI. Contains no credentials.", timeout_secs: 20, schema: empty },
+    ToolDef { name: "update_settings", description: "Patch automatic permissions and upload behavior in the UI's shared settings. Omitted fields stay unchanged. Example: {grantPermissions:{enabled:true,subjectType:Group,ids:[764544807]}} (IDs must be strings).", timeout_secs: 20, schema: settings_schema },
+    ToolDef { name: "publish_assets", description: "Publish local image/audio/mesh files as new assets through the shared job pipeline. Detects types, converts Roblox .mesh v2-7, caches SHA256+profile/group, waits for moderation, returns imageId or model assetId plus actual meshId. dry_run previews without writes. Follow with get_job(jobId).", timeout_secs: 60, schema: publish_schema },
+    ToolDef { name: "publish_folder", description: "Publish supported files from a local folder using the same cache, jobs, permissions and Studio path replacement as publish_assets. Supports recursive traversal and relative glob filtering.", timeout_secs: 60, schema: folder_schema },
+    ToolDef { name: "grant_permissions", description: "Grant Use permission on existing assets to Universe, Group or User IDs. Batch runs through the shared job queue; get_job returns per-asset permission status and failure reasons. dry_run performs no grants.", timeout_secs: 60, schema: permission_grant_schema },
+    ToolDef { name: "get_permissions", description: "Read existing recipients and Use permissions for each asset. Partial failures are returned per asset. Uses the active profile without exposing credentials.", timeout_secs: 620, schema: permission_assets_schema },
+    ToolDef { name: "retry_failed", description: "Retry failed uploads or permission grants from the given historical job. Completed local uploads are recovered from cache rather than uploaded again.", timeout_secs: 60, schema: retry_schema },
     ToolDef {
         name: "get_status",
-        description: "Overview of TrapSpoofer: Studio connection, open place, active profile and upload target, last scan summary and the running job.",
+        description: "Overview of TrapSpoofer: every connected Studio session, place, placeId and game owner (User or Group), active upload target, last scan and job. Compare game owner to upload target before publishing.",
         timeout_secs: 20,
         schema: empty,
     },
     ToolDef {
         name: "scan_studio",
-        description: "Scan the place currently open in Roblox Studio (requires the TrapSpoofer plugin) and wait for the result. Returns counts per asset type.",
+        description: "Scan the place currently open in Roblox Studio (requires the TrapSpoofer plugin) and wait for the result. Returns counts per asset type and local rbxasset:// references (including Content URIs) with corresponding disk paths and usages.",
         timeout_secs: 900,
         schema: scan_schema,
     },
@@ -151,7 +238,7 @@ pub const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "get_job",
-        description: "Progress and results (oldId -> newId, failures) of the current or last spoof job.",
+        description: "Progress/results of spoof, publish or permission jobs: per-asset IDs, cache hits, moderation, permission status (granted/failed/not_requested), path mappings and failures. Accepts historical jobId.",
         timeout_secs: 620,
         schema: job_schema,
     },
@@ -222,4 +309,33 @@ pub fn list_json() -> Value {
             })
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn catalogue_names_are_unique_and_schemas_are_closed() {
+        let mut names = std::collections::HashSet::new();
+        for tool in TOOLS {
+            assert!(names.insert(tool.name));
+            let schema = (tool.schema)();
+            assert_eq!(schema["type"], "object");
+            assert_eq!(schema["additionalProperties"], false);
+            assert!(!tool.description.is_empty());
+        }
+        for name in [
+            "get_settings",
+            "update_settings",
+            "publish_assets",
+            "publish_folder",
+            "grant_permissions",
+            "get_permissions",
+            "retry_failed",
+        ] {
+            assert!(find(name).is_some());
+        }
+        assert_eq!(spoof_schema()["properties"]["grantPermissions"], grant_schema());
+        assert_eq!(folder_schema()["required"], json!(["dir"]));
+    }
 }

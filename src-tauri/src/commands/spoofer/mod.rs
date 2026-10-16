@@ -1,7 +1,7 @@
 #![allow(clippy::wildcard_imports, clippy::too_many_lines, clippy::missing_errors_doc)]
 
 pub mod inspector;
-mod upload_auth;
+pub(crate) mod upload_auth;
 
 use crate::utils::{build_roblox_cookie_header, sanitize_filename};
 use reqwest::header::{CONTENT_LENGTH, COOKIE};
@@ -244,7 +244,7 @@ pub fn record_adaptive_rate_limit(retry_after_ms: Option<u64>) {
         let capped_ms = retry_after_ms.clamp(500, 60_000);
         let next_until = Instant::now() + Duration::from_millis(capped_ms);
         if let Ok(mut guard) = limiter.blocked_until.lock() {
-            if guard.map_or(true, |until| next_until > until) {
+            if guard.is_none_or(|until| next_until > until) {
                 *guard = Some(next_until);
             }
         }
@@ -256,7 +256,7 @@ pub fn record_explicit_rate_limit(reset_in_ms: u64) {
     let capped_ms = reset_in_ms.clamp(500, 120_000);
     let next_until = Instant::now() + Duration::from_millis(capped_ms);
     if let Ok(mut guard) = limiter.blocked_until.lock() {
-        if guard.map_or(true, |until| next_until > until) {
+        if guard.is_none_or(|until| next_until > until) {
             *guard = Some(next_until);
         }
     }
@@ -335,7 +335,7 @@ pub(crate) async fn wait_rate_limit(bucket: RateLimitBucket) {
 
         if let Ok(guard) = CIRCUIT_BREAKER.lock() {
             if let Some(until) = *guard {
-                if until > now && max_until.map_or(true, |current| until > current) {
+                if until > now && max_until.is_none_or(|current| until > current) {
                     max_until = Some(until);
                 }
             }
@@ -475,6 +475,7 @@ pub async fn clear_asset_cache(app: AppHandle) -> bool {
 pub mod diagnostics;
 pub mod download;
 pub mod memory;
+pub mod mesh;
 pub mod permissions;
 pub mod place;
 pub mod remote_cache;

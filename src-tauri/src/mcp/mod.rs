@@ -99,10 +99,18 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
     match headers.get(axum::http::header::ORIGIN).and_then(|v| v.to_str().ok()) {
         None => true,
         Some(origin) => {
-            origin.starts_with("http://localhost")
-                || origin.starts_with("http://127.0.0.1")
-                || origin == "tauri://localhost"
-                || origin == "http://tauri.localhost"
+            if origin == "tauri://localhost" || origin == "http://tauri.localhost" {
+                return true;
+            }
+            reqwest::Url::parse(origin).ok().is_some_and(|url| {
+                url.scheme() == "http"
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && matches!(url.host_str(), Some("localhost" | "127.0.0.1"))
+                    && url.path() == "/"
+                    && url.query().is_none()
+                    && url.fragment().is_none()
+            })
         }
     }
 }
@@ -188,7 +196,7 @@ async fn dispatch(state: &McpState, message: Value) -> Option<Value> {
                     "protocolVersion": version,
                     "capabilities": { "tools": { "listChanged": false } },
                     "serverInfo": { "name": "trapspoofer", "title": "TrapSpoofer", "version": env!("CARGO_PKG_VERSION") },
-                    "instructions": "TrapSpoofer re-uploads (spoofs) Roblox assets to the user's own account or group and patches the new ids into Roblox Studio. Typical flow: get_status -> scan_studio (or scan_file) -> list_assets -> spoof_assets -> get_job (waitSeconds) -> push_to_studio (or write_spoofed_file). Always confirm with the user before spoofing large batches.",
+                    "instructions": "TrapSpoofer uses one shared job pipeline for spoofing existing assets, publishing local files, and granting Use permissions. First get_status and compare the upload profile/group with the target Studio game owner. get_settings/update_settings read and patch the UI settings; omitted fields stay unchanged. Example update_settings: {\"grantPermissions\":{\"enabled\":true,\"subjectType\":\"Group\",\"ids\":[\"764544807\"]}}. spoof_assets accepts per-call grantPermissions/skipOwned/keepNameAndDescription and dry_run. scan_studio lists local references and resolved disk paths. Example publish_assets: {\"files\":[{\"path\":\"/absolute/texture.png\"},{\"path\":\"/absolute/body.mesh\"}],\"pushToStudio\":true,\"studioPathMap\":{\"/absolute/texture.png\":\"rbxasset://textures/example.png\"}}. publish_folder accepts dir, recursive and glob. Mesh uploads create Model assets: use returned meshId in the game, not the model assetId. get_job(jobId,waitSeconds) reports moderation approved/pending/rejected, cacheHit, per-asset permission granted/failed/not_requested, and pathMappings. Identical SHA256+profile/group resumes the cached asset/operation without a duplicate upload. Example grant_permissions: {\"assetIds\":[\"123456789\"],\"subjectType\":\"Group\",\"ids\":[\"764544807\"]}. get_permissions reads recipients. retry_failed(jobId) retries failed operations. dry_run:true on spoof_assets/publish_assets/publish_folder/grant_permissions inspects counts/types/destination/quota estimates without writes. Local replacements use the selected or explicit studioSessionId and the existing plugin; save the place after applying. Roblox moderation may remain pending after the bounded wait. Credentials stay inside the app and must never be requested or exposed.",
                 }),
             )
         }
@@ -212,8 +220,39 @@ async fn dispatch(state: &McpState, message: Value) -> Option<Value> {
     Some(reply)
 }
 
+fn sanitized_payload(payload: &Value) -> Value {
+    match payload {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .filter_map(|(key, value)| {
+                    let normalized = key.to_ascii_lowercase().replace(['_', '-'], "");
+                    if matches!(
+                        normalized.as_str(),
+                        "cookie"
+                            | "cookies"
+                            | "fallbackcookies"
+                            | "apikey"
+                            | "groupapikey"
+                            | "xapikey"
+                            | "authorization"
+                            | ".roblosecurity"
+                    ) {
+                        None
+                    } else {
+                        Some((key.clone(), sanitized_payload(value)))
+                    }
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(sanitized_payload).collect()),
+        other => other.clone(),
+    }
+}
+
 fn tool_text(is_error: bool, payload: &Value) -> Value {
-    let text = match payload {
+    let payload = sanitized_payload(payload);
+    let text = match &payload {
         Value::String(s) => s.clone(),
         other => serde_json::to_string_pretty(other).unwrap_or_default(),
     };
@@ -312,5 +351,42 @@ pub fn mcp_get_info() -> McpInfo {
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default(),
         tools: tools::TOOLS.iter().map(|tool| tool.name.to_string()).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prevents_cross_origin_localhost_prefix_bypasses() {
+        for origin in ["http://localhost:5173", "http://127.0.0.1:14380", "tauri://localhost"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().expect("header"));
+            assert!(origin_allowed(&headers));
+        }
+        for origin in [
+            "http://localhost.evil.example",
+            "http://127.0.0.1.evil.example",
+            "http://localhost@evil.example",
+            "https://example.com",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().expect("header"));
+            assert!(!origin_allowed(&headers));
+        }
+    }
+
+    #[test]
+    fn removes_nested_secrets_from_text_and_structured_responses() {
+        let response = tool_text(
+            false,
+            &json!({"hasCookie":true,"cookie":"hidden-cookie","nested":[{"api_key":"hidden-key","path":"/Users/example/file.mesh"}]}),
+        );
+        let text = response.to_string();
+        assert!(!text.contains("hidden-cookie"));
+        assert!(!text.contains("hidden-key"));
+        assert_eq!(response["structuredContent"]["hasCookie"], true);
+        assert_eq!(response["structuredContent"]["nested"][0]["path"], "/Users/example/file.mesh");
     }
 }

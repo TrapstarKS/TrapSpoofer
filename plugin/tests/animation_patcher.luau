@@ -10,6 +10,8 @@ local sourceCode = fs.readFile("plugin/src/types/assets.luau")
 	.. "\n"
 	.. fs.readFile("plugin/src/state/registry.luau")
 	.. "\n"
+	.. fs.readFile("plugin/src/util/assets.luau")
+	.. "\n"
 	.. fs.readFile("plugin/src/patch/patcher.luau")
 	.. [[
 return {

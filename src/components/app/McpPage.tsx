@@ -40,6 +40,13 @@ interface McpInfo {
 
 const KNOWN_TOOLS = [
   'get_status',
+  'get_settings',
+  'update_settings',
+  'publish_assets',
+  'publish_folder',
+  'grant_permissions',
+  'get_permissions',
+  'retry_failed',
   'scan_studio',
   'scan_file',
   'list_assets',

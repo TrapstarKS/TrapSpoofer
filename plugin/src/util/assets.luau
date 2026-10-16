@@ -55,6 +55,10 @@ end
 
 local function stringContainsAssetReference(val: string): boolean
 	local str = string.lower(val)
+	local localPath = string.match(str, "^rbxasset://(.+)$")
+	if localPath and not string.match(localPath, "^%d+$") then
+		return true
+	end
 	local assetId = string.match(str, "^rbxassetid://(%d+)")
 		or string.match(str, "^rbxasset://(%d+)")
 		or string.match(str, "^id=(%d+)")

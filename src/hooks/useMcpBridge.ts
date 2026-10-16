@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useEffect } from 'react';
 
 import { handlers } from '../mcp/handlers';
+import { currentSecrets, sanitizeMcp } from '../mcp/sanitize';
 import { useConfigStore } from '../stores/configStore';
 import { useSessionStore } from '../stores/sessionStore';
 import { logIsm } from '../utils/robloxProfiles';
@@ -35,6 +36,7 @@ export function useMcpBridge() {
 
     void listen<McpRequest>('mcp://request', async (event) => {
       const { requestId, tool, arguments: args } = event.payload;
+      const requestSecrets = currentSecrets();
       const session = useSessionStore.getState();
       session.pushMcpActivity({ id: requestId, tool, at: Date.now() });
       const handler = handlers[tool];
@@ -46,8 +48,10 @@ export function useMcpBridge() {
       } catch (error) {
         isError = true;
         payload = error instanceof Error ? error.message : String(error);
+        payload = sanitizeMcp(payload, [...requestSecrets, ...currentSecrets()]);
         logIsm('warn', `MCP ${tool}: ${String(payload)}`, false);
       }
+      payload = sanitizeMcp(payload, [...requestSecrets, ...currentSecrets()]);
       useSessionStore
         .getState()
         .updateMcpActivity(requestId, { ok: !isError, summary: summarize(payload) });

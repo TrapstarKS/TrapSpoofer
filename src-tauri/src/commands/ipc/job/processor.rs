@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Semaphore;
 
-use super::state::{begin_spoofer_job, finish_spoofer_job, wait_if_paused};
+use super::state::{finish_spoofer_job, wait_if_paused};
 use super::types::{AssetDetails, SpooferActionRequest};
 use crate::commands::ipc::{append_log_entry, logging, redact_log_message};
 
@@ -54,6 +54,7 @@ struct JobContext {
     /// `permission_semaphore`) and awaited before the job result is emitted.
     permission_tasks: Mutex<tokio::task::JoinSet<()>>,
     permission_semaphore: Arc<Semaphore>,
+    permission_results: Arc<dashmap::DashMap<String, serde_json::Value>>,
 
     client: reqwest::Client,
     app: AppHandle,
@@ -69,19 +70,23 @@ impl JobContext {
         let semaphore = Arc::clone(&self.permission_semaphore);
         let cookie = self.cookie.clone();
         let csrf_token = self.csrf_token.clone();
+        let permission_results = Arc::clone(&self.permission_results);
+        permission_results.insert(asset_id.clone(), serde_json::json!({"status":"failed","reason":"Permission grant did not finish before the job deadline"}));
         if let Ok(mut tasks) = self.permission_tasks.lock() {
             tasks.spawn(async move {
                 let _permit = semaphore.acquire_owned().await.ok();
-                if let Err(error) = crate::commands::spoofer::patch_asset_permissions(
+                let status = match crate::commands::spoofer::patch_asset_permissions(
                     asset_id.clone(),
                     universe_id,
                     cookie,
                     csrf_token,
                 )
-                .await
-                {
-                    log::warn!("[Spoofer] Permission grant for asset {asset_id} failed: {error}");
-                }
+                .await {
+                    Ok(true) => serde_json::json!({"status":"granted"}),
+                    Ok(false) => serde_json::json!({"status":"failed","reason":"Roblox did not confirm permission"}),
+                    Err(error) => serde_json::json!({"status":"failed","reason":error.to_string()}),
+                };
+                permission_results.insert(asset_id, status);
             });
         }
     }
@@ -545,7 +550,6 @@ pub async fn process_spoofer_action(
     let safe_place_name =
         place_name_raw.replace(|c: char| !c.is_alphanumeric() && c != ' ' && c != '-', "_");
 
-    begin_spoofer_job(&job_id)?;
     let job_log_path = logs_dir.join(format!("job-{job_id}.txt")).to_string_lossy().to_string();
     let _ = app.emit(
         "spoofer-started",
@@ -667,7 +671,7 @@ pub async fn process_spoofer_action(
         return Ok(());
     }
 
-    let total = parsed_assets.len();
+    let total = parsed_assets.len() + data.permission_asset_ids.as_ref().map_or(0, Vec::len);
     let account_id = data.account.as_ref().and_then(|account| selected_account_id(&account.0));
     let mut cached_outcomes = HashMap::new();
     for (id, asset_type, _, name) in &parsed_assets {
@@ -929,6 +933,7 @@ pub async fn process_spoofer_action(
         discoveries: Mutex::new(Vec::new()),
         permission_tasks: Mutex::new(tokio::task::JoinSet::new()),
         permission_semaphore: Arc::new(Semaphore::new(PERMISSION_GRANT_CONCURRENCY)),
+        permission_results: Arc::new(dashmap::DashMap::new()),
         client,
         app: app.clone(),
     });
@@ -1116,6 +1121,7 @@ pub async fn process_spoofer_action(
                             details = fetch_asset_details(&asset_id, &ctx.cookie, &ctx.client).await;
                         }
                         let details = details.unwrap_or_else(|| AssetDetails { name: exact_name.clone(), description: "Uploaded by TrapSpoofer.".to_string() });
+                        let final_name = if preserve_metadata { details.name } else { "Spoofed Asset".to_string() };
                         let final_description = if preserve_metadata { details.description } else { "Uploaded by TrapSpoofer.".to_string() };
 
                         // The permit is handed to publish, which releases it as soon as
@@ -1135,8 +1141,8 @@ pub async fn process_spoofer_action(
                         }
                         ctx.transition(&asset_id, "uploading", "Uploading and processing");
                         let up_res = crate::commands::spoofer::publish_asset_with_hooks(
-                            ctx.app.clone(), file_path.clone(), details.name, final_description, ctx.cookie.clone(), ctx.csrf_token.clone(), ctx.group_id.clone(), format!("{}:up:{asset_id}", ctx.job_id), Some(mapped_type_name.to_string()), Some(ctx.api_key.clone()), upload_user_id, Some(asset_id.clone()), ctx.universe_id.clone(), Some(ctx.downloads_root.clone()), ctx.proxy_url.clone(), ctx.operation_poll_interval_ms,
-                            crate::commands::spoofer::PublishHooks { upload_permit: Some(asset_permit), permission_sink: Some(permission_sink) },
+                            ctx.app.clone(), file_path.clone(), final_name, final_description, ctx.cookie.clone(), ctx.csrf_token.clone(), ctx.group_id.clone(), format!("{}:up:{asset_id}", ctx.job_id), Some(mapped_type_name.to_string()), Some(ctx.api_key.clone()), upload_user_id, Some(asset_id.clone()), ctx.universe_id.clone(), Some(ctx.downloads_root.clone()), ctx.proxy_url.clone(), ctx.operation_poll_interval_ms,
+                            crate::commands::spoofer::PublishHooks { upload_permit: Some(asset_permit), permission_sink: Some(permission_sink), ..Default::default() },
                         ).await;
 
                         match up_res {
@@ -1261,6 +1267,23 @@ pub async fn process_spoofer_action(
         }));
     }
     ctx.drain_permission_grants().await;
+    if let (Some(ids), Some(grant)) = (&data.permission_asset_ids, &data.grant_permissions) {
+        for id in ids {
+            let permission = crate::commands::spoofer::permissions::permission_status(
+                &app,
+                id,
+                grant,
+                &ctx.cookie,
+                &ctx.api_key,
+            )
+            .await;
+            ctx.record_result(
+                serde_json::json!({"id":id,"type":"permission","name":format!("Asset {id}"),
+                "assetId":id,"newId":id,"success":permission["status"]=="granted",
+                "errorReason":permission.get("reason"),"permission":permission}),
+            );
+        }
+    }
 
     let success = ctx.success_count.load(Ordering::Relaxed);
     let skipped = ctx.skip_count.load(Ordering::Relaxed);
@@ -1280,7 +1303,37 @@ pub async fn process_spoofer_action(
     let end_time = chrono::Utc::now();
     let duration_ms = (end_time - start_time).num_milliseconds().max(0);
 
-    let final_asset_results = ctx.asset_results.lock().map(|r| r.clone()).unwrap_or_default();
+    let mut final_asset_results = ctx.asset_results.lock().map(|r| r.clone()).unwrap_or_default();
+    for result in &mut final_asset_results {
+        if result.get("permission").is_some() {
+            continue;
+        }
+        result["permission"] = result
+            .get("newId")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|id| ctx.permission_results.get(id).map(|status| status.clone()))
+            .unwrap_or_else(|| serde_json::json!({"status": "not_requested"}));
+    }
+    if let Some(grant) = data.grant_permissions.as_ref().filter(|grant| grant.enabled) {
+        for result in &mut final_asset_results {
+            if result["type"] == "permission" {
+                continue;
+            }
+            let Some(new_id) =
+                result.get("newId").and_then(serde_json::Value::as_str).map(str::to_string)
+            else {
+                continue;
+            };
+            result["permission"] = crate::commands::spoofer::permissions::permission_status(
+                &app,
+                &new_id,
+                grant,
+                &ctx.cookie,
+                &ctx.api_key,
+            )
+            .await;
+        }
+    }
     let final_replacements: serde_json::Map<String, serde_json::Value> =
         ctx.replacements.iter().map(|kv| (kv.key().clone(), kv.value().clone())).collect();
 
@@ -1298,7 +1351,10 @@ pub async fn process_spoofer_action(
             "groupId": data.group_id,
             "spoofSounds": data.spoof_sounds.unwrap_or(false),
             "uploadTypes": ctx.upload_types,
-            "placeName": data.place_name
+            "placeName": data.place_name,
+            "kind": "spoof",
+            "grantPermissions": data.grant_permissions,
+            "permissionAssetIds": data.permission_asset_ids
         },
         "logFilePath": job_log_path.clone()
     });

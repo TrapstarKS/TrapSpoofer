@@ -364,7 +364,7 @@ pub async fn download_asset_with_deferred_places(
                 },
             );
 
-            if candidate_idx > 0 && candidate_idx % 10 == 0 {
+            if candidate_idx > 0 && candidate_idx.is_multiple_of(10) {
                 emit_spoofer_log(
                     &app,
                     "info",
@@ -902,7 +902,7 @@ impl DownloadAttempts {
         !self.archive_attempted && consecutive_perm_failures >= PERM_FAILURE_BAIL_THRESHOLD
     }
 
-    fn take_archive_recovery(&mut self, enabled: bool) -> bool {
+    const fn take_archive_recovery(&mut self, enabled: bool) -> bool {
         if !enabled || !self.recoverable_failure || self.finished || self.archive_attempted {
             return false;
         }

@@ -65,7 +65,7 @@ fn credential_value(bytes: &[u8]) -> Option<String> {
             return Some(text.to_string());
         }
     }
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
     let wide: Vec<_> =
