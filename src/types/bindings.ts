@@ -82,9 +82,14 @@ export const commands = {
   setProxyUrl: (url: string | null) => __TAURI_INVOKE<boolean>('set_proxy_url', { url }),
   runSpooferAction: (data: SpooferActionRequest_Deserialize) =>
     typedError<null, AppError>(__TAURI_INVOKE('run_spoofer_action', { data })),
-  inspectPublishFiles: (files: PublishFile[], profileId: string | null, groupId: string | null) =>
+  inspectPublishFiles: (
+    files: PublishFile[],
+    profileId: string | null,
+    groupId: string | null,
+    normalizeCenter: boolean | null,
+  ) =>
     typedError<PublishFileInspection[], AppError>(
-      __TAURI_INVOKE('inspect_publish_files', { files, profileId, groupId }),
+      __TAURI_INVOKE('inspect_publish_files', { files, profileId, groupId, normalizeCenter }),
     ),
   listPublishFolder: (directory: string, recursive: boolean, glob: string | null) =>
     typedError<PublishFile[], AppError>(
@@ -223,6 +228,41 @@ export const commands = {
   ) =>
     typedError<unknown, string>(
       __TAURI_INVOKE('push_to_studio', { replacementsMap, sessionId, operationId, animationMode }),
+    ),
+  applyMeshToStudio: (
+    meshId: string,
+    instancePath: string,
+    meshPartName: string | null,
+    sessionId: string | null,
+    preserveSize: boolean | null,
+  ) =>
+    typedError<unknown, string>(
+      __TAURI_INVOKE('apply_mesh_to_studio', {
+        meshId,
+        instancePath,
+        meshPartName,
+        sessionId,
+        preserveSize,
+      }),
+    ),
+  checkAssetAccess: (
+    assetIds: string[],
+    universeId: string | null,
+    groupId: string | null,
+    cookie: string | null,
+    apiKey: string | null,
+  ) =>
+    typedError<unknown, AppError>(
+      __TAURI_INVOKE('check_asset_access', { assetIds, universeId, groupId, cookie, apiKey }),
+    ),
+  recheckAssetModeration: (
+    assetIds: string[],
+    pendingAssets: unknown[] | null,
+    cookie: string | null,
+    apiKey: string | null,
+  ) =>
+    typedError<unknown, AppError>(
+      __TAURI_INVOKE('recheck_asset_moderation', { assetIds, pendingAssets, cookie, apiKey }),
     ),
   setPluginBatchSize: (batchSize: number) =>
     typedError<null, string>(__TAURI_INVOKE('set_plugin_batch_size', { batchSize })),
@@ -384,6 +424,19 @@ export type MemoryInjectionResult = {
   total_replaced: number;
 };
 
+export type MeshBounds = {
+  min: MeshVector;
+  max: MeshVector;
+  center: MeshVector;
+  size: MeshVector;
+};
+
+export type MeshVector = {
+  x: number | null;
+  y: number | null;
+  z: number | null;
+};
+
 export type NotificationOptions = {
   title: string | null;
   body: string | null;
@@ -434,6 +487,9 @@ export type PublishFileInspection = {
   cachedAssetId: string | null;
   error: string | null;
   warnings: string[];
+  bounds: MeshBounds | null;
+  sourceBounds: MeshBounds | null;
+  axisConversion: string | null;
 };
 
 export type RbxInstance = {
@@ -499,6 +555,7 @@ export type SpooferActionRequest =
 
 export type SpooferActionRequest_Deserialize = {
   publishFiles: PublishFile[] | null;
+  normalizeCenter: boolean | null;
   grantPermissions: GrantPermissions_Deserialize | null;
   permissionAssetIds: string[] | null;
   jobId: string | null;
@@ -532,6 +589,7 @@ export type SpooferActionRequest_Deserialize = {
 
 export type SpooferActionRequest_Serialize = {
   publishFiles: PublishFile[] | null;
+  normalizeCenter: boolean | null;
   grantPermissions: GrantPermissions_Serialize | null;
   permissionAssetIds: string[] | null;
   jobId: string | null;

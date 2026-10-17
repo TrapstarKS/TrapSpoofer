@@ -75,6 +75,14 @@ local api = luau.load(source, {
 				return temporary
 			end,
 		},
+		RunService = {
+			IsRunning = function(): boolean
+				return false
+			end,
+			IsEdit = function(): boolean
+				return true
+			end,
+		},
 		task = { wait = function(): () end },
 		logToPlugin = function(): () end,
 	},
@@ -313,6 +321,7 @@ end
 
 assert(api.contains(original), "local assets must survive property scanning")
 assert(
-	api.pollUrl() == "/poll?place_id=123&place_name=Test%20Place&creator_type=Group&creator_id=456"
+	api.pollUrl()
+		== "/poll?place_id=123&place_name=Test%20Place&creator_type=Group&creator_id=456&mesh_apply=true"
 )
 print("PASS local property, Content, script, mesh, stale scan and owner polling checks")

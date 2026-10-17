@@ -656,6 +656,7 @@ async function startSpoof(options: RunOptions, retry?: RetryContext): Promise<Ru
   const jobId = crypto.randomUUID();
   useSpooferStore.setState({
     studioPushError: null,
+    jobStatus: 'queued',
     activeSpooferJobId: jobId,
     assetStatuses: {},
     lastAssetResults: retry?.results ?? [],
@@ -786,6 +787,8 @@ async function startSpoof(options: RunOptions, retry?: RetryContext): Promise<Ru
     if (useSpooferStore.getState().activeSpooferJobId === jobId) {
       useSpooferStore.setState({
         isSpoofing: false,
+        jobStatus: 'failed',
+        lastJobId: jobId,
         activeSpooferJobId: null,
         jobTarget: null,
         assetStatuses: Object.fromEntries(
@@ -843,19 +846,31 @@ export async function forceReset() {
 }
 
 /** Resolves true when no job is running (or false on timeout). */
-export function waitForJob(timeoutMs: number): Promise<boolean> {
+export function waitForJob(
+  timeoutMs: number,
+  jobId = useSpooferStore.getState().activeSpooferJobId,
+): Promise<boolean> {
   const busy = () => {
     const state = useSpooferStore.getState();
-    return state.isSpoofing || state.isReplacing;
+    return (
+      (state.isSpoofing || (state.isPreparingJob && state.activeSpooferJobId !== null)) &&
+      (!jobId || state.activeSpooferJobId === jobId)
+    );
   };
   if (!busy()) return Promise.resolve(true);
   return new Promise((resolve) => {
-    const timer = window.setTimeout(() => {
-      unsubscribe();
-      resolve(false);
-    }, timeoutMs);
+    const timer = window.setTimeout(
+      () => {
+        unsubscribe();
+        resolve(false);
+      },
+      Math.min(100_000, Math.max(0, timeoutMs)),
+    );
     const unsubscribe = useSpooferStore.subscribe((state) => {
-      if (!state.isSpoofing && !state.isReplacing) {
+      if (
+        (!state.isSpoofing && (!state.isPreparingJob || state.activeSpooferJobId === null)) ||
+        (jobId && state.activeSpooferJobId !== jobId)
+      ) {
         window.clearTimeout(timer);
         unsubscribe();
         resolve(true);
@@ -866,40 +881,61 @@ export function waitForJob(timeoutMs: number): Promise<boolean> {
 
 export function jobSnapshot() {
   const s = useSpooferStore.getState();
-  const results = s.lastAssetResults;
+  const running = s.isSpoofing || (s.isPreparingJob && s.activeSpooferJobId !== null);
+  const results = s.lastAssetResults.filter(
+    (result) => result.id && Object.hasOwn(s.assetMetadataMap, result.id),
+  );
+  const byId = new Map(results.map((result) => [result.id, result]));
+  const assets: SpooferAssetResult[] = Object.entries(s.assetMetadataMap).map(
+    ([id, metadata]) =>
+      byId.get(id) ?? { id, ...metadata, stage: s.assetStatuses[id]?.stage ?? 'queued' },
+  );
   const counts = countJobResults(results);
-  const failed = results.filter((r) => !r.success && !r.skipped && !r.cancelled);
+  const failed = results.filter((r) => stageFromResult(r) === 'error');
+  const permissionFailures = results
+    .filter((r) => r.permission?.status === 'failed')
+    .map((r) => ({ id: r.id, reason: r.permission?.reason }));
+  const status = running
+    ? s.jobStatus === 'queued' && !s.isReplacing
+      ? 'queued'
+      : 'running'
+    : s.jobStatus === 'failed' || failed.length || permissionFailures.length
+      ? 'failed'
+      : 'finished';
   return {
-    running: s.isSpoofing || s.isReplacing,
+    running,
+    done: !running,
     paused: s.isJobPaused,
     jobId: s.activeSpooferJobId ?? s.lastJobId,
     progress: Math.round(s.spoofProgress),
     current: s.spoofCurrentCount,
     total: s.spoofTotalCount,
-    status: s.spoofStatusText,
-    lastResult: s.isSpoofing
+    status,
+    lastResult: running
       ? null
       : {
           succeeded: counts.completed,
           skipped: counts.skipped,
           cancelled: counts.cancelled,
-          permissionFailures: results
-            .filter((r) => r.permission?.status === 'failed')
-            .map((r) => ({ id: r.id, reason: r.permission?.reason })),
+          permissionFailures,
           failed: failed.map((r) => ({
             id: String(r.id ?? ''),
             reason: r.errorReason || r.reason || 'Failed',
           })),
         },
-    assets: results,
+    assets,
     studioPushError: s.studioPushError,
     pathMappings: Object.fromEntries(
       results
-        .filter((r) => r.moderation !== 'rejected' && r.path && (r.meshId ?? r.imageId ?? r.newId))
+        .filter(
+          (r) =>
+            r.success &&
+            r.moderation !== 'rejected' &&
+            r.path &&
+            (r.meshId ?? r.imageId ?? r.newId),
+        )
         .map((r) => [r.path, `rbxassetid://${r.meshId ?? r.imageId ?? r.newId}`]),
     ),
-    mappings: currentReplacements(),
-    recentLog: s.spoofingLogs.slice(-15),
   };
 }
 
@@ -1067,6 +1103,7 @@ export interface AssetActionOptions {
   pushToStudio?: boolean;
   studioPathMap?: Record<string, string>;
   studioSessionId?: string;
+  normalizeCenter?: boolean;
 }
 
 export async function runAssetAction(
@@ -1103,6 +1140,7 @@ export async function runAssetAction(
   );
   useSpooferStore.setState({
     studioPushError: null,
+    jobStatus: 'queued',
     activeSpooferJobId: jobId,
     isSpoofing: true,
     isJobPaused: false,
@@ -1135,6 +1173,7 @@ export async function runAssetAction(
       data: {
         jobId,
         publishFiles: files ?? null,
+        normalizeCenter: options.normalizeCenter ?? false,
         permissionAssetIds: permissionIds.length ? permissionIds : null,
         grantPermissions,
         cookie: target.cookie,
@@ -1147,7 +1186,14 @@ export async function runAssetAction(
       },
     });
   } catch (error) {
-    useSpooferStore.setState({ isSpoofing: false, activeSpooferJobId: null, jobTarget: null });
+    useSpooferStore.setState({
+      isSpoofing: false,
+      jobStatus: 'failed',
+      lastJobId: jobId,
+      activeSpooferJobId: null,
+      jobTarget: null,
+      lastAssetResults: ids.map((id) => ({ id, success: false, errorReason: String(error) })),
+    });
     throw error;
   }
   return { jobId, assets: ids.length };

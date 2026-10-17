@@ -4,11 +4,23 @@ import {
   acceptsJobEvent,
   countJobResults,
   jobReplacements,
+  mergeJobResults,
   normalizeJobResults,
   transferStage,
 } from './jobProgress';
 
 describe('job progress', () => {
+  it('keeps confirmed moderation when a late pending result arrives for the same upload', () => {
+    const confirmed = { id: '1', newId: '2', success: true, moderation: 'rejected' as const };
+    const result = mergeJobResults([confirmed], [{ ...confirmed, moderation: 'pending' }]);
+    expect(result[0].moderation).toBe('rejected');
+    expect(countJobResults(result)).toMatchObject({ completed: 0, errors: 1 });
+    expect(jobReplacements(result)).toEqual({});
+    expect(
+      mergeJobResults([confirmed], [{ ...confirmed, newId: '3', moderation: 'pending' }])[0]
+        .moderation,
+    ).toBe('pending');
+  });
   it('never substitutes older upload IDs for failed or cancelled results', () => {
     expect(
       jobReplacements(

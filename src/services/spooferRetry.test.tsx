@@ -15,7 +15,15 @@ import { countJobResults } from '../utils/jobProgress';
 import { validateCookieProfile } from '../utils/robloxProfiles';
 import { performStudioReplacement } from '../utils/studioReplacementTask';
 import type { SpoofAsset } from './assets';
-import { pushToStudio, recoverFailed, retryFailed, runSpoof, writeSpoofedFile } from './spoofer';
+import {
+  jobSnapshot,
+  pushToStudio,
+  recoverFailed,
+  retryFailed,
+  runAssetAction,
+  runSpoof,
+  writeSpoofedFile,
+} from './spoofer';
 
 vi.mock('../utils/tauriRuntime', () => ({ isTauriRuntime: () => true }));
 vi.mock('../utils/apiClient', () => ({ getStudioPlaceIdFallback: vi.fn() }));
@@ -421,5 +429,54 @@ describe('retry Studio target isolation', () => {
     }));
     await expect(pushToStudio()).rejects.toThrow(/disconnected/);
     expect(performStudioReplacement).not.toHaveBeenCalled();
+  });
+});
+
+describe('job lifecycle and partial results', () => {
+  it('exposes completed assets while running and rejects unrelated partial events', async () => {
+    useSessionStore.getState().setSource({ kind: 'manual', label: 'IDs', scannedAt: 1 }, assets);
+    await act(async () => {
+      await runSpoof();
+    });
+    const jobId = useSpooferStore.getState().activeSpooferJobId;
+    expect(jobSnapshot()).toMatchObject({ status: 'queued', done: false });
+    await act(async () => {
+      await emit('spoofer-started', { jobId });
+      await emit('spoofer-asset-result', { jobId, result: firstResults[0] });
+      await emit('spoofer-asset-result', {
+        jobId: 'unrelated',
+        result: { id: ids[1], success: true, newId: 'wrong' },
+      });
+      await emit('spoofer-asset-result', { jobId, result: { id: 'other-asset', success: true } });
+    });
+    expect(jobSnapshot()).toMatchObject({
+      status: 'running',
+      done: false,
+      assets: [firstResults[0], { id: ids[1] }, { id: ids[2] }, { id: ids[3] }, { id: ids[4] }],
+    });
+    expect(useSpooferStore.getState().lastAssetResults).toEqual([firstResults[0]]);
+    await finishJob(firstResults);
+    expect(jobSnapshot()).toMatchObject({ status: 'failed', done: true, running: false });
+    expect(useSpooferStore.getState().spoofStatusText).toContain('Job finished');
+  });
+
+  it('marks fatal empty jobs and launch failures failed', async () => {
+    await act(async () => {
+      await runAssetAction({ files: [{ path: '/part.obj' }], normalizeCenter: true });
+    });
+    expect(lastJobInput()).toMatchObject({ normalizeCenter: true });
+    await finishJob([], { success: false, error: 'Startup denied' });
+    expect(jobSnapshot()).toMatchObject({ status: 'failed', done: true });
+    launchError = new Error('Could not start');
+    await act(async () => {
+      await expect(runAssetAction({ files: [{ path: '/part.obj' }] })).rejects.toThrow(
+        'Could not start',
+      );
+    });
+    expect(jobSnapshot()).toMatchObject({
+      status: 'failed',
+      running: false,
+      assets: [{ id: '/part.obj', errorReason: 'Error: Could not start' }],
+    });
   });
 });

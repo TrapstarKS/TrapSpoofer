@@ -65,7 +65,9 @@ fn job_schema() -> Value {
         "type": "object",
         "properties": {
             "jobId": { "type": "string", "format":"uuid", "description":"Specific job, including persisted historical jobs. Omit for current/latest." },
-            "waitSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "description": "Block up to N seconds until the job finishes (default 0 = return current progress immediately)." }
+            "includeMappings": {"type":"boolean","description":"Include only this job's old-to-new ID mappings. Default false."},
+            "summary": {"type":"boolean","description":"Only job state, counts and failures; omit assets and mappings."},
+            "waitSeconds": { "type": "integer", "minimum": 0, "maximum": 600, "description": "Wait for completion; effective wait is capped at 100 seconds. A timeout returns partial progress with done:false; call again. Default 0." }
         },
         "additionalProperties": false
     })
@@ -101,7 +103,7 @@ fn profile_schema() -> Value {
 fn history_schema() -> Value {
     json!({
         "type": "object",
-        "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 50 } },
+        "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 50 }, "jobId":{"type":"string","format":"uuid"}, "summary":{"type":"boolean","description":"Return only job state, counts and failures."} },
         "additionalProperties": false
     })
 }
@@ -157,6 +159,7 @@ fn publish_schema() -> Value {
             "name":{"type":"string","minLength":1,"maxLength":100},
             "description":{"type":"string","maxLength":1000}
         },"required":["path"],"additionalProperties":false}},
+        "normalizeCenter":{"type":"boolean","description":"Center mesh geometry before upload. Default false; normalized meshes have a separate cache entry."},
         "profile":{"type":"string","description":"Saved profile id or name; defaults to active profile."},
         "groupId":{"type":["string","null"],"description":"Target group; omit for active group, null for personal uploads."},
         "grantPermissions":grant_schema(),
@@ -204,7 +207,33 @@ fn retry_schema() -> Value {
     json!({"type":"object","properties":{"jobId":{"type":"string","format":"uuid"}},"required":["jobId"],"additionalProperties":false})
 }
 
+fn lookup_schema() -> Value {
+    json!({"type":"object","properties":{"ids":{"type":"array","minItems":1,"maxItems":1000,"items":{"type":"string","minLength":1}}},"required":["ids"],"additionalProperties":false})
+}
+
+fn access_schema() -> Value {
+    let mut schema = permission_assets_schema();
+    schema["properties"]["universeId"] = json!({"type":"string","pattern":"^[1-9]\\d{0,19}$"});
+    schema["properties"]["groupId"] = json!({"type":"string","pattern":"^[1-9]\\d{0,19}$"});
+    schema["oneOf"] = json!([{"required":["universeId"],"not":{"required":["groupId"]}},{"required":["groupId"],"not":{"required":["universeId"]}}]);
+    schema
+}
+
+fn apply_mesh_schema() -> Value {
+    json!({"type":"object","properties":{
+        "meshId":{"type":"string","pattern":"^[1-9]\\d{0,19}$"},
+        "instancePath":{"type":"string","minLength":1,"maxLength":4096,"description":"Path to an existing MeshPart or a Model, e.g. Workspace.MyModel.Part."},
+        "meshPartName":{"type":"string","minLength":1,"maxLength":100,"description":"Required when instancePath points to a Model; creates a child with this name."},
+        "studioSessionId":{"type":"string"},
+        "preserveSize":{"type":"boolean","description":"Keep existing Size (default true); false uses the loaded mesh dimensions. New parts use mesh dimensions."}
+    },"required":["meshId","instancePath"],"additionalProperties":false})
+}
+
 pub const TOOLS: &[ToolDef] = &[
+    ToolDef { name: "lookup_ids", description: "Look up only requested original or uploaded IDs in local job results, returning new ID, type and moderation without network uploads.", timeout_secs: 20, schema: lookup_schema },
+    ToolDef { name: "check_access", description: "Check Use permissions and matching asset ownership for a universe or group. permissionGranted reports explicit Use/All grants; canUse confirms effective use from permission or ownership, otherwise null. No grants or uploads.", timeout_secs: 100, schema: access_schema },
+    ToolDef { name: "recheck_moderation", description: "Recheck only tracked pending assets with GET requests. Approved/rejected assets are reused; nothing is re-uploaded. Results update local history.", timeout_secs: 100, schema: permission_assets_schema },
+    ToolDef { name: "apply_mesh_to_studio", description: "Create or update a MeshPart through AssetService:CreateMeshPartAsync in the selected Edit Studio. Preserves existing identity, CFrame, Size, appearance, collision, shadows and children. Model paths require meshPartName. Save the place afterward.", timeout_secs: 110, schema: apply_mesh_schema },
     ToolDef { name: "get_settings", description: "Read automatic permissions and upload behavior from the same persistent settings used by the UI. Contains no credentials.", timeout_secs: 20, schema: empty },
     ToolDef { name: "update_settings", description: "Patch automatic permissions and upload behavior in the UI's shared settings. Omitted fields stay unchanged. Example: {grantPermissions:{enabled:true,subjectType:Group,ids:[764544807]}} (IDs must be strings).", timeout_secs: 20, schema: settings_schema },
     ToolDef { name: "publish_assets", description: "Publish local image/audio/mesh files as new assets through the shared job pipeline. Detects types, converts Roblox .mesh v2-7, caches SHA256+profile/group, waits for moderation, returns imageId or model assetId plus actual meshId. dry_run previews without writes. Follow with get_job(jobId).", timeout_secs: 60, schema: publish_schema },
@@ -239,7 +268,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "get_job",
         description: "Progress/results of spoof, publish or permission jobs: per-asset IDs, cache hits, moderation, permission status (granted/failed/not_requested), path mappings and failures. Accepts historical jobId.",
-        timeout_secs: 620,
+        timeout_secs: 110,
         schema: job_schema,
     },
     ToolDef {
@@ -332,10 +361,29 @@ mod tests {
             "grant_permissions",
             "get_permissions",
             "retry_failed",
+            "lookup_ids",
+            "check_access",
+            "recheck_moderation",
+            "apply_mesh_to_studio",
         ] {
             assert!(find(name).is_some());
         }
         assert_eq!(spoof_schema()["properties"]["grantPermissions"], grant_schema());
         assert_eq!(folder_schema()["required"], json!(["dir"]));
+    }
+
+    #[test]
+    fn polling_and_new_options_preserve_legacy_inputs() {
+        assert_eq!(job_schema()["properties"]["waitSeconds"]["maximum"], 600);
+        assert_eq!(find("get_job").expect("job tool").timeout_secs, 110);
+        for field in ["summary", "includeMappings"] {
+            assert_eq!(job_schema()["properties"][field]["type"], "boolean");
+        }
+        assert_eq!(history_schema()["properties"]["jobId"]["format"], "uuid");
+        assert_eq!(history_schema()["properties"]["summary"]["type"], "boolean");
+        assert_eq!(publish_schema()["properties"]["normalizeCenter"]["type"], "boolean");
+        assert_eq!(folder_schema()["properties"]["normalizeCenter"]["type"], "boolean");
+        assert_eq!(apply_mesh_schema()["required"], json!(["meshId", "instancePath"]));
+        assert_eq!(access_schema()["oneOf"].as_array().expect("exclusive targets").len(), 2);
     }
 }

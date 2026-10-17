@@ -6,6 +6,7 @@ export const terminalStages = new Set<AssetStage>(['done', 'error', 'skipped', '
 export function stageFromResult(result: SpooferAssetResult): AssetStage {
   if (result.cancelled) return 'cancelled';
   if (result.skipped) return 'skipped';
+  if (result.moderation === 'rejected' || result.permission?.status === 'failed') return 'error';
   return result.success ? 'done' : 'error';
 }
 
@@ -52,7 +53,20 @@ export function mergeJobResults(
 ): SpooferAssetResult[] {
   const byId = new Map<string, SpooferAssetResult>();
   for (const result of [...previous, ...results]) {
-    if (result.id) byId.set(result.id, result);
+    if (!result.id) continue;
+    const existing = byId.get(result.id);
+    const sameUpload =
+      existing &&
+      (existing.assetId ?? existing.meshId ?? existing.imageId ?? existing.newId) ===
+        (result.assetId ?? result.meshId ?? result.imageId ?? result.newId);
+    byId.set(
+      result.id,
+      sameUpload &&
+        result.moderation === 'pending' &&
+        (existing.moderation === 'approved' || existing.moderation === 'rejected')
+        ? { ...result, moderation: existing.moderation }
+        : result,
+    );
   }
   return [...byId.values()];
 }
@@ -65,7 +79,9 @@ export function jobReplacements(
   const pairs =
     results.length > 0
       ? results
-          .filter((result) => result.success && !result.cancelled)
+          .filter(
+            (result) => result.success && !result.cancelled && result.moderation !== 'rejected',
+          )
           .map((result) => [result.id, result.newId ?? result.newAssetId ?? result.new_asset_id])
       : assetIds.map((id) => [id, history[id]]);
   return Object.fromEntries(

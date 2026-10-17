@@ -91,6 +91,46 @@ pub async fn push_to_studio(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn apply_mesh_to_studio(
+    mesh_id: String,
+    instance_path: String,
+    mesh_part_name: Option<String>,
+    session_id: Option<String>,
+    preserve_size: Option<bool>,
+) -> Result<crate::commands::AnyValue, String> {
+    let request = crate::studio_bridge::mesh::MeshApplyRequest::new(
+        mesh_id,
+        instance_path,
+        mesh_part_name,
+        preserve_size,
+    )?;
+    let operation_id = request.operation_id.clone();
+    let (_, data) =
+        crate::studio_bridge::sessions::registry().resolve(session_id.as_deref(), true).await?;
+    let receiver = {
+        let mut guard = data.write().await;
+        crate::studio_bridge::mesh::queue_mesh_apply(&mut guard, request)?
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(90), receiver).await {
+        Ok(Ok(result)) => result.map(crate::commands::AnyValue),
+        Ok(Err(_)) => Err("Studio disconnected before reporting the mesh operation result.".into()),
+        Err(_) => {
+            let mut guard = data.write().await;
+            let pending = guard
+                .pending_mesh_apply
+                .as_ref()
+                .filter(|pending| pending.request.operation_id == operation_id);
+            if pending.is_some_and(|pending| !pending.delivered) {
+                guard.pending_mesh_apply = None;
+                return Err("Studio did not receive the mesh operation within 90 seconds; it was cancelled. Reconnect the Studio plugin and try again.".into());
+            }
+            Err(format!("Studio did not report mesh operation {operation_id} within 90 seconds. It may still complete; check Studio before retrying."))
+        }
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn get_studio_local_references(
     session_id: Option<String>,
 ) -> Result<Vec<crate::studio_bridge::local_references::StudioLocalReference>, String> {

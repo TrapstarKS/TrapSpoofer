@@ -184,6 +184,10 @@ impl JobContext {
                     .and_then(|value| value.as_str())
                     .unwrap_or_default(),
             );
+            let _ = self.app.emit(
+                "spoofer-asset-result",
+                serde_json::json!({"jobId": self.job_id, "result": result}),
+            );
             results.push(result);
             let _ = self.app.emit(
                 "spoofer-progress",

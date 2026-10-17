@@ -14,8 +14,11 @@ import {
 import * as spoofer from '../services/spoofer';
 import { useConfigStore } from '../stores/configStore';
 import { useSessionStore } from '../stores/sessionStore';
+import { useSpooferStore } from '../stores/spooferStore';
 import { useStudioSessionsStore } from '../stores/studioSessionsStore';
+import type { SpooferAssetResult } from '../types/tauriEvents';
 import { loadCachedGroups } from '../utils/robloxProfiles';
+import { historicalJob, historyResponse, jobResponse } from './jobs';
 import {
   configuredPermissions,
   getSettings,
@@ -102,6 +105,7 @@ const publishOptionsSchema = z.object({
   pushToStudio: z.boolean().optional(),
   studioSessionId: z.string().optional(),
   dry_run: z.boolean().optional(),
+  normalizeCenter: z.boolean().optional(),
 });
 const publishSchema = publishOptionsSchema
   .extend({
@@ -136,6 +140,7 @@ async function publishAssets(input: z.infer<typeof publishSchema>) {
     files: input.files,
     profileId: destination.profile,
     groupId: destination.groupId,
+    normalizeCenter: input.normalizeCenter ?? false,
   });
   if (input.dry_run)
     return {
@@ -392,6 +397,116 @@ export const handlers: Record<string, ToolHandler> = {
     });
   },
 
+  async lookup_ids(args) {
+    const { ids } = z
+      .object({ ids: z.array(z.string().min(1)).min(1).max(1000) })
+      .strict()
+      .parse(args);
+    const history = await invoke<Array<{ assetResults?: SpooferAssetResult[] }>>('get_jobs');
+    const results = [
+      ...spoofer.jobSnapshot().assets,
+      ...history.flatMap((job) => job.assetResults ?? []),
+    ];
+    const wanted = new Set(ids);
+    const byId = new Map<string, SpooferAssetResult>();
+    for (const asset of results) {
+      for (const alias of [
+        asset.id,
+        asset.path,
+        asset.newId,
+        asset.assetId,
+        asset.meshId,
+        asset.imageId,
+      ]) {
+        if (alias && wanted.has(alias) && !byId.has(alias)) byId.set(alias, asset);
+      }
+    }
+    return ids.map((id) => {
+      const result = byId.get(id);
+      return {
+        id,
+        found: Boolean(result),
+        newId: result?.meshId ?? result?.imageId ?? result?.newId ?? null,
+        type: result?.type ?? result?.assetType ?? null,
+        moderation: result?.moderation ?? null,
+      };
+    });
+  },
+
+  async check_access(args) {
+    const input = z
+      .object({
+        assetIds: z.array(idSchema).min(1).max(1000),
+        universeId: idSchema.optional(),
+        groupId: idSchema.optional(),
+      })
+      .strict()
+      .refine(
+        (value) => Boolean(value.universeId) !== Boolean(value.groupId),
+        'Provide universeId or groupId',
+      )
+      .parse(args);
+    const target = spoofer.getActiveTarget();
+    return invoke('check_asset_access', {
+      ...input,
+      assetIds: [...new Set(input.assetIds)],
+      universeId: input.universeId ?? null,
+      groupId: input.groupId ?? null,
+      cookie: target.cookie || null,
+      apiKey: target.apiKey || null,
+    });
+  },
+
+  async recheck_moderation(args) {
+    const { assetIds } = z
+      .object({ assetIds: z.array(idSchema).min(1).max(1000) })
+      .strict()
+      .parse(args);
+    const target = spoofer.getActiveTarget();
+    const updates = await invoke<
+      Array<{ assetId: string; moderation: SpooferAssetResult['moderation']; checked: boolean }>
+    >('recheck_asset_moderation', {
+      assetIds: [...new Set(assetIds)],
+      pendingAssets: spoofer.jobSnapshot().assets,
+      cookie: target.cookie || null,
+      apiKey: target.apiKey || null,
+    });
+    const checked = new Map(
+      updates.filter((item) => item.checked).map((item) => [item.assetId, item]),
+    );
+    useSpooferStore.setState((state) => ({
+      lastAssetResults: state.lastAssetResults.map((result) => {
+        const update = [result.id, result.newId, result.assetId, result.meshId, result.imageId]
+          .map((id) => (id ? checked.get(id) : undefined))
+          .find(Boolean);
+        return update?.moderation ? { ...result, moderation: update.moderation } : result;
+      }),
+    }));
+    return updates;
+  },
+
+  async apply_mesh_to_studio(args) {
+    const input = z
+      .object({
+        meshId: idSchema,
+        instancePath: z.string().min(1).max(4096),
+        meshPartName: z.string().min(1).max(100).optional(),
+        studioSessionId: z.string().optional(),
+        preserveSize: z.boolean().optional(),
+      })
+      .strict()
+      .parse(args);
+    await studioStatus();
+    selectStudioSession(input.studioSessionId);
+    return invoke('apply_mesh_to_studio', {
+      meshId: input.meshId,
+      instancePath: input.instancePath,
+      meshPartName: input.meshPartName ?? null,
+      sessionId: input.studioSessionId ?? useStudioSessionsStore.getState().selectedSessionId,
+      preserveSize: input.preserveSize ?? true,
+    });
+  },
+
   async retry_failed(args) {
     const { jobId } = z.object({ jobId: z.string().uuid() }).strict().parse(args);
     const snapshot = spoofer.jobSnapshot();
@@ -426,6 +541,7 @@ export const handlers: Record<string, ToolHandler> = {
         started: true,
         ...(await spoofer.runAssetAction({
           files: files.filter((file) => uploadFailures.some((result) => result.id === file.path)),
+          ...(config.normalizeCenter === true ? { normalizeCenter: true } : {}),
           assetIds: permissionIds,
           profile: account?.id,
           groupId,
@@ -466,28 +582,33 @@ export const handlers: Record<string, ToolHandler> = {
   },
 
   async get_job(args) {
-    const wait = Math.min(600, num(args.waitSeconds, 0));
-    const jobId = str(args.jobId);
+    const input = z
+      .object({
+        jobId: z.string().uuid().optional(),
+        waitSeconds: z.number().finite().optional(),
+        includeMappings: z.boolean().optional(),
+        summary: z.boolean().optional(),
+      })
+      .strict()
+      .parse(args);
+    const wait = Math.max(0, Math.min(100, input.waitSeconds ?? 0));
+    const jobId = input.jobId;
     if (jobId && jobId !== spoofer.jobSnapshot().jobId) {
       const jobs = await invoke<Array<Record<string, unknown>>>('get_jobs');
       const job = jobs.find((item) => item.id === jobId);
       if (!job) throw new Error('Job not found');
-      const assets = (job.assetResults ??
-        []) as import('../types/tauriEvents').SpooferAssetResult[];
-      return {
-        running: false,
-        jobId,
-        ...job,
-        assets,
-        pathMappings: Object.fromEntries(
-          assets
-            .filter((r) => r.path && r.newId && r.moderation !== 'rejected')
-            .map((r) => [r.path, `rbxassetid://${r.meshId ?? r.imageId ?? r.newId}`]),
-        ),
-      };
+      return jobResponse(historicalJob(job), input);
     }
-    if (wait > 0) await spoofer.waitForJob(wait * 1000);
-    return spoofer.jobSnapshot();
+    const requestedJobId = jobId ?? spoofer.jobSnapshot().jobId;
+    if (wait > 0) await spoofer.waitForJob(wait * 1000, requestedJobId);
+    const snapshot = spoofer.jobSnapshot();
+    if (requestedJobId && snapshot.jobId !== requestedJobId) {
+      const jobs = await invoke<Array<Record<string, unknown>>>('get_jobs');
+      const job = jobs.find((item) => item.id === requestedJobId);
+      if (!job) throw new Error('Job not found');
+      return jobResponse(historicalJob(job), input);
+    }
+    return jobResponse(snapshot, input);
   },
 
   async cancel_job() {
@@ -541,8 +662,19 @@ export const handlers: Record<string, ToolHandler> = {
   },
 
   async get_history(args) {
+    const input = z
+      .object({
+        jobId: z.string().uuid().optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+        summary: z.boolean().optional(),
+      })
+      .strict()
+      .parse(args);
     const jobs = await invoke<Array<Record<string, unknown>>>('get_jobs');
-    return jobs.slice(0, Math.min(50, num(args.limit, 10)));
+    return jobs
+      .filter((job) => !input.jobId || job.id === input.jobId)
+      .slice(0, input.limit ?? 10)
+      .map((job) => historyResponse(job, input.summary));
   },
 
   async write_spoofed_file(args) {

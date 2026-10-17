@@ -5,6 +5,8 @@ use validator::Validate;
 pub struct SpooferActionRequest {
     #[serde(rename = "publishFiles")]
     pub publish_files: Option<Vec<super::publish::PublishFile>>,
+    #[serde(rename = "normalizeCenter")]
+    pub normalize_center: Option<bool>,
     #[serde(rename = "grantPermissions")]
     pub grant_permissions: Option<super::publish::GrantPermissions>,
     #[serde(rename = "permissionAssetIds")]

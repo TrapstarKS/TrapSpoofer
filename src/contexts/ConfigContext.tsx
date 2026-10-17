@@ -5,6 +5,7 @@ import { type AppConfig, useConfigStore } from '../stores/configStore';
 import type { AssetStage } from '../stores/spooferStore';
 import { applyReplacements, useSpooferStore } from '../stores/spooferStore';
 import type {
+  SpooferAssetResult,
   SpooferLogPayload,
   SpooferProgressPayload,
   SpooferResultPayload,
@@ -90,6 +91,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           });
         }
         setIsSpoofing(true);
+        useSpooferStore.setState({ jobStatus: 'running' });
         setSpoofProgress(0);
         setSpoofStatusText('Initializing...');
         setSpoofCurrentCount(0);
@@ -141,13 +143,17 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const state = useSpooferStore.getState();
         const target = state.jobTarget;
         const startTime = state.spoofStartTime;
+        const partialResults = new Map(state.lastAssetResults.map((result) => [result.id, result]));
         const batchResults = normalizeJobResults(
           e.payload.assetResults ?? e.payload.results ?? [],
           state.assetMetadataMap,
           e.payload.error || e.payload.output || 'Job stopped before this asset finished',
           e.payload.cancelled,
+        ).map((result) => mergeJobResults([partialResults.get(result.id) ?? result], [result])[0]);
+        const results = mergeJobResults(
+          mergeJobResults(target?.previousResults ?? [], state.lastAssetResults),
+          batchResults,
         );
-        const results = mergeJobResults(target?.previousResults ?? [], batchResults);
 
         setSpoofStartTime(null);
         setLastAssetResults(results);
@@ -155,6 +161,12 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         incrementSpoofCompletionVersion();
         useSpooferStore.setState({
           isJobPaused: false,
+          jobStatus:
+            e.payload.error ||
+            e.payload.success === false ||
+            batchResults.some((result) => stageFromResult(result) === 'error')
+              ? 'failed'
+              : 'finished',
           lastJobId: e.payload.jobId ?? state.lastJobId,
           jobTarget: null,
           lastJobTarget: target
@@ -197,6 +209,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           message = `Job finished: ${ok} completed, ${skipped} skipped, ${failed} failed, ${cancelled} cancelled out of ${total} assets in ${durationSec}s (${avgMsPerAsset}ms/asset).`;
         }
         useSpooferStore.getState().showToast(level, message, 6000);
+        setSpoofStatusText(message);
         logIsm(
           level === 'error' ? 'error' : level === 'success' ? 'success' : 'info',
           message,
@@ -243,6 +256,17 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         setIsSpoofing(false);
         setActiveSpooferJobId(null);
       });
+
+      const partial = listen<{ jobId: string; result: SpooferAssetResult }>(
+        'spoofer-asset-result',
+        (e) => {
+          if (!accepts(e.payload.jobId)) return;
+          const state = useSpooferStore.getState();
+          if (!e.payload.result.id || !Object.hasOwn(state.assetMetadataMap, e.payload.result.id))
+            return;
+          setLastAssetResults(mergeJobResults(state.lastAssetResults, [e.payload.result]));
+        },
+      );
 
       const p5 = listen<{
         id: string;
@@ -334,7 +358,7 @@ export const ConfigProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         invoke('set_plugin_batch_size', { batchSize: currentBatch }).catch(() => {});
       });
 
-      const uns = await Promise.all([p1, p2, p3, p4, p5, p6, p8, p9, p10]);
+      const uns = await Promise.all([p1, p2, p3, p4, partial, p5, p6, p8, p9, p10]);
       if (!isMounted) {
         uns.forEach((u) => u());
       } else {

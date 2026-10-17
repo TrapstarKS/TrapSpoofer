@@ -63,6 +63,7 @@ export interface LastJobTarget {
 }
 
 interface SpooferState {
+  jobStatus: 'queued' | 'running' | 'finished' | 'failed';
   replacingSessionId: string | null;
   replacementOperationId: string | null;
   jobTarget: JobTarget | null;
@@ -243,6 +244,7 @@ const loadSavedPlaceIds = (): Record<string, string> => {
 };
 
 export const useSpooferStore = create<SpooferState>((set) => ({
+  jobStatus: 'finished',
   replacingSessionId: null,
   replacementOperationId: null,
   jobTarget: null,

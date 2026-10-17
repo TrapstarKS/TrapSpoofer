@@ -1,5 +1,6 @@
 use super::state::{begin_spoofer_job, finish_spoofer_job, wait_if_paused};
 use super::types::SpooferActionRequest;
+use crate::commands::spoofer::mesh::{prepare_upload, MeshBounds};
 use crate::commands::spoofer::permissions::{
     permission_status, sanitize_response, validate_permission_targets,
 };
@@ -50,6 +51,9 @@ pub struct PublishFileInspection {
     pub cached_asset_id: Option<String>,
     pub error: Option<String>,
     pub warnings: Vec<String>,
+    pub bounds: Option<MeshBounds>,
+    pub source_bounds: Option<MeshBounds>,
+    pub axis_conversion: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -87,12 +91,19 @@ fn cache_write(path: &Path, key: &str, value: &CachedUpload) -> Result<(), Strin
     Ok(())
 }
 
-fn cache_key(hash: &str, profile_id: Option<&str>, group_id: Option<&str>, kind: &str) -> String {
+fn cache_key(
+    hash: &str,
+    profile_id: Option<&str>,
+    group_id: Option<&str>,
+    kind: &str,
+    normalize_center: bool,
+) -> String {
     hex::encode(Sha256::digest(
         format!(
-            "{hash}|profile:{}|group:{}|type:{kind}",
+            "{hash}|profile:{}|group:{}|type:{kind}{}",
             profile_id.unwrap_or_default(),
-            group_id.unwrap_or_default()
+            group_id.unwrap_or_default(),
+            if kind == "Mesh" && normalize_center { "|normalizeCenter:true:v1" } else { "" }
         )
         .as_bytes(),
     ))
@@ -221,6 +232,7 @@ pub async fn inspect_publish_files(
     files: Vec<PublishFile>,
     profile_id: Option<String>,
     group_id: Option<String>,
+    normalize_center: Option<bool>,
 ) -> crate::error::Result<Vec<PublishFileInspection>> {
     if files.len() > 1000 {
         return Err("Inspect at most 1000 files at a time".into());
@@ -245,6 +257,9 @@ pub async fn inspect_publish_files(
             cached_asset_id: None,
             error: None,
             warnings: vec![],
+            bounds: None,
+            source_bounds: None,
+            axis_conversion: None,
         };
         match read_local(&file).await {
             Ok((path, bytes, kind)) => {
@@ -254,7 +269,13 @@ pub async fn inspect_publish_files(
                 inspection.sha256 = Some(hash.clone());
                 match cache_read(
                     &cache_path,
-                    &cache_key(&hash, profile_id.as_deref(), group_id.as_deref(), kind),
+                    &cache_key(
+                        &hash,
+                        profile_id.as_deref(),
+                        group_id.as_deref(),
+                        kind,
+                        normalize_center.unwrap_or(false),
+                    ),
                 ) {
                     Ok(Some(cached)) => {
                         inspection.cache_hit = cached.asset_id.is_some()
@@ -269,8 +290,21 @@ pub async fn inspect_publish_files(
                     Err(error) => inspection.error = Some(error),
                 }
                 let ext = path.extension().and_then(|value| value.to_str()).unwrap_or_default();
-                if ext.eq_ignore_ascii_case("mesh") || ext.eq_ignore_ascii_case("obj") {
-                    inspection.warnings.push("Converted to static GLB geometry. Materials, rigging and facial animation are not preserved".into());
+                if kind == "Mesh" {
+                    match prepare_upload(&bytes, ext, normalize_center.unwrap_or(false)) {
+                        Ok(mesh) => {
+                            if mesh.bytes.len() as u64 > MAX_UPLOAD_BYTES {
+                                inspection.error = Some("Converted file exceeds Roblox's 20 MiB upload limit".into());
+                            }
+                            inspection.bounds = Some(mesh.bounds);
+                            inspection.source_bounds = Some(mesh.source_bounds);
+                            inspection.axis_conversion = Some(mesh.axis_conversion);
+                            inspection.warnings.extend(mesh.warnings);
+                            inspection.warnings.push("Inspection bounds are local source/default-pose previews using numeric Studs scale. Published bounds are measured from the uploaded Roblox mesh after import".into());
+                        }
+                        Err(error) if normalize_center.unwrap_or(false) => inspection.error = Some(error),
+                        Err(error) => inspection.warnings.push(format!("Local mesh bounds unavailable; uploaded Roblox geometry will be measured: {error}")),
+                    }
                 }
             }
             Err(error) => inspection.error = Some(error),
@@ -486,6 +520,69 @@ fn model_mesh_ids(bytes: &[u8]) -> Result<Vec<String>, String> {
     Ok(ids)
 }
 
+async fn download_asset_bytes(
+    client: &reqwest::Client,
+    auth: &UploadAuth,
+    asset_id: &str,
+    use_key: bool,
+) -> Result<Vec<u8>, String> {
+    let response = auth
+        .apply(client.get(if use_key {
+            format!("https://apis.roblox.com/asset-delivery-api/v1/assetId/{asset_id}")
+        } else {
+            format!("https://assetdelivery.roblox.com/v1/asset/?id={asset_id}")
+        }))
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|_| "Network error while downloading uploaded asset")?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Could not download uploaded asset (HTTP {})",
+            response.status().as_u16()
+        ));
+    }
+    if response.content_length().is_some_and(|size| size > 100 * 1024 * 1024) {
+        return Err("Uploaded asset exceeds the download size limit".into());
+    }
+    let mut bytes = response.bytes().await.map_err(|_| "Could not read uploaded model")?.to_vec();
+    if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+        let location = value
+            .get("location")
+            .and_then(Value::as_str)
+            .or_else(|| value.pointer("/locations/0/location").and_then(Value::as_str))
+            .ok_or("Roblox returned no Model download location")?;
+        let url = reqwest::Url::parse(location)
+            .map_err(|_| "Roblox returned an invalid Model download location")?;
+        let host = url.host_str().unwrap_or_default();
+        if url.scheme() != "https"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || !(host == "rbxcdn.com"
+                || host.ends_with(".rbxcdn.com")
+                || host.ends_with(".roblox.com"))
+        {
+            return Err("Roblox returned an untrusted Model download location".into());
+        }
+        let response = client
+            .get(url)
+            .timeout(Duration::from_secs(20))
+            .send()
+            .await
+            .map_err(|_| "Could not download uploaded Model")?;
+        if !response.status().is_success()
+            || response.content_length().is_some_and(|size| size > 100 * 1024 * 1024)
+        {
+            return Err("Uploaded Model download failed or exceeded its size limit".into());
+        }
+        bytes = response.bytes().await.map_err(|_| "Could not read uploaded Model")?.to_vec();
+    }
+    if bytes.len() > 100 * 1024 * 1024 {
+        return Err("Uploaded asset exceeds the download size limit".into());
+    }
+    Ok(bytes)
+}
+
 async fn resolve_model_mesh_id(
     asset_id: &str,
     cookie: &str,
@@ -500,71 +597,33 @@ async fn resolve_model_mesh_id(
         if attempt > 0 {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
-        let response = auth
-            .apply(client.get(if use_key {
-                format!("https://apis.roblox.com/asset-delivery-api/v1/assetId/{asset_id}")
-            } else {
-                format!("https://assetdelivery.roblox.com/v1/asset/?id={asset_id}")
-            }))
-            .timeout(Duration::from_secs(20))
-            .send()
-            .await;
-        match response {
-            Ok(response) if response.status().is_success() => {
-                let mut bytes =
-                    response.bytes().await.map_err(|_| "Could not read uploaded model")?.to_vec();
-                if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
-                    let location = value
-                        .get("location")
-                        .and_then(Value::as_str)
-                        .or_else(|| value.pointer("/locations/0/location").and_then(Value::as_str))
-                        .ok_or("Roblox returned no Model download location")?;
-                    let url = reqwest::Url::parse(location)
-                        .map_err(|_| "Roblox returned an invalid Model download location")?;
-                    let host = url.host_str().unwrap_or_default();
-                    if url.scheme() != "https"
-                        || !url.username().is_empty()
-                        || url.password().is_some()
-                        || !(host == "rbxcdn.com"
-                            || host.ends_with(".rbxcdn.com")
-                            || host.ends_with(".roblox.com"))
-                    {
-                        return Err("Roblox returned an untrusted Model download location".into());
-                    }
-                    let response = client
-                        .get(url)
-                        .timeout(Duration::from_secs(20))
-                        .send()
-                        .await
-                        .map_err(|_| "Could not download uploaded Model")?;
-                    if !response.status().is_success()
-                        || response.content_length().is_some_and(|size| size > 100 * 1024 * 1024)
-                    {
-                        return Err(
-                            "Uploaded Model download failed or exceeded its size limit".into()
-                        );
-                    }
-                    bytes = response
-                        .bytes()
-                        .await
-                        .map_err(|_| "Could not read uploaded Model")?
-                        .to_vec();
-                }
-                match model_mesh_ids(&bytes) {Ok(ids) if ids.len()==1=>return Ok(ids[0].clone()),Ok(ids)=>return Err(format!("Model contains {} MeshParts; choose a single-mesh file to get an unambiguous game mesh ID",ids.len())),Err(error)=>last_error=error}
+        match download_asset_bytes(&client, &auth, asset_id, use_key).await {
+            Ok(bytes) => match model_mesh_ids(&bytes) {
+                Ok(ids) if ids.len() == 1 => return Ok(ids[0].clone()),
+                Ok(ids) => return Err(format!("Model contains {} MeshParts; choose a single-mesh file to get an unambiguous game mesh ID", ids.len())),
+                Err(error) => last_error = error,
+            },
+            Err(error) => {
+                let unauthorized = error.contains("HTTP 401") || error.contains("HTTP 403");
+                last_error = error;
+                if unauthorized { break; }
             }
-            Ok(response) => {
-                last_error = format!(
-                    "Could not resolve uploaded Model mesh ID (HTTP {})",
-                    response.status().as_u16()
-                );
-                if matches!(response.status().as_u16(), 401 | 403) {
-                    break;
-                }
-            }
-            Err(_) => last_error = "Network error while resolving uploaded Model mesh ID".into(),
         }
     }
     Err(last_error)
+}
+
+async fn uploaded_mesh_bounds(
+    mesh_id: &str,
+    cookie: &str,
+    api_key: &str,
+    csrf: &str,
+) -> Result<MeshBounds, String> {
+    let client = crate::utils::get_http_client();
+    let use_key = cookie.trim().is_empty() && !api_key.trim().is_empty();
+    let auth = UploadAuth::new(if use_key { Some(api_key) } else { None }, cookie, csrf)?;
+    let bytes = download_asset_bytes(&client, &auth, mesh_id, use_key).await?;
+    crate::commands::spoofer::mesh::roblox_bounds(&bytes)
 }
 
 fn moderation_from_value(value: &Value) -> &'static str {
@@ -752,7 +811,7 @@ async fn run_publish_job(
         } else {
             json!({"status":"not_requested"})
         };
-        let result = json!({"id":asset_id,"assetId":asset_id,"newId":asset_id,"type":"permission","name":format!("Asset {asset_id}"),"success":permission["status"]=="granted","errorReason":permission.get("reason"),"permission":permission});
+        let result = json!({"jobId":job_id,"id":asset_id,"assetId":asset_id,"newId":asset_id,"type":"permission","name":format!("Asset {asset_id}"),"success":permission["status"]=="granted","errorReason":permission.get("reason"),"permission":permission});
         log_result(app, &log_path, &result);
         results.push(result);
         emit_progress(app, job_id, results.len(), total);
@@ -778,12 +837,14 @@ async fn run_publish_job(
     } else {
         "errored"
     };
-    if let Err(error)=crate::commands::jobs::persist_job(app,json!({"id":job_id,"status":status,"startTime":start.to_rfc3339(),"endTime":end.to_rfc3339(),"durationMs":(end-start).num_milliseconds(),"account":creator_metadata(data.account.as_ref()),"group":creator_metadata(data.group.as_ref()),"assetResults":results,"config":{"kind":if files.is_empty(){"permissions"}else{"publish"},"publishFiles":files,"permissionAssetIds":permission_ids,"grantPermissions":data.grant_permissions,"groupId":data.group_id},"logFilePath":log_path.to_string_lossy()})).await {let _=crate::commands::ipc::append_log_entry(app,"error","publish",&format!("Could not save publishing history: {error}"));}
+    if let Err(error)=crate::commands::jobs::persist_job(app,json!({"id":job_id,"status":status,"startTime":start.to_rfc3339(),"endTime":end.to_rfc3339(),"durationMs":(end-start).num_milliseconds(),"account":creator_metadata(data.account.as_ref()),"group":creator_metadata(data.group.as_ref()),"assetResults":results,"config":{"kind":if files.is_empty(){"permissions"}else{"publish"},"publishFiles":files,"normalizeCenter":data.normalize_center.unwrap_or(false),"permissionAssetIds":permission_ids,"grantPermissions":data.grant_permissions,"groupId":data.group_id},"logFilePath":log_path.to_string_lossy()})).await {let _=crate::commands::ipc::append_log_entry(app,"error","publish",&format!("Could not save publishing history: {error}"));}
     let _=app.emit("spoofer-result",json!({"jobId":job_id,"success":success,"partial":!success&&succeeded>0,"cancelled":cancelled,"assetResults":results,"replacements":replacements,"localPathReplacements":replacements,"output":format!("Processed {succeeded}/{total} assets"),"logFilePath":log_path.to_string_lossy()}));
     Ok(())
 }
 
 fn log_result(app: &AppHandle, path: &Path, result: &Value) {
+    let _ =
+        app.emit("spoofer-asset-result", json!({"jobId": result.get("jobId"), "result": result}));
     let success = result["success"] == true;
     let message = format!(
         "{}: {}{}",
@@ -832,7 +893,28 @@ async fn publish_one(
 ) -> Result<Value, String> {
     let (path, bytes, kind) = read_local(file).await?;
     let hash = hex::encode(Sha256::digest(&bytes));
-    let key = cache_key(&hash, user_id, data.group_id.as_deref(), kind);
+    let normalize_center = data.normalize_center.unwrap_or(false) && kind == "Mesh";
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or_default();
+    let mut mesh_warnings = Vec::new();
+    let mesh = if kind == "Mesh" {
+        match prepare_upload(&bytes, extension, normalize_center) {
+            Ok(mesh) => Some(mesh),
+            Err(error) if normalize_center => return Err(error),
+            Err(error) => {
+                mesh_warnings.push(format!("Local mesh bounds unavailable: {error}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let mut bounds = None;
+    let source_bounds = mesh.as_ref().map(|mesh| mesh.source_bounds);
+    let mut axis_conversion = mesh.as_ref().map(|mesh| mesh.axis_conversion.clone());
+    if let Some(mesh) = &mesh {
+        mesh_warnings.extend(mesh.warnings.clone());
+    }
+    let key = cache_key(&hash, user_id, data.group_id.as_deref(), kind, normalize_center);
     let previous = cache_read(cache_path, &key)?;
     let cache_hit = previous.as_ref().is_some_and(|cached| {
         cached.asset_id.is_some() || cached.operation_path.is_some() || cached.uncertain
@@ -860,7 +942,11 @@ async fn publish_one(
             if receipt.uncertain {
                 return Err("A previous upload request has an uncertain outcome. Check Creator Hub before uploading again; retrying automatically could create a duplicate".into());
             }
-            let staged = stage_file(&path, bytes, staging).await?;
+            let staged = if let Some(mesh) = mesh {
+                stage_file(&path.with_extension(mesh.extension), mesh.bytes, staging).await?
+            } else {
+                stage_file(&path, bytes, staging).await?
+            };
             wait_if_paused(job_id).await.map_err(|error| error.to_string())?;
             receipt.uncertain = true;
             cache_write(cache_path, &key, &receipt)?;
@@ -955,6 +1041,30 @@ async fn publish_one(
         receipt.image_id = Some(asset_id.clone());
         cache_write(cache_path, &key, &receipt)?;
     }
+    let mut mesh_metadata_error = None;
+    if kind == "Mesh" {
+        axis_conversion = Some(format!("{} Published bounds are measured from the uploaded Roblox mesh vertex coordinates in studs (+Y up); source format axes and units are handled by Roblox's importer", axis_conversion.as_deref().unwrap_or("Source axes and units could not be decoded locally.")));
+        if let Some(mesh_id) = receipt.mesh_id.as_deref() {
+            match uploaded_mesh_bounds(mesh_id, cookie, api_key, csrf).await {
+                Ok(value) => {
+                    let tolerance =
+                        value.size.x.max(value.size.y).max(value.size.z).max(1.0) * 0.00001;
+                    if normalize_center
+                        && [value.center.x, value.center.y, value.center.z]
+                            .iter()
+                            .any(|coordinate| coordinate.abs() > tolerance)
+                    {
+                        mesh_metadata_error = Some("Roblox's imported mesh vertex bounds are not centered; the uploaded ID is retained for inspection".into());
+                    }
+                    bounds = Some(value);
+                }
+                Err(error) => mesh_metadata_error = Some(error),
+            }
+        } else {
+            mesh_metadata_error =
+                Some("Uploaded mesh ID is not available for bounds measurement".into());
+        }
+    }
     let actual_id = if kind == "Mesh" { receipt.mesh_id.clone() } else { Some(asset_id.clone()) };
     let moderation = wait_for_moderation(&asset_id, cookie, api_key, csrf).await;
     let permission = match (&data.grant_permissions, actual_id.as_deref()) {
@@ -964,21 +1074,37 @@ async fn publish_one(
         }
         _ => json!({"status":"not_requested"}),
     };
-    let success =
-        actual_id.is_some() && moderation != "rejected" && permission["status"] != "failed";
+    let success = actual_id.is_some()
+        && moderation != "rejected"
+        && permission["status"] != "failed"
+        && mesh_metadata_error.is_none();
     let error = resolution_error
         .or_else(|| {
             (moderation == "rejected").then(|| "Roblox moderation rejected this asset".into())
         })
         .or_else(|| permission.get("reason").and_then(Value::as_str).map(str::to_owned));
+    let error = error.or_else(|| {
+        mesh_metadata_error.as_ref().map(|error| {
+            format!("Upload completed, but mesh bounds are not available yet: {error}")
+        })
+    });
     Ok(
-        json!({"id":file.path,"path":file.path,"name":file.name.clone().unwrap_or_else(||path.file_stem().and_then(|value|value.to_str()).unwrap_or("Asset").into()),"type":kind.to_ascii_lowercase(),"assetId":asset_id,"meshId":receipt.mesh_id,"imageId":receipt.image_id,"newId":actual_id,"moderation":moderation,"cacheHit":cache_hit,"sha256":hash,"permission":permission,"success":success,"errorReason":error}),
+        json!({"id":file.path,"path":file.path,"name":file.name.clone().unwrap_or_else(||path.file_stem().and_then(|value|value.to_str()).unwrap_or("Asset").into()),"type":kind.to_ascii_lowercase(),"assetId":asset_id,"meshId":receipt.mesh_id,"imageId":receipt.image_id,"newId":actual_id,"moderation":moderation,"cacheHit":cache_hit,"sha256":hash,"permission":permission,"success":success,"errorReason":error,"bounds":bounds,"sourceBounds":source_bounds,"axisConversion":axis_conversion,"normalizeCenter":normalize_center,"warnings":mesh_warnings,"meshMetadataError":mesh_metadata_error}),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn normalization_is_optional_and_uses_the_public_camel_case_option() {
+        let defaults: SpooferActionRequest =
+            serde_json::from_value(json!({})).expect("legacy request");
+        assert_eq!(defaults.normalize_center, None);
+        let enabled: SpooferActionRequest =
+            serde_json::from_value(json!({"normalizeCenter":true})).expect("normalized request");
+        assert_eq!(enabled.normalize_center, Some(true));
+    }
     #[tokio::test]
     async fn gltf_dependency_changes_invalidate_fingerprint_and_resources_are_local() {
         let directory = std::env::temp_dir().join(format!("trap-gltf-{}", uuid::Uuid::new_v4()));
@@ -1002,12 +1128,26 @@ mod tests {
     #[test]
     fn cache_is_content_creator_and_type_scoped() {
         assert_ne!(
-            cache_key("hash", Some("1"), None, "Image"),
-            cache_key("hash", Some("2"), None, "Image")
+            cache_key("hash", Some("1"), None, "Mesh", false),
+            cache_key("hash", Some("1"), None, "Mesh", true)
+        );
+        assert_eq!(
+            cache_key("hash", Some("1"), None, "Image", false),
+            cache_key("hash", Some("1"), None, "Image", true),
+            "mesh normalization cannot invalidate image cache entries"
+        );
+        assert_eq!(
+            cache_key("hash", Some("1"), None, "Mesh", false),
+            hex::encode(Sha256::digest(b"hash|profile:1|group:|type:Mesh")),
+            "default cache keys remain compatible"
         );
         assert_ne!(
-            cache_key("hash", Some("1"), None, "Image"),
-            cache_key("hash", Some("1"), Some("2"), "Image")
+            cache_key("hash", Some("1"), None, "Image", false),
+            cache_key("hash", Some("2"), None, "Image", false)
+        );
+        assert_ne!(
+            cache_key("hash", Some("1"), None, "Image", false),
+            cache_key("hash", Some("1"), Some("2"), "Image", false)
         );
         let path =
             std::env::temp_dir().join(format!("trap-publish-{}.sqlite3", uuid::Uuid::new_v4()));

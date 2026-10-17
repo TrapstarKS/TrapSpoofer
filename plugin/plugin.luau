@@ -1,6 +1,11 @@
 --!nocheck
 --!nolint
 --# selene: allow(unused_variable, global_usage)
+local RunService = game:GetService("RunService")
+if RunService:IsRunning() or not RunService:IsEdit() then
+	return
+end
+
 local ASSET_PROPERTIES: { [string]: { string } } = {}
 local STRING_SCAN_PROPERTIES: { [string]: { string } } = {}
 
@@ -22,6 +27,7 @@ local BASE_URL: any
 --#include "src/scan/scanner.luau"
 --#include "src/patch/mesh.luau"
 --#include "src/patch/patcher.luau"
+--#include "src/patch/apply_mesh.luau"
 --#include "src/bridge/discovery.luau"
 --#include "src/bridge/polling.luau"
 

@@ -250,6 +250,15 @@ local function startPatchBatch(patches: any)
 	task.spawn(applyPatches, patches)
 end
 
+local function startMeshApply(request: any)
+	patchRunning = true
+	task.spawn(function()
+		local result = runMeshApplyRequest(request)
+		patchRunning = false
+		postJson("/mesh-apply-result", result)
+	end)
+end
+
 local function markConnectionLost(baseUrl: string, reason: string)
 	logToPlugin("[Warning] [TrapSpoofer] Lost connection to " .. baseUrl .. " (" .. reason .. ")")
 	setConnectionStatus(false)
@@ -279,7 +288,7 @@ local function getPollUrl(): string
 		creatorId = game.CreatorId
 	end)
 	return string.format(
-		"/poll?place_id=%s&place_name=%s&creator_type=%s&creator_id=%s",
+		"/poll?place_id=%s&place_name=%s&creator_type=%s&creator_id=%s&mesh_apply=true",
 		tostring(pId),
 		HttpService:UrlEncode(pName),
 		HttpService:UrlEncode(creatorType),
@@ -356,6 +365,17 @@ function startPolling(): ()
 				else
 					pollFailureStreak = 0
 					if type(decoded) == "table" then
+						if type(decoded.meshApply) == "table" then
+							if operationBusy() then
+								postJson("/mesh-apply-result", {
+									operationId = decoded.meshApply.operationId,
+									success = false,
+									error = "The Studio plugin is busy; try again after its current operation",
+								})
+							else
+								startMeshApply(decoded.meshApply)
+							end
+						end
 						if decoded.batchSize and type(setPluginBatchSize) == "function" then
 							setPluginBatchSize(decoded.batchSize)
 						end

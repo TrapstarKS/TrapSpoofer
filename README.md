@@ -228,6 +228,24 @@ Types are inferred from extensions: PNG/JPG/BMP/TGA, OGG/MP3/WAV/FLAC, FBX/OBJ/g
 
 `get_job({"jobId":"<returned UUID>","waitSeconds":30})` reports per-asset `imageId`/`meshId`, `cacheHit`, moderation (`approved`, `pending`, `rejected`), permission (`granted`, `failed` with reason, `not_requested`) and `pathMappings` (`absolute path -> rbxassetid://ID`). Moderation has a bounded wait and may remain pending. Upload receipts and IDs are cached durably by SHA-256 and profile/group; retries resume an accepted operation or reuse its asset rather than uploading a second copy. Files whose permissions failed keep their cached upload for recovery.
 
+Job responses contain only that job's assets. `status` is `queued`, `running`, `finished` or `failed`; `done` describes job completion, independently of pending Roblox moderation. The effective `waitSeconds` is capped at 100 seconds, including calls that previously requested 600. On timeout the response contains partial results and `done:false`; call again with the same `jobId`. `includeMappings:true` adds only the job's ID mappings. `summary:true` returns job state, counts and failures without asset payloads. `get_history` accepts `jobId`, `limit` and `summary`; full asset details are available through `get_job`, rather than repeated in history.
+
+Each successfully published mesh includes `bounds: {min,max,center,size}` with `{x,y,z}` vectors in Roblox studs, measured from the returned `meshId`, plus an `axisConversion` description. OBJ has no declared axes: XYZ is preserved as Y-up, without guessing a Blender export convention. FBX reports its declared axes and importer policy. `sourceBounds` describes the decoded source pose when available. `normalizeCenter:true` on `publish_assets` or `publish_folder` centers vertex geometry before upload and uses a separate cache entry. Normalizing FBX/glTF/GLB converts the default pose to static geometry and reports lost material/rigging/animation information in `warnings`; unsupported compressed geometry is rejected before a normalized upload. Default passthrough uploads remain supported. If Roblox has not made mesh bounds available yet, the result retains its uploaded IDs and a `meshMetadataError`; retrying reuses the upload.
+
+`apply_mesh_to_studio` applies a published mesh without a scan:
+
+```json
+{ "meshId": "123456789", "instancePath": "Workspace.MyModel.Body" }
+```
+
+For a Model path, also supply `meshPartName` to create a child at the Model's pivot. Existing MeshParts retain their identity, CFrame, Size, Color, Material, MaterialVariant, CanCollide, CastShadow and children, including Attachments, lights and particle emitters. `preserveSize:false` uses the loaded mesh dimensions; newly created parts also use those dimensions. `studioSessionId` selects a connected window. Update the bundled plugin first; it starts silently only in the Edit DataModel and does not connect in Play or Run. Save the place after applying.
+
+Lightweight queries return only the requested assets:
+
+- `lookup_ids({"ids":["123456789"]})` reads local original/uploaded IDs, type and moderation.
+- `check_access({"assetIds":["123456789"],"universeId":"987654321"})` checks Use access; supply either `universeId` or `groupId`. `permissionGranted` reports explicit grants; `canUse:true` confirms a grant or matching asset ownership. Unconfirmed access returns `canUse:null`, with a reason.
+- `recheck_moderation({"assetIds":["123456789"]})` queries only tracked pending uploads, updates local results and history, and never uploads or grants permissions.
+
 With `pushToStudio`, the existing plugin replaces matching local image/texture/clothing/mesh references, including MeshPart and SpecialMesh, and reports replacement errors through `get_job`. Paths from the last Studio scan are inferred; `studioPathMap` supplies explicit mappings. Save the place after applying replacements.
 
 For assets uploaded earlier, use `grant_permissions`:

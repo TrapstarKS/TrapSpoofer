@@ -1,4 +1,5 @@
 pub mod anim_parser;
+pub mod asset_queries;
 pub mod assets;
 pub mod auth;
 pub mod fs;

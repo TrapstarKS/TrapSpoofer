@@ -1,3 +1,6 @@
+export type MeshVector = { x: number; y: number; z: number };
+export type MeshBounds = { min: MeshVector; max: MeshVector; center: MeshVector; size: MeshVector };
+
 export type TauriEventPayload<T> = {
   payload: T;
 };
@@ -36,6 +39,12 @@ export type SpooferAssetResult = {
   imageId?: string;
   moderation?: 'approved' | 'pending' | 'rejected';
   cacheHit?: boolean;
+  bounds?: MeshBounds | null;
+  sourceBounds?: MeshBounds | null;
+  axisConversion?: string | null;
+  normalizeCenter?: boolean;
+  meshMetadataError?: string | null;
+  warnings?: string[];
   permission?: { status: 'granted' | 'failed' | 'not_requested'; reason?: string };
   reason?: string;
 };

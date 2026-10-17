@@ -16,9 +16,11 @@ pub struct PollQuery {
     pub place_name: Option<String>,
     pub creator_type: Option<String>,
     pub creator_id: Option<String>,
+    pub mesh_apply: Option<bool>,
 }
 
 fn update_poll_identity(guard: &mut super::messages::AssetServerStateData, query: &PollQuery) {
+    guard.supports_mesh_apply = query.mesh_apply == Some(true);
     if let Some(name) = query.place_name.as_deref().filter(|name| !name.trim().is_empty()) {
         guard.studio_place_name = Some(name.to_string());
     }
@@ -76,6 +78,7 @@ pub async fn handle_scan_start(
         return Json(serde_json::json!({"success": true}));
     }
     if guard.active_scan_id.is_some()
+        || guard.pending_mesh_apply.is_some()
         || (guard.requested_scan_id.is_some() && guard.requested_scan_id != state.scan_id)
         || (state.scan_id.is_some() && guard.completed_scan_id == state.scan_id)
     {
@@ -383,6 +386,12 @@ pub async fn handle_poll(
             let mut guard = state.data.write().await;
             guard.last_plugin_poll_time = Some(Instant::now());
             update_poll_identity(&mut guard, &query);
+            if let Some(pending) = guard.pending_mesh_apply.as_mut() {
+                if !pending.delivered {
+                    pending.delivered = true;
+                    return Json(serde_json::json!({ "meshApply": pending.request }));
+                }
+            }
             let request_assets = guard.request_sounds
                 || guard.request_animations
                 || guard.request_images
@@ -536,6 +545,7 @@ pub async fn request_scan(
     if guard.active_scan_id.is_some()
         || guard.requested_scan_id.is_some()
         || guard.pending_patch_id.is_some()
+        || guard.pending_mesh_apply.is_some()
     {
         return Json(
             serde_json::json!({"success": false, "error": "The selected Studio window is busy."}),

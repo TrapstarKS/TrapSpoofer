@@ -1,5 +1,6 @@
 pub(crate) mod animation;
 pub mod local_references;
+pub(crate) mod mesh;
 pub mod messages;
 pub mod middleware;
 mod owners;
@@ -110,6 +111,7 @@ pub async fn queue_replace_mappings_internal(
         return Ok(session_id);
     }
     if guard.pending_patch_id.is_some()
+        || guard.pending_mesh_apply.is_some()
         || guard.active_scan_id.is_some()
         || guard.requested_scan_id.is_some()
     {
@@ -277,6 +279,7 @@ pub async fn start_server(app_handle: AppHandle) {
         .route("/script-refs-complete", post(handle_script_refs_complete))
         .route("/poll-replacements", get(handle_poll_replacements))
         .route("/patch-results", post(handle_patch_results))
+        .route("/mesh-apply-result", post(mesh::handle_mesh_apply_result))
         .route("/replace-ids", post(handle_replace_ids))
         .route("/last-sounds", get(get_last_sounds))
         .route("/last-animations", get(get_last_animations))
@@ -515,6 +518,8 @@ pub async fn get_studio_health_status(session_id: Option<String>) -> AnyValue {
                 "studioCreatorType": guard.studio_creator_type, "studioCreatorId": guard.studio_creator_id,
                 "activeScanId": guard.active_scan_id, "requestedScanId": guard.requested_scan_id,
                 "pendingPatchId": guard.pending_patch_id,
+                "pendingMeshOperationId": guard.pending_mesh_apply.as_ref().map(|pending| &pending.request.operation_id),
+                "supportsMeshApply": guard.supports_mesh_apply,
             })
         }
         Err(error) => {
